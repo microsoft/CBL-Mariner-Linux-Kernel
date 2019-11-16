@@ -392,7 +392,8 @@ struct tcp_sock {
 	u8	dup_ack_counter:2,
 		tlp_retrans:1,	/* TLP is a retransmission */
 		syn_ect_snt:2,	/* AccECN ECT memory, only */
-		syn_ect_rcv:2;	/* ... needed during 3WHS + first seqno */
+		syn_ect_rcv:2,	/* ... needed during 3WHS + first seqno */
+		fast_ack_mode:1; /* which fast ack mode ? */
 	u8	thin_lto    : 1,/* Use linear timeouts for thin streams */
 		fastopen_connect:1, /* FASTOPEN_CONNECT sockopt */
 		fastopen_no_cookie:1, /* Allow send/recv SYN+data without a cookie */
