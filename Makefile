@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 10
 SUBLEVEL = 2
-EXTRAVERSION =
+EXTRAVERSION =.2-rolling-lts-mariner
 NAME = Kleptomaniac Octopus
 
 # *DOCUMENTATION*
