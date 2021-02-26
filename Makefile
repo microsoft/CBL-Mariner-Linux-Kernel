@@ -2,7 +2,7 @@
 VERSION = 5
 PATCHLEVEL = 10
 SUBLEVEL = 19
-EXTRAVERSION =
+EXTRAVERSION =.2-rolling-lts-mariner
 NAME = Dare mighty things
 
 # *DOCUMENTATION*
