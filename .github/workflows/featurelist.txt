@@ -1,0 +1,5 @@
+# This file contains the feature list we expect to see in every tag.
+# The github action will skip over comments like this one.
+feature/hyperv-arm64
+feature/dxgkrnl
+# Must end this file with a new line for bash read to detect the line

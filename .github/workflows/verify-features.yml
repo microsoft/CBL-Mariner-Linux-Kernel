@@ -1,0 +1,21 @@
+name: verify-features
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Verify features are present in tag
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: |
+        while read line; do
+          [ "${line:0:1}" = "#" ] && continue
+          grep "${line}" MSFT-Merge/log
+          if [ $? -ne 0 ]; then
+            echo "Could not find: ${line}"
+            exit 1
+          fi
+        done < .github/workflows/featurelist.txt
