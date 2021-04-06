@@ -1,21 +1,38 @@
 name: verify-features
 
-on: push
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      FEATURE_LIST: dxgkrnl hyperv-arm64
     steps:
     - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Checkout latest tag
+      working-directory: ${{env.GITHUB_WORKSPACE}}
+      run: |
+        git checkout $(git describe --tags $(git rev-list --tags --max-count=1))
 
     - name: Verify features are present in tag
       working-directory: ${{env.GITHUB_WORKSPACE}}
       run: |
-        while read line; do
-          [ "${line:0:1}" = "#" ] && continue
-          grep "${line}" MSFT-Merge/log
+        set +e
+        MISSING=0
+        for feature in ${{env.FEATURE_LIST}}
+        do
+          grep "feature/${feature}" MSFT-Merge/log
           if [ $? -ne 0 ]; then
-            echo "Could not find: ${line}"
-            exit 1
+            echo "Could not find: feature/${feature} in latest tag"
+            ((MISSING++))
           fi
-        done < .github/workflows/featurelist.txt
+        done
+        if [ ${MISSING} -ne 0 ]; then
+          exit 1
+        fi
