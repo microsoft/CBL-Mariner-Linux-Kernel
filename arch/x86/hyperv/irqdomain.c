@@ -110,7 +110,7 @@ static int get_rid_cb(struct pci_dev *pdev, u16 alias, void *data)
 	return 0;
 }
 
-static union hv_device_id hv_build_pci_dev_id(struct pci_dev *dev)
+union hv_device_id hv_build_pci_dev_id(struct pci_dev *dev)
 {
 	union hv_device_id dev_id;
 	struct rid_data data = {
@@ -168,6 +168,7 @@ static union hv_device_id hv_build_pci_dev_id(struct pci_dev *dev)
 
 	return dev_id;
 }
+EXPORT_SYMBOL_GPL(hv_build_pci_dev_id);
 
 /**
  * hv_map_msi_interrupt() - "Map" the MSI IRQ in the hypervisor.

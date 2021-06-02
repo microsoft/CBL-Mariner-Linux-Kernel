@@ -273,6 +273,7 @@ int hv_map_msi_interrupt(struct irq_data *data,
 int hv_map_ioapic_interrupt(int ioapic_id, bool level, int vcpu, int vector,
 		struct hv_interrupt_entry *entry);
 int hv_unmap_ioapic_interrupt(int ioapic_id, struct hv_interrupt_entry *entry);
+union hv_device_id hv_build_pci_dev_id(struct pci_dev *dev);
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 bool hv_ghcb_negotiate_protocol(void);
