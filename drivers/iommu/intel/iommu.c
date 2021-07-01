@@ -3800,7 +3800,7 @@ int __init intel_iommu_init(void)
 		    platform_optin_force_iommu();
 
 	down_write(&dmar_global_lock);
-	if (dmar_table_init()) {
+	if (dmar_table_init(true, false)) {
 		if (force_on)
 			panic("tboot: Failed to initialize DMAR table\n");
 		goto out_free_dmar;
