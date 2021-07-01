@@ -1028,4 +1028,8 @@ struct hv_input_configure_device_domain {
 	struct hv_device_domain_settings settings;
 } __packed;
 
+/* HV Map GPA (Guest Physical Address) Flags */
+#define HV_MAP_GPA_READABLE		0x1
+#define HV_MAP_GPA_WRITABLE		0x2
+
 #endif
