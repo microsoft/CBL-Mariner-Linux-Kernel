@@ -350,6 +350,16 @@ static const struct irq_domain_ops hyperv_root_ir_domain_ops = {
 
 #ifdef CONFIG_HYPERV_ROOT_PVIOMMU
 
+/* The IOMMU will not claim these PCI devices. */
+static char *pci_devs_to_skip;
+static int __init mshv_iommu_setup_skip(char *str) {
+	pci_devs_to_skip = str;
+
+	return 0;
+}
+/* mshv_iommu_skip=(SSSS:BB:DD.F)(SSSS:BB:DD.F) */
+__setup("mshv_iommu_skip=", mshv_iommu_setup_skip);
+
 /* DMA remapping support */
 struct hv_iommu_domain {
 	struct iommu_domain domain;
@@ -774,6 +784,41 @@ static struct iommu_device *hv_iommu_probe_device(struct device *dev)
 
 	if (!dev_is_pci(dev))
 		return ERR_PTR(-ENODEV);
+
+	/*
+	 * Skip the PCI device specified in `pci_devs_to_skip`. This is a
+	 * temporary solution until we figure out a way to extract information
+	 * from the hypervisor what devices it is already using.
+	 */
+	if (pci_devs_to_skip && *pci_devs_to_skip) {
+		int pos = 0;
+		int parsed;
+		int segment, bus, slot, func;
+		struct pci_dev *pdev = to_pci_dev(dev);
+
+		do {
+			parsed = 0;
+
+			sscanf(pci_devs_to_skip + pos,
+				" (%x:%x:%x.%x) %n",
+				&segment, &bus, &slot, &func, &parsed);
+
+			if (parsed <= 0)
+				break;
+
+			if (pci_domain_nr(pdev->bus) == segment &&
+				pdev->bus->number == bus &&
+				PCI_SLOT(pdev->devfn) == slot &&
+				PCI_FUNC(pdev->devfn) == func)
+			{
+				dev_info(dev, "skipped by MSHV IOMMU\n");
+				return ERR_PTR(-ENODEV);
+			}
+
+			pos += parsed;
+
+		} while (pci_devs_to_skip[pos]);
+	}
 
 	vdev = kzalloc(sizeof(*vdev), GFP_KERNEL);
 	if (!vdev)
