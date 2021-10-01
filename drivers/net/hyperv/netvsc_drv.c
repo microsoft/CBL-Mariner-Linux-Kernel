@@ -2614,7 +2614,7 @@ static int netvsc_probe(struct hv_device *dev,
 		goto rndis_failed;
 	}
 
-	memcpy(net->dev_addr, device_info->mac_adr, ETH_ALEN);
+	eth_hw_addr_set(net, device_info->mac_adr);
 
 	if (nvdev->num_chn > 1)
 		schedule_work(&nvdev->subchan_work);
