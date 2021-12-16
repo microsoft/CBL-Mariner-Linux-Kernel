@@ -292,6 +292,8 @@ struct mana_rxq {
 
 	struct mana_cq rx_cq;
 
+	struct completion fence_event;
+
 	struct net_device *ndev;
 
 	/* Total number of receive buffers to be allocated */
