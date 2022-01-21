@@ -878,6 +878,10 @@ void start_kernel(void)
 	char *command_line;
 	char *after_dashes;
 
+#ifdef CONFIG_X86
+	outb(0x40, 0x80);
+#endif
+
 	set_task_stack_end_magic(&init_task);
 	smp_setup_processor_id();
 	debug_objects_early_init();
@@ -1464,6 +1468,10 @@ static int __ref kernel_init(void *unused)
 	rcu_end_inkernel_boot();
 
 	do_sysctl_args();
+
+#ifdef CONFIG_X86
+	outb(0x41, 0x80);
+#endif
 
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
