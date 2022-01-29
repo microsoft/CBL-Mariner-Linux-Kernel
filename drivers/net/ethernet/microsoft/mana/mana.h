@@ -48,7 +48,14 @@ enum TRI_STATE {
 
 #define MAX_PORTS_IN_MANA_DEV 256
 
-struct mana_stats {
+struct mana_stats_rx {
+	u64 packets;
+	u64 bytes;
+	u64 xdp_drop;
+	struct u64_stats_sync syncp;
+};
+
+struct mana_stats_tx {
 	u64 packets;
 	u64 bytes;
 	struct u64_stats_sync syncp;
@@ -78,7 +85,7 @@ struct mana_txq {
 
 	bool napi_initialized;
 
-	struct mana_stats stats;
+	struct mana_stats_tx stats;
 };
 
 /* skb data and frags dma mappings */
@@ -301,7 +308,7 @@ struct mana_rxq {
 
 	u32 buf_index;
 
-	struct mana_stats stats;
+	struct mana_stats_rx stats;
 
 	struct bpf_prog __rcu *bpf_prog;
 	struct xdp_rxq_info xdp_rxq;
