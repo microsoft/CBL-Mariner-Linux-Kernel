@@ -105,6 +105,7 @@
 #include <linux/ptdump.h>
 #include <linux/time_namespace.h>
 #include <net/net_namespace.h>
+#include <linux/amba/serial.h>
 
 #include <asm/io.h>
 #include <asm/setup.h>
@@ -116,6 +117,8 @@
 
 #include <kunit/test.h>
 
+char __iomem *pl011_debug_addr;
+int has_pl011 = 0;
 static int kernel_init(void *);
 
 /*
@@ -1465,6 +1468,11 @@ static int __ref kernel_init(void *unused)
 
 #ifdef CONFIG_X86
 	outb(0x41, 0x80);
+#endif
+
+#ifdef CONFIG_ARM64
+	if (has_pl011)
+		pl011_debug_trap(DEBUG_TRAP_VAL_END_BOOT);
 #endif
 
 	if (ramdisk_execute_command) {
