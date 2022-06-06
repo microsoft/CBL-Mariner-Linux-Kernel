@@ -612,6 +612,7 @@ static unsigned int hv_msi_get_int_vector(struct irq_data *data)
  */
 static void hv_arch_irq_unmask(struct irq_data *data)
 {
+
 	struct msi_desc *msi_desc = irq_data_get_msi_desc(data);
 	struct hv_retarget_device_interrupt *params;
 	struct tran_int_desc *int_desc;
@@ -696,8 +697,14 @@ static void hv_arch_irq_unmask(struct irq_data *data)
 		}
 	}
 
-	res = hv_do_hypercall(HVCALL_RETARGET_INTERRUPT | (var_size << 17),
-			      params, NULL);
+	if (hv_nested)
+		res = hv_do_nested_hypercall(HVCALL_RETARGET_INTERRUPT |
+					(var_size << 17),
+					params, NULL);
+	else
+		res = hv_do_hypercall(HVCALL_RETARGET_INTERRUPT |
+					(var_size << 17),
+					params, NULL);
 
 out:
 	local_irq_restore(flags);
