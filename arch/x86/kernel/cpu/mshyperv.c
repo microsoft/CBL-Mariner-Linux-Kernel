@@ -361,13 +361,50 @@ static void __init hv_smp_prepare_boot_cpu(void)
 #endif
 }
 
+static int apicids[NR_CPUS] __initdata;
+
+/* find the next smallest apicid in the unsorted array of size NR_CPUS */
+static int __init next_smallest_apicid(int apicids[], int curr)
+{
+	int i, found = INT_MAX;
+
+	for (i = 0; i < NR_CPUS; i++) {
+		if (apicids[i] <= curr)
+			continue;
+
+		if (apicids[i] < found)
+			found = apicids[i];
+	}
+
+	return found;
+}
+
+/*  
+ * On a 4 core, single node, with HT, linux numbers cpus as: 
+ *     [0]c0 ht0   [1]c1 ht0   [2]c2 ht0   [3]c3 ht0
+ *     [4]c0 ht1   [5]c1 ht1   [6]c2 ht1   [7]c3 ht1
+ *
+ * On a 4 core, two nodes, with HT, linux numbers cpus as: 
+ *     [0]n0 c0 h0    [1]n1 c0 ht0  [2]n0 c3 ht0 ......
+ *
+ * MSHV wants vcpus/vpidxs: [0]c0 ht0, [1]c0 ht1, [2]c1 ht0, [3]c1 ht1 ....
+ * for the default core scheduler. classic scheduler doesn't care.
+ * The requirement means linux cpu numbers and vcpu index won't
+ * match. The driver uses hv_vp_index[] for that indirection.
+ *
+ * Other requirements are:
+ *  - LPs must be added in only lpindex order, with any lapic ids for any lp
+ *  - VPs can be created in any vp index order as long as the HT siblings 
+ *    match.
+ *
+ * To achieve above, we add LPs in order of apic ids.
+ */
 static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 {
 #ifdef CONFIG_X86_64
-	int i;
-	int ret;
+	s16 node;
+	int i, lpidx, ret, ccpu = raw_smp_processor_id();
 #endif
-
 	native_smp_prepare_cpus(max_cpus);
 
 	/*
@@ -380,22 +417,48 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 	}
 
 #ifdef CONFIG_X86_64
-	for_each_present_cpu(i) {
-		if (i == 0)
-			continue;
-		ret = hv_call_add_logical_proc(numa_cpu_node(i), i, cpu_physical_id(i));
-		BUG_ON(ret);
-	}
+	BUG_ON(ccpu != 0);
+	BUG_ON(cpu_physical_id(ccpu) != 0);
+
+	for (i = 0; i < NR_CPUS; i++)
+		apicids[i] = INT_MAX;
 
 	for_each_present_cpu(i) {
 		if (i == 0)
 			continue;
-		ret = hv_call_create_vp(numa_cpu_node(i), hv_current_partition_id, i, i);
-		BUG_ON(ret);
+
+		BUG_ON(cpu_physical_id(i) == INT_MAX);
+		apicids[i] = cpu_physical_id(i);
 	}
-#endif
+
+	i = next_smallest_apicid(apicids, 0);
+	for (lpidx = 1; i != INT_MAX; lpidx++) {
+		node = __apicid_to_node[i];
+		if (node == NUMA_NO_NODE)
+			node = 0;
+
+		/* params: node num, lp index, apic id */
+		ret = hv_call_add_logical_proc(node, lpidx, i);
+		BUG_ON(ret);
+
+		i = next_smallest_apicid(apicids, i);
+	}
+
+	lpidx = 1;	   /* skip BSP cpu 0 */
+	for_each_present_cpu(i) {
+		if (i == 0)
+			continue;
+
+		/* params: node num, domid, vp index, lp index */
+		ret = hv_call_create_vp(numa_cpu_node(i), 
+					hv_current_partition_id, lpidx, lpidx);
+		BUG_ON(ret);
+		lpidx++;
+	}
+
+#endif /* #ifdef CONFIG_X86_64 */
 }
-#endif
+#endif /* #if defined(CONFIG_SMP) && IS_ENABLED(CONFIG_HYPERV) */
 
 /*
  * When a fully enlightened TDX VM runs on Hyper-V, the firmware sets the
