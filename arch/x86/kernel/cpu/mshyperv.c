@@ -418,7 +418,6 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 
 #ifdef CONFIG_X86_64
 	BUG_ON(ccpu != 0);
-	BUG_ON(cpu_physical_id(ccpu) != 0);
 
 	for (i = 0; i < NR_CPUS; i++)
 		apicids[i] = INT_MAX;
