@@ -1663,7 +1663,16 @@ static void hv_irq_mask(struct irq_data *data)
 
 static void hv_irq_unmask(struct irq_data *data)
 {
-	hv_arch_irq_unmask(data);
+	if (hv_nested && hv_root_partition)
+		/*
+		 * In case of the nested root partition, the nested hypervisor
+		 * is taking care of interrupt remapping and thus the
+		 * MAP_DEVICE_INTERRUPT hypercall is required instead of the
+		 * RETARGET_INTERRUPT one.
+		 */
+		(void)hv_map_msi_interrupt(data, NULL);
+	else
+		hv_arch_irq_unmask(data);
 
 	if (data->parent_data->chip->irq_unmask)
 		irq_chip_unmask_parent(data);
