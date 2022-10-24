@@ -35,6 +35,13 @@ u64 hv_do_hypercall(u64 control, void *input, void *output)
 }
 EXPORT_SYMBOL_GPL(hv_do_hypercall);
 
+/* Hypercall to the L0 hypervisor */
+u64 hv_do_nested_hypercall(u64 control, void *input, void *output)
+{
+	return hv_do_hypercall(control | HV_HYPERCALL_NESTED, input, output);
+}
+EXPORT_SYMBOL_GPL(hv_do_nested_hypercall);
+
 /*
  * hv_do_fast_hypercall8 -- Invoke the specified hypercall
  * with arguments in registers instead of physical memory.
@@ -52,6 +59,42 @@ u64 hv_do_fast_hypercall8(u16 code, u64 input)
 	return res.a0;
 }
 EXPORT_SYMBOL_GPL(hv_do_fast_hypercall8);
+
+/*
+ * hv_do_fast_nested_hypercall8 -- Invoke the specified nested hypercall
+ * with arguments in registers instead of physical memory.
+ * Avoids the overhead of virt_to_phys for simple hypercalls.
+ */
+
+u64 hv_do_fast_nested_hypercall8(u16 code, u64 input)
+{
+	struct arm_smccc_res	res;
+	u64			control;
+
+	control = (u64)code | HV_HYPERCALL_FAST_BIT | HV_HYPERCALL_NESTED;
+
+	arm_smccc_1_1_hvc(HV_FUNC_ID, control, input, &res);
+	return res.a0;
+}
+EXPORT_SYMBOL_GPL(hv_do_fast_nested_hypercall8);
+
+/*
+ * hv_do_fast_hypercall16 -- Invoke the specified hypercall
+ * with arguments in registers instead of physical memory.
+ * Avoids the overhead of virt_to_phys for simple hypercalls.
+ */
+
+u64 hv_do_fast_hypercall16(u16 code, u64 input1, u64 input2)
+{
+	struct arm_smccc_res	res;
+	u64			control;
+
+	control = (u64)code | HV_HYPERCALL_FAST_BIT;
+
+	arm_smccc_1_1_hvc(HV_FUNC_ID, control, input1, input2, &res);
+	return res.a0;
+}
+EXPORT_SYMBOL_GPL(hv_do_fast_hypercall16);
 
 /*
  * Set a single VP register to a 64-bit value.
