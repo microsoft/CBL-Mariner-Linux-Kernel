@@ -622,7 +622,7 @@ static void __init hv_create_root_vps(unsigned int max_cpus, bool kexec)
 static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 {
 #ifdef CONFIG_X86_64
-	s16 node;
+	s16 node = 0;
 	int i, lpidx, ret, cpu, ccpu = raw_smp_processor_id();
 	bool kexec = false;
 #endif
@@ -662,9 +662,11 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 	i = next_smallest_apicid(apicids, 0, &cpu);
 
 	for (lpidx = 1; i != INT_MAX; lpidx++) {
+#ifdef CONFIG_NUMA
 		node = __apicid_to_node[i];
 		if (node == NUMA_NO_NODE)
 			node = 0;
+#endif
 
 		if (!kexec) {
 			/* params: node num, lp index, apic id */
