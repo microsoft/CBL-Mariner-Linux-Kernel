@@ -322,6 +322,7 @@ bool hv_query_ext_cap(u64 cap_query);
 void hv_setup_dma_ops(struct device *dev, bool coherent);
 int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages);
 int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
+int hv_sleep_notifiers_register(void);
 
 #if IS_ENABLED(CONFIG_MSHV_ROOT) && defined(CONFIG_KEXEC_CORE)
 void hv_root_crash_init(void);
