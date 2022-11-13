@@ -25,6 +25,8 @@
 #include <linux/slab.h>
 #include <linux/dma-map-ops.h>
 #include <linux/set_memory.h>
+#include <linux/reboot.h>
+#include <linux/notifier.h>
 #include <asm/mshyperv.h>
 
 /*
@@ -825,3 +827,122 @@ free_buf:
 	return ret;
 }
 EXPORT_SYMBOL_GPL(hv_call_deposit_pages);
+
+/*
+ * Corresponding sleep states have to be initialized, in order for a subsequent
+ * HVCALL_ENTER_SLEEP_STATE call to succeed. Currently only S5 state as per
+ * ACPI 6.4 chapter 7.4.2 is relevant, while S1, S2 and S3 can be supported.
+ *
+ * ACPI should be initialized and should support S5 sleep state when this method
+ * is called, so that, it can extract correct PM values and pass them to hv.
+ */
+static int hv_initialize_sleep_states(void)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_set_system_property *in;
+	acpi_status acpi_status;
+	u8 sleep_type_a, sleep_type_b;
+
+	if (!acpi_sleep_state_supported(ACPI_STATE_S5)) {
+		pr_err("%s: S5 sleep state not supported.\n", __func__);
+		return -ENODEV;
+	}
+
+	acpi_status = acpi_get_sleep_type_data(ACPI_STATE_S5,
+						&sleep_type_a, &sleep_type_b);
+	if (ACPI_FAILURE(acpi_status))
+		return -ENODEV;
+
+	local_irq_save(flags);
+	in = (struct hv_input_set_system_property *)(*this_cpu_ptr(
+		hyperv_pcpu_input_arg));
+
+	in->property_id = HV_SYSTEM_PROPERTY_SLEEP_STATE;
+	in->set_sleep_state_info.sleep_state = HV_SLEEP_STATE_S5;
+	in->set_sleep_state_info.pm1a_slp_typ = sleep_type_a;
+	in->set_sleep_state_info.pm1b_slp_typ = sleep_type_b;
+
+	status = hv_do_hypercall(HVCALL_SET_SYSTEM_PROPERTY, in, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n",
+			__func__, hv_status_to_string(status));
+		return hv_status_to_errno(status);
+	}
+
+	return 0;
+}
+
+static int hv_call_enter_sleep_state(u32 sleep_state)
+{
+	u64 status;
+	int ret;
+	unsigned long flags;
+	struct hv_input_enter_sleep_state *in;
+
+	ret = hv_initialize_sleep_states();
+	if (ret)
+		return ret;
+
+	local_irq_save(flags);
+	in = (struct hv_input_enter_sleep_state *)(*this_cpu_ptr(
+		hyperv_pcpu_input_arg));
+	in->sleep_state = (enum hv_sleep_state)sleep_state;
+
+	status = hv_do_hypercall(HVCALL_ENTER_SLEEP_STATE, in, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n",
+			__func__, hv_status_to_string(status));
+		return hv_status_to_errno(status);
+	}
+
+	return 0;
+}
+
+static int hv_reboot_notifier_handler(struct notifier_block *this, unsigned long code, void *another)
+{
+	int ret = 0;
+
+	if (SYS_HALT == code || SYS_POWER_OFF == code)
+		ret = hv_call_enter_sleep_state(HV_SLEEP_STATE_S5);
+
+	return ret ? NOTIFY_DONE : NOTIFY_OK;
+}
+
+static struct notifier_block hv_reboot_notifier = {
+	.notifier_call	= hv_reboot_notifier_handler,
+};
+
+static int hv_acpi_sleep_handler(u8 sleep_state, u32 pm1a_cnt, u32 pm1b_cnt)
+{
+	int ret = 0;
+
+	if (sleep_state == ACPI_STATE_S5)
+		ret = hv_call_enter_sleep_state(HV_SLEEP_STATE_S5);
+
+	return ret == 0 ? 1 : -1;
+}
+
+static int hv_acpi_extended_sleep_handler(u8 sleep_state, u32 val_a, u32 val_b)
+{
+	return hv_acpi_sleep_handler(sleep_state, val_a, val_b);
+}
+
+int hv_sleep_notifiers_register(void)
+{
+	int ret;
+
+	acpi_os_set_prepare_sleep(&hv_acpi_sleep_handler);
+	acpi_os_set_prepare_extended_sleep(&hv_acpi_extended_sleep_handler);
+
+	ret = register_reboot_notifier(&hv_reboot_notifier);
+	if (ret)
+		pr_err("%s: cannot register reboot notifier %d\n",
+			__func__, ret);
+
+	return ret;
+}
