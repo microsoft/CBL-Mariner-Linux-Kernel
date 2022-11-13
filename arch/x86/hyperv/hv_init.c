@@ -567,6 +567,12 @@ void __init hyperv_init(void)
 		/* mark ram reserved for hypervisor as owned by hypervisor */
 		hv_mark_resources();
 
+		/*
+		 * The notifier registration might fail at multiple hops. Corresponding
+		 * error messages will land in dmesg. There is otherwise nothing
+		 * that can be specifically done to handle this failure.
+		 */
+		(void)hv_sleep_notifiers_register();
 		hv_root_crash_init();
 	} else {
 		hypercall_msr.guest_physical_address = vmalloc_to_pfn(hv_hypercall_pg);
