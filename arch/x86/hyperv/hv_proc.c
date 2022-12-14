@@ -53,3 +53,25 @@ int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
 	return ret;
 }
 
+int hv_call_notify_all_processors_started(void)
+{
+	struct hv_input_notify_partition_event *input;
+	u64 status;
+	unsigned long irq_flags;
+
+	local_irq_save(irq_flags);
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	input->event = HV_PARTITION_ALL_LOGICAL_PROCESSORS_STARTED;
+
+	status = hv_do_hypercall(HVCALL_NOTIFY_PARTITION_EVENT, input, NULL);
+
+	local_irq_restore(irq_flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: Failed to notify all processors started, %s\n",
+		       __func__, hv_status_to_string(status));
+	}
+
+	return hv_status_to_errno(status);
+}
