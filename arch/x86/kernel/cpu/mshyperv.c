@@ -446,6 +446,19 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 		i = next_smallest_apicid(apicids, i);
 	}
 
+	/*
+	 * We should only call this hypercall once we have added all the logical
+	 * processors to the root partition.
+	 *
+	 * This is a strict requirement for CVM because without this hypercall
+	 * MSHV won't expose support for launching SEV-SNP enabled guest.
+	 *
+	 * We can also invoke this hypercall for non-CVM usecase as well. There
+	 * is no side effect because of this hypercall.
+	 */
+	ret = hv_call_notify_all_processors_started();
+	WARN_ON(ret);
+
 	lpidx = 1;	   /* skip BSP cpu 0 */
 	for_each_present_cpu(i) {
 		if (i == 0)
