@@ -166,6 +166,15 @@ static const __initconst struct idt_data apic_idts[] = {
 # ifdef CONFIG_X86_POSTED_MSI
 	INTG(POSTED_MSI_NOTIFICATION_VECTOR,	asm_sysvec_posted_msi_notification),
 # endif
+	/*
+	 * This is a hack because we cannot install this interrupt handler via alloc_intr_gate
+	 * as it does not allow interrupt vector less than FIRST_SYSTEM_VECTORS. And hyperv
+	 * does not want anything other than 0x31-0x34 as the interrupt vector for vmbus
+	 * interrupt in case of nested setup.
+	 */
+#ifdef CONFIG_HYPERV
+	INTG(HYPERV_INTR_NESTED_VMBUS_VECTOR, asm_sysvec_hyperv_nested_vmbus_intr),
+#endif
 #endif
 };
 
