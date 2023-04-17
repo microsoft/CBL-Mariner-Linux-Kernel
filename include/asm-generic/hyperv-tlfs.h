@@ -473,6 +473,7 @@ union hv_gpa_page_range {
 #define HV_MAX_FLUSH_REP_COUNT ((HV_HYP_PAGE_SIZE - 2 * sizeof(u64)) /	\
 				sizeof(union hv_gpa_page_range))
 
+/* HvFlushGuestPhysicalAddressList hypercall */
 struct hv_guest_mapping_flush_list {
 	u64 address_space;
 	u64 flags;
