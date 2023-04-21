@@ -125,7 +125,7 @@ extern int valid_mmap_phys_addr_range(unsigned long pfn, size_t size);
  *	this function
  */
 
-static inline phys_addr_t virt_to_phys(volatile void *address)
+static inline phys_addr_t virt_to_phys(const volatile void *address)
 {
 	return __pa(address);
 }
@@ -160,7 +160,7 @@ static inline void *phys_to_virt(phys_addr_t address)
  * However, we truncate the address to unsigned int to avoid undesirable
  * promotions in legacy drivers.
  */
-static inline unsigned int isa_virt_to_bus(volatile void *address)
+static inline unsigned int isa_virt_to_bus(const volatile void *address)
 {
 	return (unsigned int)virt_to_phys(address);
 }
