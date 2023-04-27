@@ -69,7 +69,7 @@ static int hv_map_interrupt(union hv_device_id device_id, bool level,
 	return hv_result(status);
 }
 
-static int hv_unmap_interrupt(u64 id, struct hv_interrupt_entry *old_entry)
+static int hv_unmap_interrupt(u64 id, struct hv_interrupt_entry *hvirqe)
 {
 	unsigned long flags;
 	struct hv_input_unmap_device_interrupt *input;
@@ -80,10 +80,10 @@ static int hv_unmap_interrupt(u64 id, struct hv_interrupt_entry *old_entry)
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
 	memset(input, 0, sizeof(*input));
-	intr_entry = &input->interrupt_entry;
 	input->partition_id = hv_current_partition_id;
 	input->device_id = id;
-	*intr_entry = *old_entry;
+	intr_entry = &input->interrupt_entry;
+	*intr_entry = *hvirqe;
 
 	status = hv_do_hypercall(HVCALL_UNMAP_DEVICE_INTERRUPT, input, NULL);
 	local_irq_restore(flags);
@@ -205,15 +205,18 @@ int hv_map_msi_interrupt(struct irq_data *data,
 }
 EXPORT_SYMBOL_GPL(hv_map_msi_interrupt);
 
-static inline void entry_to_msi_msg(struct hv_interrupt_entry *entry, struct msi_msg *msg)
+static inline void entry_to_msi_msg(struct hv_interrupt_entry *hvirqe,
+				    struct msi_msg *msi)
 {
 	/* High address is always 0 */
-	msg->address_hi = 0;
-	msg->address_lo = entry->msi_entry.address.as_uint32;
-	msg->data = entry->msi_entry.data.as_uint32;
+	msi->address_hi = 0;
+	msi->address_lo = hvirqe->msi_entry.address.as_uint32;
+	msi->data = hvirqe->msi_entry.data.as_uint32;
 }
 
-static int hv_unmap_msi_interrupt(struct pci_dev *dev, struct hv_interrupt_entry *old_entry);
+static int hv_unmap_msi_interrupt(struct pci_dev *dev,
+				  struct hv_interrupt_entry *hvirqe);
+
 static void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 {
 	struct msi_desc *msidesc;
@@ -266,19 +269,18 @@ static void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 
 	data->chip_data = stored_entry;
 	entry_to_msi_msg(data->chip_data, msg);
-
-	return;
 }
 
-static int hv_unmap_msi_interrupt(struct pci_dev *dev, struct hv_interrupt_entry *old_entry)
+static int hv_unmap_msi_interrupt(struct pci_dev *dev,
+				  struct hv_interrupt_entry *hvirqe)
 {
-	return hv_unmap_interrupt(hv_build_pci_dev_id(dev).as_uint64, old_entry);
+	return hv_unmap_interrupt(hv_build_pci_dev_id(dev).as_uint64, hvirqe);
 }
 
+/* NB: during map, hv_interrupt_entry is saved via data->chip_data */
 static void hv_teardown_msi_irq(struct pci_dev *dev, struct irq_data *irqd)
 {
 	struct hv_interrupt_entry old_entry;
-	struct msi_msg msg;
 	u64 status;
 
 	if (!irqd->chip_data) {
@@ -287,7 +289,6 @@ static void hv_teardown_msi_irq(struct pci_dev *dev, struct irq_data *irqd)
 	}
 
 	old_entry = *(struct hv_interrupt_entry *)irqd->chip_data;
-	entry_to_msi_msg(&old_entry, &msg);
 
 	kfree(irqd->chip_data);
 	irqd->chip_data = NULL;
@@ -295,7 +296,8 @@ static void hv_teardown_msi_irq(struct pci_dev *dev, struct irq_data *irqd)
 	status = hv_unmap_msi_interrupt(dev, &old_entry);
 
 	if (status != HV_STATUS_SUCCESS)
-		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
+		pr_err("%s: hypercall failed, status %lld irq:%d\n",
+		       __func__, status, irqd->irq);
 }
 
 static void hv_msi_free_irq(struct irq_domain *domain,
