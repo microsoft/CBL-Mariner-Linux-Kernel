@@ -806,10 +806,12 @@ struct hv_device_interrupt_descriptor {
 	struct hv_device_interrupt_target target;
 } __packed;
 
+/* HV_INPUT_MAP_DEVICE_INTERRUPT */
 struct hv_input_map_device_interrupt {
 	u64 partition_id;
 	u64 device_id;
-	u64 flags;
+	u32 flags;
+	u32 base_irt_idx;
 	struct hv_interrupt_entry logical_interrupt_entry;
 	struct hv_device_interrupt_descriptor interrupt_descriptor;
 } __packed;
@@ -818,10 +820,12 @@ struct hv_output_map_device_interrupt {
 	struct hv_interrupt_entry interrupt_entry;
 } __packed;
 
+/* HV_INPUT_UNMAP_DEVICE_INTERRUPT */
 struct hv_input_unmap_device_interrupt {
 	u64 partition_id;
 	u64 device_id;
 	struct hv_interrupt_entry interrupt_entry;
+	u32 flags;
 } __packed;
 
 #define HV_SOURCE_SHADOW_NONE               0x0

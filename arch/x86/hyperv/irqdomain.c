@@ -46,7 +46,7 @@ static int hv_map_interrupt(union hv_device_id device_id, bool level,
 	if (nr_bank < 0) {
 		local_irq_restore(flags);
 		pr_err("%s: unable to generate VP set\n", __func__);
-		return EINVAL;
+		return HV_STATUS_INVALID_PARAMETER;
 	}
 	intr_desc->target.flags = HV_DEVICE_INTERRUPT_TARGET_PROCESSOR_SET;
 
