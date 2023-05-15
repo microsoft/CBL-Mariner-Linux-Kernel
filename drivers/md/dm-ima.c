@@ -173,6 +173,96 @@ void dm_ima_reset_data(struct mapped_device *md)
 }
 
 /*
+ * Determine if the target is allowed to be measured by IMA.
+ */
+bool dm_ima_target_is_measurable(const struct target_type *ti)
+{
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_CACHE) &&
+		!strcmp(ti->name, "cache"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_CRYPT) &&
+		!strcmp(ti->name, "crypt"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_INTEGRITY) &&
+		!strcmp(ti->name, "integrity"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_LINEAR) &&
+		!strcmp(ti->name, "linear"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_MIRROR) &&
+		!strcmp(ti->name, "mirror"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_MULTIPATH) &&
+		!strcmp(ti->name, "multipath"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_RAID) &&
+		!strcmp(ti->name, "raid"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_SNAPSHOT) &&
+		!strcmp(ti->name, "snapshot"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_STRIPED) &&
+		!strcmp(ti->name, "striped"))
+		return true;
+
+	if (IS_ENABLED(CONFIG_DM_IMA_MEASURE_VERITY) &&
+		!strcmp(ti->name, "verity"))
+		return true;
+
+	return false;
+}
+
+/*
+ * Determine if none of the targets are allowed to be measured by IMA.
+ */
+bool dm_ima_no_target_measured(void)
+{
+#if !IS_ENABLED(CONFIG_DM_IMA_MEASURE_CACHE) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_CRYPT) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_INTEGRITY) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_LINEAR) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_MIRROR) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_MULTIPATH) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_RAID) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_SNAPSHOT) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_STRIPED) && \
+	!IS_ENABLED(CONFIG_DM_IMA_MEASURE_VERITY)
+
+	return true;
+
+#else
+
+	return false;
+
+#endif
+}
+
+/*
+ * Cleanup the active table if no targets are being measured.
+ */
+void dm_ima_cleanup_unmeasured_table(struct mapped_device *md)
+{
+	kfree(md->ima.active_table.device_metadata);
+	md->ima.active_table.device_metadata = NULL;
+	md->ima.active_table.device_metadata_len = 0;
+
+	kfree(md->ima.active_table.hash);
+	md->ima.active_table.hash = NULL;
+	md->ima.active_table.hash_len = 0;
+
+	md->ima.active_table.num_targets = 0;
+	md->ima.active_table.num_measured_targets = 0;
+}
+
+/*
  * Build up the IMA data for each target, and finally measure.
  */
 void dm_ima_measure_on_table_load(struct dm_table *table, unsigned int status_flags)
@@ -183,11 +273,12 @@ void dm_ima_measure_on_table_load(struct dm_table *table, unsigned int status_fl
 	int digest_size, last_target_measured = -1, r;
 	status_type_t type = STATUSTYPE_IMA;
 	size_t cur_total_buf_len = 0;
-	unsigned int num_targets, i;
+	unsigned int num_targets, num_measured_targets, i;
 	SHASH_DESC_ON_STACK(shash, NULL);
 	struct crypto_shash *tfm = NULL;
 	u8 *digest = NULL;
 	bool noio = false;
+	bool last_target_is_measurable;
 	/*
 	 * In below hash_alg_prefix_len assignment +1 is for the additional char (':'),
 	 * when prefixing the hash value with the hash algorithm name. e.g. sha256:<hash_value>.
@@ -208,6 +299,7 @@ void dm_ima_measure_on_table_load(struct dm_table *table, unsigned int status_fl
 		goto error;
 
 	num_targets = table->num_targets;
+	num_measured_targets = 0;
 
 	if (dm_ima_alloc_and_copy_device_data(table->md, &device_data_buf, num_targets, noio))
 		goto error;
@@ -237,6 +329,13 @@ void dm_ima_measure_on_table_load(struct dm_table *table, unsigned int status_fl
 		struct dm_target *ti = dm_table_get_target(table, i);
 
 		last_target_measured = 0;
+
+		last_target_is_measurable = true;
+		if (!dm_ima_target_is_measurable(ti->type)) {
+			last_target_is_measurable = false;
+			continue;
+		}
+		num_measured_targets++;
 
 		/*
 		 * First retrieve the target metadata.
@@ -309,7 +408,7 @@ void dm_ima_measure_on_table_load(struct dm_table *table, unsigned int status_fl
 		l += target_data_buf_len;
 	}
 
-	if (!last_target_measured) {
+	if (!last_target_measured && last_target_is_measurable) {
 		dm_ima_measure_data(table_load_event_name, ima_buf, l, noio);
 
 		r = crypto_shash_update(shash, (const u8 *)ima_buf, l);
@@ -342,6 +441,7 @@ void dm_ima_measure_on_table_load(struct dm_table *table, unsigned int status_fl
 	table->md->ima.inactive_table.hash = digest_buf;
 	table->md->ima.inactive_table.hash_len = strlen(digest_buf);
 	table->md->ima.inactive_table.num_targets = num_targets;
+	table->md->ima.inactive_table.num_measured_targets = num_measured_targets;
 
 	if (table->md->ima.active_table.device_metadata !=
 	    table->md->ima.inactive_table.device_metadata)
@@ -375,6 +475,14 @@ void dm_ima_measure_on_device_resume(struct mapped_device *md, bool swap)
 	bool noio = true;
 	bool nodata = true;
 	int r;
+
+	/*
+	 * Cleanup the metadata and bailout without measuring
+	 */
+	if (md->ima.inactive_table.num_measured_targets == 0) {
+		dm_ima_cleanup_unmeasured_table(md);
+		return;
+	}
 
 	device_table_data = dm_ima_alloc(DM_IMA_DEVICE_BUF_LEN, GFP_KERNEL, noio);
 	if (!device_table_data)
@@ -489,6 +597,13 @@ void dm_ima_measure_on_device_remove(struct mapped_device *md, bool remove_all)
 	bool noio = true;
 	bool nodata = true;
 	int r;
+
+	/*
+	 * If no targets are being measured in active table,
+	 * bailout early without measuring remove
+	 */
+	if (md->ima.active_table.num_measured_targets == 0)
+		goto exit;
 
 	device_table_data = dm_ima_alloc(DM_IMA_DEVICE_BUF_LEN*2, GFP_KERNEL, noio);
 	if (!device_table_data)
@@ -612,6 +727,14 @@ void dm_ima_measure_on_table_clear(struct mapped_device *md, bool new_map)
 	bool nodata = true;
 	int r;
 
+	/*
+	 * If no targets are being measured in inactive table,
+	 * table load wasn't measured. So no need to measure
+	 * table_clear either.
+	 */
+	if (md->ima.inactive_table.num_measured_targets == 0)
+		return;
+
 	device_table_data = dm_ima_alloc(DM_IMA_DEVICE_BUF_LEN, GFP_KERNEL, noio);
 	if (!device_table_data)
 		return;
@@ -707,6 +830,18 @@ void dm_ima_measure_on_device_rename(struct mapped_device *md)
 	char *new_dev_name = NULL, *new_dev_uuid = NULL, *capacity_str = NULL;
 	bool noio = true;
 	int r;
+
+	/*
+	 * Renames should be measured regardless of the status of num_measured_targets.
+	 * Because you never know what table_load will bring in a target to measure.
+	 * We should have a history of renames in such case.
+	 * Unless, ALL the targets are disabled via config.
+	 * md->ima.active_table.num_measured_targets == 0 or
+	 * md->ima.inactive_table.num_measured_targets == 0
+	 */
+
+	if (dm_ima_no_target_measured())
+		return;
 
 	if (dm_ima_alloc_and_copy_device_data(md, &new_device_data,
 					      md->ima.active_table.num_targets, noio))
