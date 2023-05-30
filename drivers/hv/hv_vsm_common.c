@@ -39,6 +39,31 @@ int hv_vsm_get_register(u32 reg_name, u64 *result)
 	return 0;
 }
 
+int hv_vsm_set_register(u32 reg_name, u64 value)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_set_vp_registers_input *hvin = NULL;
+
+	local_irq_save(flags);
+
+	hvin = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	hvin->header.partitionid = HV_PARTITION_ID_SELF;
+	hvin->header.vpindex = HV_VP_INDEX_SELF;
+	hvin->header.inputvtl = 0;
+	hvin->element[0].name = reg_name;
+	hvin->element[0].valuelow = value;
+
+	status = hv_do_rep_hypercall(HVCALL_SET_VP_REGISTERS, 1, 0, hvin, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status))
+		return -EFAULT;
+
+	return 0;
+}
+
 int hv_vsm_get_code_page_offsets(void)
 {
 	u64 result;
