@@ -91,7 +91,9 @@ lib-$(CONFIG_X86)		+= x86-stub.o
 lib-$(CONFIG_X86_64)		+= x86-5lvl.o
 lib-$(CONFIG_RISCV)		+= kaslr.o riscv.o riscv-stub.o
 lib-$(CONFIG_LOONGARCH)		+= loongarch.o loongarch-stub.o
-
+ifdef CONFIG_X86_64
+lib-$(CONFIG_MSHV_ROOT)	+= x86-efi-mshv.o
+endif
 CFLAGS_arm32-stub.o		:= -DTEXT_OFFSET=$(TEXT_OFFSET)
 
 zboot-obj-$(CONFIG_RISCV)	:= lib-clz_ctz.o lib-ashldi3.o

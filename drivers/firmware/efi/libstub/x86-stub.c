@@ -20,6 +20,7 @@
 
 #include "efistub.h"
 #include "x86-stub.h"
+#include "efi-mshv.h"
 
 extern char _bss[], _ebss[];
 
@@ -708,6 +709,7 @@ static efi_status_t exit_boot_func(struct efi_boot_memmap *map,
 				   void *priv)
 {
 	const char *signature;
+	efi_status_t status;
 	struct exit_boot_struct *p = priv;
 
 	signature = efi_is_64bit() ? EFI64_LOADER_SIGNATURE
@@ -721,6 +723,11 @@ static efi_status_t exit_boot_func(struct efi_boot_memmap *map,
 	efi_set_u64_split((unsigned long)map->map,
 			  &p->efi->efi_memmap, &p->efi->efi_memmap_hi);
 	p->efi->efi_memmap_size		= map->map_size;
+
+	/* Notify hypervisor of efi runtime services pages */
+	status = mshv_set_efi_rt_range(map);
+	if (status != EFI_SUCCESS)
+		return status;
 
 	return EFI_SUCCESS;
 }
@@ -881,7 +888,7 @@ void __noreturn efi_stub_entry(efi_handle_t handle,
 	struct setup_header *hdr = &boot_params->hdr;
 	const struct linux_efi_initrd *initrd = NULL;
 	unsigned long kernel_entry;
-	efi_status_t status;
+	efi_status_t status, mshv_status;
 
 	boot_params_ptr = boot_params;
 
@@ -968,6 +975,8 @@ void __noreturn efi_stub_entry(efi_handle_t handle,
 	/* Ask the firmware to clear memory on unclean shutdown */
 	efi_enable_reset_attack_mitigation();
 
+	mshv_status = mshv_efi_setup(boot_params);
+
 	efi_random_get_seed();
 
 	efi_retrieve_tpm2_eventlog();
@@ -994,7 +1003,12 @@ void __noreturn efi_stub_entry(efi_handle_t handle,
 
 	efi_5level_switch();
 
+	if (mshv_status == EFI_SUCCESS) {
+		mshv_status = mshv_launch();
+	}
+
 	enter_kernel(kernel_entry, boot_params);
+
 fail:
 	efi_err("efi_stub_entry() failed!\n");
 
