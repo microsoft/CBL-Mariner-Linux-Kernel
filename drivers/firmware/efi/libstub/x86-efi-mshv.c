@@ -15,7 +15,7 @@ struct mshv_setup_data {
 
 static struct efi_hvloader_protocol *efi_mshv;
 
-static inline void __noreturn efistub_reboot(const char *fmt, ...)
+static inline void efistub_reboot(const char *fmt, ...)
 {
 	va_list args;
 
@@ -239,7 +239,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 
 		sd_block[i].sd.type = SETUP_INDIRECT;
 		sd_block[i].sd.len  = sizeof(struct setup_indirect);
-		sd_block[i].sd.next = &sd_block[i + 1];
+		sd_block[i].sd.next = (__u64)&sd_block[i + 1];
 
 		sd_block[i].si.type = SETUP_MSHV;
 		sd_block[i].si.reserved = 0;
@@ -252,7 +252,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 	 * outside of the struct mshv_setup_data buffer.
 	 */
 
-	sd_block[nr_ranges - 1].sd.next = NULL;
+	sd_block[nr_ranges - 1].sd.next = 0;
 
 	efi_bs_call(free_pool, mem_map);
 
@@ -304,7 +304,7 @@ efi_status_t mshv_launch(void)
 	struct hvl_return_data ret;
 
 	if (!efi_mshv)
-		return;
+		return EFI_INVALID_PARAMETER;
 
 	efi_mshv->launch_hv(NULL, &ret);
 	/* TODO: Where/how do we dump the hv loader logs? */
