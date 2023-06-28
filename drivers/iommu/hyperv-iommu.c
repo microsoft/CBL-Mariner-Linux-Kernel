@@ -1041,6 +1041,8 @@ void __init hv_iommu_detect(void)
 	iommu_detected = 1;
 	x86_init.iommu.iommu_init = hv_iommu_init;
 
+	pci_request_acs();
+
 	return;
 }
 
