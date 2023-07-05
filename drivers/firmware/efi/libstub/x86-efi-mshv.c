@@ -58,12 +58,17 @@ static efi_status_t mshv_populate_ranges(struct boot_params *boot_params,
 			void *mshv_reserved, unsigned long mshv_reserved_sz)
 {
 	unsigned long cmdline_ptr;
+	struct resource *res;
+	int res_len, i;
 	u32 cmdline_size;
 	u32 cmdline_len;
 	static u8 mshv_cmdline[COMMAND_LINE_SIZE];
 
 	if (!efi_mshv)
 		return EFI_SUCCESS;
+
+	res = mshv_reserved;
+	res_len = mshv_reserved_sz / sizeof(struct resource);
 
 	memset(mshv_cmdline, 0, sizeof(mshv_cmdline));
 
@@ -78,15 +83,23 @@ static efi_status_t mshv_populate_ranges(struct boot_params *boot_params,
 
 	/*
 	 * Create the 'hyperv_resvd_new' command line option:
-	 * 'hyperv_resvd_new=<size>,<address>'
+	 * 'hyperv_resvd_new=<size>!<address>,<size>!<address>,...'
 	 */
 	cmdline_len += snprintf(&mshv_cmdline[cmdline_len],
-					sizeof(mshv_cmdline)-cmdline_len,
-					" hyperv_resvd_new=%d,0x%p",
-					mshv_reserved_sz, mshv_reserved);
+				sizeof(mshv_cmdline) - cmdline_len,
+				" hyperv_resvd_new=");
 
-	if (cmdline_len >= sizeof(mshv_cmdline) - 1)
-		return EFI_BUFFER_TOO_SMALL;
+	for (i = 0; i < res_len; ++i) {
+		resource_size_t sz = res[i].end - res[i].start + 1;
+
+		cmdline_len += snprintf(&mshv_cmdline[cmdline_len],
+					sizeof(mshv_cmdline) - cmdline_len,
+					"%s0x%llx!0x%llx", i == 0 ? "" : ",", sz,
+					res[i].start);
+
+		if (cmdline_len >= sizeof(mshv_cmdline) - 1)
+			return EFI_BUFFER_TOO_SMALL;
+	}
 
 	boot_params->hdr.cmd_line_ptr = (u32)((unsigned long)mshv_cmdline);
 	boot_params->ext_cmd_line_ptr = (u32)((unsigned long)mshv_cmdline >> 32);
