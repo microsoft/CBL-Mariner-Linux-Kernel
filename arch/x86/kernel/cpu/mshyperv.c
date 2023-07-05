@@ -521,53 +521,54 @@ static struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
 static u32 ranges_nr;
 
 /*
- * Parse "hyperv_resvd=<size>,<address>", specifying a memory block that
- * contains an array of memory ranges that are reserved by the loader for the
- * hypervisor.
+ * Parse "hyperv_resvd_new=<size>!<address>,<size>!<address>,...", specifying a
+ * list of memory ranges that are reserved by the loader for the hypervisor.
  */
 static int __init hv_parse_hyperv_resvd_new(char *arg)
 {
-	struct resource *data;
-	int data_sz;
-	unsigned long long pa_data;
-	int result;
+	unsigned long long region_start, region_sz;
+	int i = 0;
+	char *curr = arg;
 
 	mshv_loader_new = true;
 
 	if (is_kdump_kernel())
 		return 0;
 
-	result = get_option(&arg, &data_sz);
-	/* Make sure format is correct <size>,<address> */
-	if (result != 2) {
-		pr_err("Hyper-V: Invalid format %s; should be "
-			   "'hyperv_resvd=<size>,<address>'\n", arg);
-		BUG();
+	while (*curr != 0) {
+		region_sz = simple_strtoull(curr, &curr, 16);
+		if (!region_sz) {
+			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
+			BUG();
+		}
+
+		if (*curr != '!') {
+			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
+			BUG();
+		}
+
+		++curr;
+
+		region_start = simple_strtoull(curr, &curr, 16);
+		if (region_start == 0) {
+			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
+			BUG();
+		}
+
+		memblock_reserve(region_start, region_sz);
+
+		hv_mshv_res[i].name = "Hypervisor Code and Data";
+		hv_mshv_res[i].flags = IORESOURCE_BUSY | IORESOURCE_SYSTEM_RAM;
+		hv_mshv_res[i].start = region_start;
+		hv_mshv_res[i].end = region_start + region_sz - 1;
+
+		if (*curr == ',')
+			++curr;
+
+		++i;
 	}
 
-	pa_data = simple_strtoull(arg, NULL, 16);
-	if (!pa_data || (data_sz % sizeof(struct resource))) {
-		pr_err("Hyper-V: Invalid hyperv_resvd parameter: %s\n", 
-			   (char *)pa_data);
-		BUG();
-	}
-
-	ranges_nr = data_sz / sizeof(struct resource);
-	if (ranges_nr > HV_MAX_RESVD_RANGES) {
-		pr_err("Hyper-V: too many reserved ranges %d, max %d!\n",
-			ranges_nr, HV_MAX_RESVD_RANGES);
-		/*
-		 * Might as well stop here when it is very clear what the issue is.
-		 * Continue booting without marking all mshv ranges as reserved
-		 * will crash at a random place, during boot, and be more
-		 * challenging to root-cause.
-		 */
-		BUG();
-	}
-
-	data = early_memremap(pa_data, data_sz);
-	memcpy(hv_mshv_res, data, data_sz);
-	early_memunmap(data, data_sz);
+	ranges_nr = i;
 
 	return 0;
 }
