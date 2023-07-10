@@ -2074,11 +2074,23 @@ return_null_message:
 	msg->data = 0;
 }
 
+static int hv_irq_set_affinity(struct irq_data *data,
+			       const struct cpumask *dest, bool force)
+{
+	if (hv_nested && hv_root_partition) {
+		printk_once("Hyper-V: IRQ affinity change in nested root "
+			    "partition is currently not available\n");
+		return -EPERM;
+	}
+
+	return irq_chip_set_affinity_parent(data, dest, force);
+}
+
 /* HW Interrupt Chip Descriptor */
 static struct irq_chip hv_msi_irq_chip = {
 	.name			= "Hyper-V PCIe MSI",
 	.irq_compose_msi_msg	= hv_compose_msi_msg,
-	.irq_set_affinity	= irq_chip_set_affinity_parent,
+	.irq_set_affinity	= hv_irq_set_affinity,
 #ifdef CONFIG_X86
 	.irq_ack		= irq_chip_ack_parent,
 #elif defined(CONFIG_ARM64)
