@@ -39,7 +39,7 @@ drm_vram_helper-y := drm_gem_vram_helper.o
 obj-$(CONFIG_DRM_VRAM_HELPER) += drm_vram_helper.o
 
 drm_ttm_helper-y := drm_gem_ttm_helper.o
-obj-$(CONFIG_DRM_TTM_HELPER) += drm_ttm_helper.o
+obj-$(CONFIG_DRM_TTM_HELPER) += drm_ttm_helper.o amd/
 
 drm_kms_helper-y := drm_bridge_connector.o drm_crtc_helper.o drm_dp_helper.o \
 		drm_dsc.o drm_probe_helper.o \
@@ -65,12 +65,12 @@ obj-$(CONFIG_DRM_MIPI_DBI) += drm_mipi_dbi.o
 obj-$(CONFIG_DRM_MIPI_DSI) += drm_mipi_dsi.o
 obj-$(CONFIG_DRM_PANEL_ORIENTATION_QUIRKS) += drm_panel_orientation_quirks.o
 obj-y			+= arm/
-obj-$(CONFIG_DRM_TTM)	+= ttm/
-obj-$(CONFIG_DRM_SCHED)	+= scheduler/
+obj-$(CONFIG_DRM_TTM)	+= ttm/ amdttm/
+obj-$(CONFIG_DRM_SCHED)	+= scheduler/ amd-sched/
 obj-$(CONFIG_DRM_TDFX)	+= tdfx/
 obj-$(CONFIG_DRM_R128)	+= r128/
 obj-$(CONFIG_DRM_RADEON)+= radeon/
-obj-$(CONFIG_DRM_AMDGPU)+= amd/amdgpu/
+obj-$(CONFIG_DRM_AMDGPU)+= amd/amdgpu/ amd/amdkcl/ amd/amdxcp/
 obj-$(CONFIG_DRM_MGA)	+= mga/
 obj-$(CONFIG_DRM_I810)	+= i810/
 obj-$(CONFIG_DRM_I915)	+= i915/
