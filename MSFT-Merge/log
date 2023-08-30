@@ -1,0 +1,7 @@
+Name                                               SHA1
+----                                               ----
+feature/dxgkrnl/5.15                               e8c50f197b62b147dbc3e3ee083dd1fbb66eaeaf
+feature/vpci/5.15                                  92c970cf37ef2b7d159905ca9df9e25f86618248
+feature/fs-idmapped-overlayfs/5.15                 017a321c8c39c3fd50bc2165ad138efb7af6c67d
+feature/vmbus/5.15                                 81a4bd4e3bfc5c62d1f6c272185390b39b9d11ad
+product/amd/5.15                                   4d96fc7c03698a544e40136c7dc25b277987615b
