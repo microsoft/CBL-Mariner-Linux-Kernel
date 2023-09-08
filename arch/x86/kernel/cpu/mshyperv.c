@@ -226,7 +226,7 @@ static void hv_machine_shutdown(void)
 		hyperv_cleanup();
 }
 
-static void hv_machine_crash_shutdown(struct pt_regs *regs)
+static void hv_guest_crash_shutdown(struct pt_regs *regs)
 {
 	if (hv_crash_handler)
 		hv_crash_handler(regs);
@@ -799,7 +799,8 @@ static void __init ms_hyperv_init_platform(void)
 
 #if IS_ENABLED(CONFIG_HYPERV) && defined(CONFIG_KEXEC_CORE)
 	machine_ops.shutdown = hv_machine_shutdown;
-	machine_ops.crash_shutdown = hv_machine_crash_shutdown;
+	if (!hv_root_partition)
+		machine_ops.crash_shutdown = hv_guest_crash_shutdown;
 #endif
 	if (ms_hyperv.features & HV_ACCESS_TSC_INVARIANT) {
 		/*
