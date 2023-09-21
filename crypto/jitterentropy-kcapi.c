@@ -55,6 +55,17 @@
  * Helper function
  ***************************************************************************/
 
+void *jent_kvzalloc(unsigned int len)
+{
+	return kvzalloc(len, GFP_KERNEL);
+}
+
+void jent_kvzfree(void *ptr, unsigned int len)
+{
+	memzero_explicit(ptr, len);
+	kvfree(ptr);
+}
+
 void *jent_zalloc(unsigned int len)
 {
 	return kzalloc(len, GFP_KERNEL);
