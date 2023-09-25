@@ -1,0 +1,5 @@
+Name                                               SHA1
+----                                               ----
+config/mariner-6.1                                 2958c700fc6e65b2cf1d0546382ac056ac09cfa8
+feature/dxgkrnl/6.1                                b1ffaafc0bfb1bb9ec9c8d00da0f82fb4527aab0
+feature/hvlite_virtio_pmem/6.1                     b69288eef817645dd446d577d477f19090ef22d2
