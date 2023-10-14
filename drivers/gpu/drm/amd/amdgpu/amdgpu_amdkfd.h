@@ -29,10 +29,14 @@
 #include <linux/mm.h>
 #include <linux/kthread.h>
 #include <linux/workqueue.h>
+#include <linux/mmu_notifier.h>
+#include <linux/memremap.h>
 #include <kgd_kfd_interface.h>
 #include <drm/ttm/ttm_execbuf_util.h>
+#include "amdgpu_gfx.h"
 #include "amdgpu_sync.h"
 #include "amdgpu_vm.h"
+#include "amdgpu_xcp.h"
 
 extern uint64_t amdgpu_amdkfd_total_mem_size;
 
@@ -48,6 +52,7 @@ enum kfd_mem_attachment_type {
 	KFD_MEM_ATT_SHARED,	/* Share kgd_mem->bo or another attachment's */
 	KFD_MEM_ATT_USERPTR,	/* SG bo to DMA map pages from a userptr bo */
 	KFD_MEM_ATT_DMABUF,	/* DMAbuf to DMA map TTM BOs */
+	KFD_MEM_ATT_SG		/* Tag to DMA map SG BOs */
 };
 
 struct kfd_mem_attachment {
@@ -63,7 +68,13 @@ struct kfd_mem_attachment {
 struct kgd_mem {
 	struct mutex lock;
 	struct amdgpu_bo *bo;
+	struct kfd_ipc_obj *ipc_obj;
 	struct dma_buf *dmabuf;
+#ifdef HAVE_AMDKCL_HMM_MIRROR_ENABLED
+	struct hmm_range *range;
+#else
+	struct page **user_pages;
+#endif
 	struct list_head attachments;
 	/* protected by amdkfd_process_info.lock */
 	struct ttm_validate_buffer validate_list;
@@ -74,7 +85,7 @@ struct kgd_mem {
 
 	uint32_t alloc_flags;
 
-	atomic_t invalid;
+	uint32_t invalid;
 	struct amdkfd_process_info *process_info;
 
 	struct amdgpu_sync sync;
@@ -94,8 +105,14 @@ struct amdgpu_amdkfd_fence {
 
 struct amdgpu_kfd_dev {
 	struct kfd_dev *dev;
-	uint64_t vram_used;
+	int64_t vram_used[MAX_XCP];
+	uint64_t vram_used_aligned[MAX_XCP];
+	atomic64_t vram_pinned;
 	bool init_complete;
+	struct work_struct reset_work;
+
+	/* HMM page migration MEMORY_DEVICE_PRIVATE mapping */
+	struct dev_pagemap pgmap;
 };
 
 enum kgd_engine_type {
@@ -128,30 +145,36 @@ struct amdkfd_process_info {
 	struct amdgpu_amdkfd_fence *eviction_fence;
 
 	/* MMU-notifier related fields */
-	atomic_t evicted_bos;
+	struct mutex notifier_lock;
+	uint32_t evicted_bos;
 	struct delayed_work restore_userptr_work;
 	struct pid *pid;
+	bool block_mmu_notifications;
 };
 
 int amdgpu_amdkfd_init(void);
 void amdgpu_amdkfd_fini(void);
 
 void amdgpu_amdkfd_suspend(struct amdgpu_device *adev, bool run_pm);
-int amdgpu_amdkfd_resume_iommu(struct amdgpu_device *adev);
 int amdgpu_amdkfd_resume(struct amdgpu_device *adev, bool run_pm);
 void amdgpu_amdkfd_interrupt(struct amdgpu_device *adev,
 			const void *ih_ring_entry);
 void amdgpu_amdkfd_device_probe(struct amdgpu_device *adev);
 void amdgpu_amdkfd_device_init(struct amdgpu_device *adev);
 void amdgpu_amdkfd_device_fini_sw(struct amdgpu_device *adev);
-int amdgpu_amdkfd_submit_ib(struct kgd_dev *kgd, enum kgd_engine_type engine,
+int amdgpu_amdkfd_check_and_lock_kfd(struct amdgpu_device *adev);
+void amdgpu_amdkfd_unlock_kfd(struct amdgpu_device *adev);
+int amdgpu_amdkfd_submit_ib(struct amdgpu_device *adev,
+				enum kgd_engine_type engine,
 				uint32_t vmid, uint64_t gpu_addr,
 				uint32_t *ib_cmd, uint32_t ib_len);
-void amdgpu_amdkfd_set_compute_idle(struct kgd_dev *kgd, bool idle);
-bool amdgpu_amdkfd_have_atomics_support(struct kgd_dev *kgd);
-int amdgpu_amdkfd_flush_gpu_tlb_vmid(struct kgd_dev *kgd, uint16_t vmid);
-int amdgpu_amdkfd_flush_gpu_tlb_pasid(struct kgd_dev *kgd, uint16_t pasid,
-				      enum TLB_FLUSH_TYPE flush_type);
+void amdgpu_amdkfd_set_compute_idle(struct amdgpu_device *adev, bool idle);
+bool amdgpu_amdkfd_have_atomics_support(struct amdgpu_device *adev);
+int amdgpu_amdkfd_flush_gpu_tlb_vmid(struct amdgpu_device *adev,
+				uint16_t vmid);
+int amdgpu_amdkfd_flush_gpu_tlb_pasid(struct amdgpu_device *adev,
+				uint16_t pasid, enum TLB_FLUSH_TYPE flush_type,
+				uint32_t inst);
 
 bool amdgpu_amdkfd_is_kfd_vmid(struct amdgpu_device *adev, u32 vmid);
 
@@ -159,7 +182,7 @@ int amdgpu_amdkfd_pre_reset(struct amdgpu_device *adev);
 
 int amdgpu_amdkfd_post_reset(struct amdgpu_device *adev);
 
-void amdgpu_amdkfd_gpu_reset(struct kgd_dev *kgd);
+void amdgpu_amdkfd_gpu_reset(struct amdgpu_device *adev);
 
 int amdgpu_queue_mask_bit_to_set_resource_bit(struct amdgpu_device *adev,
 					int queue_bit);
@@ -167,11 +190,19 @@ int amdgpu_queue_mask_bit_to_set_resource_bit(struct amdgpu_device *adev,
 struct amdgpu_amdkfd_fence *amdgpu_amdkfd_fence_create(u64 context,
 				struct mm_struct *mm,
 				struct svm_range_bo *svm_bo);
+#if defined(CONFIG_DEBUG_FS)
+int kfd_debugfs_kfd_mem_limits(struct seq_file *m, void *data);
+#endif
 #if IS_ENABLED(CONFIG_HSA_AMD)
 bool amdkfd_fence_check_mm(struct dma_fence *f, struct mm_struct *mm);
 struct amdgpu_amdkfd_fence *to_amdgpu_amdkfd_fence(struct dma_fence *f);
 int amdgpu_amdkfd_remove_fence_on_pt_pd_bos(struct amdgpu_bo *bo);
+#ifdef HAVE_AMDKCL_HMM_MIRROR_ENABLED
+int amdgpu_amdkfd_evict_userptr(struct mmu_interval_notifier *mni,
+				unsigned long cur_seq, struct kgd_mem *mem);
+#else
 int amdgpu_amdkfd_evict_userptr(struct kgd_mem *mem, struct mm_struct *mm);
+#endif
 #else
 static inline
 bool amdkfd_fence_check_mm(struct dma_fence *f, struct mm_struct *mm)
@@ -192,43 +223,52 @@ int amdgpu_amdkfd_remove_fence_on_pt_pd_bos(struct amdgpu_bo *bo)
 }
 
 static inline
+#ifdef HAVE_AMDKCL_HMM_MIRROR_ENABLED
+int amdgpu_amdkfd_evict_userptr(struct mmu_interval_notifier *mni,
+				unsigned long cur_seq, struct kgd_mem *mem)
+#else
 int amdgpu_amdkfd_evict_userptr(struct kgd_mem *mem, struct mm_struct *mm)
+#endif
 {
 	return 0;
 }
 #endif
 /* Shared API */
-int amdgpu_amdkfd_alloc_gtt_mem(struct kgd_dev *kgd, size_t size,
+int amdgpu_amdkfd_alloc_gtt_mem(struct amdgpu_device *adev, size_t size,
 				void **mem_obj, uint64_t *gpu_addr,
-				void **cpu_ptr, bool mqd_gfx9);
-void amdgpu_amdkfd_free_gtt_mem(struct kgd_dev *kgd, void *mem_obj);
-int amdgpu_amdkfd_alloc_gws(struct kgd_dev *kgd, size_t size, void **mem_obj);
-void amdgpu_amdkfd_free_gws(struct kgd_dev *kgd, void *mem_obj);
+				void **cpu_ptr, bool mqd_gfx9, bool is_uswc_mode);
+void amdgpu_amdkfd_free_gtt_mem(struct amdgpu_device *adev, void *mem_obj);
+int amdgpu_amdkfd_alloc_gws(struct amdgpu_device *adev, size_t size,
+				void **mem_obj);
+void amdgpu_amdkfd_free_gws(struct amdgpu_device *adev, void *mem_obj);
 int amdgpu_amdkfd_add_gws_to_process(void *info, void *gws, struct kgd_mem **mem);
 int amdgpu_amdkfd_remove_gws_from_process(void *info, void *mem);
-uint32_t amdgpu_amdkfd_get_fw_version(struct kgd_dev *kgd,
+uint32_t amdgpu_amdkfd_get_fw_version(struct amdgpu_device *adev,
 				      enum kgd_engine_type type);
-void amdgpu_amdkfd_get_local_mem_info(struct kgd_dev *kgd,
-				      struct kfd_local_mem_info *mem_info);
-uint64_t amdgpu_amdkfd_get_gpu_clock_counter(struct kgd_dev *kgd);
+void amdgpu_amdkfd_get_local_mem_info(struct amdgpu_device *adev,
+				      struct kfd_local_mem_info *mem_info,
+				      struct amdgpu_xcp *xcp);
+uint64_t amdgpu_amdkfd_get_gpu_clock_counter(struct amdgpu_device *adev);
 
-uint32_t amdgpu_amdkfd_get_max_engine_clock_in_mhz(struct kgd_dev *kgd);
-void amdgpu_amdkfd_get_cu_info(struct kgd_dev *kgd, struct kfd_cu_info *cu_info);
-int amdgpu_amdkfd_get_dmabuf_info(struct kgd_dev *kgd, int dma_buf_fd,
-				  struct kgd_dev **dmabuf_kgd,
+uint32_t amdgpu_amdkfd_get_max_engine_clock_in_mhz(struct amdgpu_device *adev);
+void amdgpu_amdkfd_get_cu_info(struct amdgpu_device *adev,
+			       struct kfd_cu_info *cu_info);
+int amdgpu_amdkfd_get_dmabuf_info(struct amdgpu_device *adev, int dma_buf_fd,
+				  struct amdgpu_device **dmabuf_adev,
 				  uint64_t *bo_size, void *metadata_buffer,
 				  size_t buffer_size, uint32_t *metadata_size,
-				  uint32_t *flags);
-uint64_t amdgpu_amdkfd_get_vram_usage(struct kgd_dev *kgd);
-uint64_t amdgpu_amdkfd_get_hive_id(struct kgd_dev *kgd);
-uint64_t amdgpu_amdkfd_get_unique_id(struct kgd_dev *kgd);
-uint64_t amdgpu_amdkfd_get_mmio_remap_phys_addr(struct kgd_dev *kgd);
-uint32_t amdgpu_amdkfd_get_num_gws(struct kgd_dev *kgd);
-uint32_t amdgpu_amdkfd_get_asic_rev_id(struct kgd_dev *kgd);
-int amdgpu_amdkfd_get_noretry(struct kgd_dev *kgd);
-uint8_t amdgpu_amdkfd_get_xgmi_hops_count(struct kgd_dev *dst, struct kgd_dev *src);
-int amdgpu_amdkfd_get_xgmi_bandwidth_mbytes(struct kgd_dev *dst, struct kgd_dev *src, bool is_min);
-int amdgpu_amdkfd_get_pcie_bandwidth_mbytes(struct kgd_dev *dev, bool is_min);
+				  uint32_t *flags, int8_t *xcp_id);
+uint64_t amdgpu_amdkfd_get_vram_usage(struct amdgpu_device *adev);
+uint8_t amdgpu_amdkfd_get_xgmi_hops_count(struct amdgpu_device *dst,
+					  struct amdgpu_device *src);
+int amdgpu_amdkfd_get_xgmi_bandwidth_mbytes(struct amdgpu_device *dst,
+					    struct amdgpu_device *src,
+					    bool is_min);
+int amdgpu_amdkfd_get_pcie_bandwidth_mbytes(struct amdgpu_device *adev, bool is_min);
+int amdgpu_amdkfd_send_close_event_drain_irq(struct amdgpu_device *adev,
+					uint32_t *payload);
+int amdgpu_amdkfd_unmap_hiq(struct amdgpu_device *adev, u32 doorbell_off,
+				u32 inst);
 
 /* Read user wptr from a specified user address space with page fault
  * disabled. The memory must be pinned and mapped to the hardware when
@@ -258,43 +298,125 @@ int amdgpu_amdkfd_get_pcie_bandwidth_mbytes(struct kgd_dev *dev, bool is_min);
 	(&((struct amdgpu_fpriv *)					\
 		((struct drm_file *)(drm_priv))->driver_priv)->vm)
 
-int amdgpu_amdkfd_gpuvm_acquire_process_vm(struct kgd_dev *kgd,
-					struct file *filp, u32 pasid,
+int amdgpu_amdkfd_gpuvm_set_vm_pasid(struct amdgpu_device *adev,
+				     struct amdgpu_vm *avm, u32 pasid);
+int amdgpu_amdkfd_gpuvm_acquire_process_vm(struct amdgpu_device *adev,
+					struct amdgpu_vm *avm,
 					void **process_info,
 					struct dma_fence **ef);
-void amdgpu_amdkfd_gpuvm_release_process_vm(struct kgd_dev *kgd, void *drm_priv);
+void amdgpu_amdkfd_gpuvm_release_process_vm(struct amdgpu_device *adev,
+					void *drm_priv);
 uint64_t amdgpu_amdkfd_gpuvm_get_process_page_dir(void *drm_priv);
+size_t amdgpu_amdkfd_get_available_memory(struct amdgpu_device *adev,
+					uint8_t xcp_id);
 int amdgpu_amdkfd_gpuvm_alloc_memory_of_gpu(
-		struct kgd_dev *kgd, uint64_t va, uint64_t size,
+		struct amdgpu_device *adev, uint64_t va, uint64_t size,
 		void *drm_priv, struct kgd_mem **mem,
-		uint64_t *offset, uint32_t flags);
+		uint64_t *offset, uint32_t flags, bool criu_resume);
 int amdgpu_amdkfd_gpuvm_free_memory_of_gpu(
-		struct kgd_dev *kgd, struct kgd_mem *mem, void *drm_priv,
+		struct amdgpu_device *adev, struct kgd_mem *mem, void *drm_priv,
 		uint64_t *size);
-int amdgpu_amdkfd_gpuvm_map_memory_to_gpu(
-		struct kgd_dev *kgd, struct kgd_mem *mem, void *drm_priv, bool *table_freed);
+int amdgpu_amdkfd_gpuvm_map_memory_to_gpu(struct amdgpu_device *adev,
+					  struct kgd_mem *mem, void *drm_priv);
 int amdgpu_amdkfd_gpuvm_unmap_memory_from_gpu(
-		struct kgd_dev *kgd, struct kgd_mem *mem, void *drm_priv);
+		struct amdgpu_device *adev, struct kgd_mem *mem, void *drm_priv);
 int amdgpu_amdkfd_gpuvm_sync_memory(
-		struct kgd_dev *kgd, struct kgd_mem *mem, bool intr);
-int amdgpu_amdkfd_gpuvm_map_gtt_bo_to_kernel(struct kgd_dev *kgd,
-		struct kgd_mem *mem, void **kptr, uint64_t *size);
+		struct amdgpu_device *adev, struct kgd_mem *mem, bool intr);
+int amdgpu_amdkfd_gpuvm_map_gtt_bo_to_kernel(struct kgd_mem *mem,
+					     void **kptr, uint64_t *size);
+void amdgpu_amdkfd_gpuvm_unmap_gtt_bo_from_kernel(struct kgd_mem *mem);
+
+int amdgpu_amdkfd_map_gtt_bo_to_gart(struct amdgpu_device *adev, struct amdgpu_bo *bo);
+
 int amdgpu_amdkfd_gpuvm_restore_process_bos(void *process_info,
 					    struct dma_fence **ef);
-int amdgpu_amdkfd_gpuvm_get_vm_fault_info(struct kgd_dev *kgd,
+int amdgpu_amdkfd_gpuvm_get_vm_fault_info(struct amdgpu_device *adev,
 					      struct kfd_vm_fault_info *info);
-int amdgpu_amdkfd_gpuvm_import_dmabuf(struct kgd_dev *kgd,
+
+struct amdgpu_bo *amdgpu_amdkfd_gpuvm_get_bo_ref(struct kgd_mem *mem,
+						 uint32_t *flags);
+void amdgpu_amdkfd_gpuvm_put_bo_ref(struct amdgpu_bo *bo);
+
+/**
+ * amdgpu_amdkfd_gpuvm_pin_bo() - Pins a BO using following criteria
+ * @bo: Handle of buffer object being pinned
+ * @domain: Domain into which BO should be pinned
+ *
+ *   - USERPTR BOs are UNPINNABLE and will return error
+ *   - All other BO types (GTT, VRAM, MMIO and DOORBELL) will have their
+ *     PIN count incremented. It is valid to PIN a BO multiple times
+ *
+ * Return: ZERO if successful in pinning, Non-Zero in case of error.
+ */
+int amdgpu_amdkfd_gpuvm_pin_bo(struct amdgpu_bo *bo, u32 domain);
+
+/**
+ * amdgpu_amdkfd_gpuvm_unpin_bo() - Unpins BO using following criteria
+ * @bo: Handle of buffer object being unpinned
+ *
+ *   - Is a illegal request for USERPTR BOs and is ignored
+ *   - All other BO types (GTT, VRAM, MMIO and DOORBELL) will have their
+ *     PIN count decremented. Calls to UNPIN must balance calls to PIN
+ */
+void amdgpu_amdkfd_gpuvm_unpin_bo(struct amdgpu_bo *bo);
+
+int amdgpu_amdkfd_gpuvm_get_sg_table(struct amdgpu_device *adev,
+		struct amdgpu_bo *bo, uint32_t flags,
+		uint64_t offset, uint64_t size,
+		struct device *dma_dev, enum dma_data_direction dir,
+		struct sg_table **ret_sg);
+void amdgpu_amdkfd_gpuvm_put_sg_table(struct amdgpu_bo *bo,
+		struct device *dma_dev, enum dma_data_direction dir,
+		struct sg_table *sg);
+
+int amdgpu_amdkfd_gpuvm_import_dmabuf(struct amdgpu_device *adev,
 				      struct dma_buf *dmabuf,
+				      struct kfd_ipc_obj *ipc_obj,
 				      uint64_t va, void *drm_priv,
 				      struct kgd_mem **mem, uint64_t *size,
 				      uint64_t *mmap_offset);
-int amdgpu_amdkfd_get_tile_config(struct kgd_dev *kgd,
+int amdgpu_amdkfd_gpuvm_export_dmabuf(struct kgd_mem *mem,
+				      struct dma_buf **dmabuf);
+int amdgpu_amdkfd_gpuvm_export_ipc_obj(struct amdgpu_device *adev, void *vm,
+				       struct kgd_mem *mem,
+				       struct kfd_ipc_obj **ipc_obj,
+				       uint32_t flags,
+				       uint32_t *restore_handle);
+
+void amdgpu_amdkfd_debug_mem_fence(struct amdgpu_device *adev);
+int amdgpu_amdkfd_get_tile_config(struct amdgpu_device *adev,
 				struct tile_config *config);
+void amdgpu_amdkfd_ras_poison_consumption_handler(struct amdgpu_device *adev,
+				bool reset);
+bool amdgpu_amdkfd_bo_mapped_to_dev(struct amdgpu_device *adev, struct kgd_mem *mem);
+void amdgpu_amdkfd_block_mmu_notifications(void *p);
+int amdgpu_amdkfd_criu_resume(void *p);
+bool amdgpu_amdkfd_ras_query_utcl2_poison_status(struct amdgpu_device *adev);
+int amdgpu_amdkfd_reserve_mem_limit(struct amdgpu_device *adev,
+		uint64_t size, u32 alloc_flag, int8_t xcp_id);
+void amdgpu_amdkfd_unreserve_mem_limit(struct amdgpu_device *adev,
+		uint64_t size, u32 alloc_flag, int8_t xcp_id);
+
+u64 amdgpu_amdkfd_xcp_memory_size(struct amdgpu_device *adev, int xcp_id);
+
+#define KFD_XCP_MEM_ID(adev, xcp_id) \
+		((adev)->xcp_mgr && (xcp_id) >= 0 ?\
+		(adev)->xcp_mgr->xcp[(xcp_id)].mem_id : -1)
+
+#define KFD_XCP_MEMORY_SIZE(adev, xcp_id) amdgpu_amdkfd_xcp_memory_size((adev), (xcp_id))
+
+
 #if IS_ENABLED(CONFIG_HSA_AMD)
 void amdgpu_amdkfd_gpuvm_init_mem_limits(void);
 void amdgpu_amdkfd_gpuvm_destroy_cb(struct amdgpu_device *adev,
 				struct amdgpu_vm *vm);
-void amdgpu_amdkfd_unreserve_memory_limit(struct amdgpu_bo *bo);
+
+/**
+ * @amdgpu_amdkfd_release_notify() - Notify KFD when GEM object is released
+ *
+ * Allows KFD to release its resources associated with the GEM object.
+ */
+void amdgpu_amdkfd_release_notify(struct amdgpu_bo *bo);
 void amdgpu_amdkfd_reserve_system_mem(uint64_t size);
 #else
 static inline
@@ -309,32 +431,50 @@ void amdgpu_amdkfd_gpuvm_destroy_cb(struct amdgpu_device *adev,
 }
 
 static inline
-void amdgpu_amdkfd_unreserve_memory_limit(struct amdgpu_bo *bo)
+void amdgpu_amdkfd_release_notify(struct amdgpu_bo *bo)
 {
 }
 #endif
+
+void amdgpu_amdkfd_rlc_spm_cntl(struct amdgpu_device *adev, bool cntl);
+int amdgpu_amdkfd_rlc_spm_acquire(struct amdgpu_device *adev,
+		struct amdgpu_vm *vm, u64 gpu_addr, u32 size);
+void amdgpu_amdkfd_rlc_spm_release(struct amdgpu_device *adev, struct amdgpu_vm *vm);
+void amdgpu_amdkfd_rlc_spm_set_rdptr(struct amdgpu_device *adev, u32 rptr);
+void amdgpu_amdkfd_rlc_spm_interrupt(struct amdgpu_device *adev);
+
+#if IS_ENABLED(CONFIG_HSA_AMD_SVM)
+int kgd2kfd_init_zone_device(struct amdgpu_device *adev);
+#else
+static inline
+int kgd2kfd_init_zone_device(struct amdgpu_device *adev)
+{
+	return 0;
+}
+#endif
+
 /* KGD2KFD callbacks */
-int kgd2kfd_quiesce_mm(struct mm_struct *mm);
+void kgd2kfd_spm_interrupt(struct kfd_dev *kfd);
+int kgd2kfd_quiesce_mm(struct mm_struct *mm, uint32_t trigger);
 int kgd2kfd_resume_mm(struct mm_struct *mm);
 int kgd2kfd_schedule_evict_and_restore_process(struct mm_struct *mm,
 						struct dma_fence *fence);
 #if IS_ENABLED(CONFIG_HSA_AMD)
 int kgd2kfd_init(void);
 void kgd2kfd_exit(void);
-struct kfd_dev *kgd2kfd_probe(struct kgd_dev *kgd, struct pci_dev *pdev,
-			      unsigned int asic_type, bool vf);
+struct kfd_dev *kgd2kfd_probe(struct amdgpu_device *adev, bool vf);
 bool kgd2kfd_device_init(struct kfd_dev *kfd,
-			 struct drm_device *ddev,
 			 const struct kgd2kfd_shared_resources *gpu_resources);
 void kgd2kfd_device_exit(struct kfd_dev *kfd);
-void kgd2kfd_suspend(struct kfd_dev *kfd, bool run_pm);
-int kgd2kfd_resume_iommu(struct kfd_dev *kfd);
+void kgd2kfd_suspend(struct kfd_dev *kfd, bool run_pm, bool force);
 int kgd2kfd_resume(struct kfd_dev *kfd, bool run_pm);
 int kgd2kfd_pre_reset(struct kfd_dev *kfd);
 int kgd2kfd_post_reset(struct kfd_dev *kfd);
 void kgd2kfd_interrupt(struct kfd_dev *kfd, const void *ih_ring_entry);
 void kgd2kfd_set_sram_ecc_flag(struct kfd_dev *kfd);
 void kgd2kfd_smi_event_throttle(struct kfd_dev *kfd, uint64_t throttle_bitmask);
+int kgd2kfd_check_and_lock_kfd(void);
+void kgd2kfd_unlock_kfd(void);
 #else
 static inline int kgd2kfd_init(void)
 {
@@ -346,14 +486,13 @@ static inline void kgd2kfd_exit(void)
 }
 
 static inline
-struct kfd_dev *kgd2kfd_probe(struct kgd_dev *kgd, struct pci_dev *pdev,
-					unsigned int asic_type, bool vf)
+struct kfd_dev *kgd2kfd_probe(struct amdgpu_device *adev, bool vf)
 {
 	return NULL;
 }
 
 static inline
-bool kgd2kfd_device_init(struct kfd_dev *kfd, struct drm_device *ddev,
+bool kgd2kfd_device_init(struct kfd_dev *kfd,
 				const struct kgd2kfd_shared_resources *gpu_resources)
 {
 	return false;
@@ -363,16 +502,11 @@ static inline void kgd2kfd_device_exit(struct kfd_dev *kfd)
 {
 }
 
-static inline void kgd2kfd_suspend(struct kfd_dev *kfd, bool run_pm)
+static inline void kgd2kfd_suspend(struct kfd_dev *kfd, bool run_pm, bool force)
 {
 }
 
-static int __maybe_unused kgd2kfd_resume_iommu(struct kfd_dev *kfd)
-{
-	return 0;
-}
-
-static inline int kgd2kfd_resume(struct kfd_dev *kfd, bool run_pm)
+static inline int kgd2kfd_resume(struct kfd_dev *kfd, bool run_pm, bool sync)
 {
 	return 0;
 }
@@ -399,6 +533,15 @@ void kgd2kfd_set_sram_ecc_flag(struct kfd_dev *kfd)
 
 static inline
 void kgd2kfd_smi_event_throttle(struct kfd_dev *kfd, uint64_t throttle_bitmask)
+{
+}
+
+static inline int kgd2kfd_check_and_lock_kfd(void)
+{
+	return 0;
+}
+
+static inline void kgd2kfd_unlock_kfd(void)
 {
 }
 #endif

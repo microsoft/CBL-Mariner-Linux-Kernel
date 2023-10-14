@@ -210,7 +210,7 @@ static void nbio_v6_1_update_medium_grain_light_sleep(struct amdgpu_device *adev
 }
 
 static void nbio_v6_1_get_clockgating_state(struct amdgpu_device *adev,
-					    u32 *flags)
+					    u64 *flags)
 {
 	int data;
 
@@ -276,6 +276,10 @@ static void nbio_v6_1_init_registers(struct amdgpu_device *adev)
 
 	if (def != data)
 		WREG32_PCIE(smnPCIE_CI_CNTL, data);
+
+	if (amdgpu_sriov_vf(adev))
+		adev->rmmio_remap.reg_offset = SOC15_REG_OFFSET(NBIO, 0,
+			mmBIF_BX_DEV0_EPF0_VF0_HDP_MEM_COHERENCY_FLUSH_CNTL) << 2;
 }
 
 #ifdef CONFIG_PCIEASPM
@@ -362,9 +366,10 @@ static void nbio_v6_1_program_aspm(struct amdgpu_device *adev)
 
 	/* Don't bother about LTR if LTR is not enabled
 	 * in the path */
+#ifdef HAVE_PCI_DEV_LTR_PATH
 	if (adev->pdev->ltr_path)
 		nbio_v6_1_program_ltr(adev);
-
+#endif
 	def = data = RREG32_PCIE(smnRCC_BIF_STRAP3);
 	data |= 0x5DE0 << RCC_BIF_STRAP3__STRAP_VLINK_ASPM_IDLE_TIMER__SHIFT;
 	data |= 0x0010 << RCC_BIF_STRAP3__STRAP_VLINK_PM_L1_ENTRY_TIMER__SHIFT;

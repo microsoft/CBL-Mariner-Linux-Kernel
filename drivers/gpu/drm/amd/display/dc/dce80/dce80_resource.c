@@ -23,8 +23,6 @@
  *
  */
 
-#include <linux/slab.h>
-
 #include "dce/dce_8_0_d.h"
 #include "dce/dce_8_0_sh_mask.h"
 
@@ -60,12 +58,12 @@
 #include "dce/dce_i2c.h"
 /* TODO remove this include */
 
-#include "dce80_resource.h"
-
 #ifndef mmMC_HUB_RDREQ_DMIF_LIMIT
 #include "gmc/gmc_7_1_d.h"
 #include "gmc/gmc_7_1_sh_mask.h"
 #endif
+
+#include "dce80/dce80_resource.h"
 
 #ifndef mmDP_DPHY_INTERNAL_CTRL
 #define mmDP_DPHY_INTERNAL_CTRL                         0x1CDE
@@ -420,6 +418,10 @@ static const struct dc_plane_cap plane_cap = {
 	}
 };
 
+static const struct dc_debug_options debug_defaults = {
+		.enable_legacy_fast_update = true,
+};
+
 static const struct dce_dmcu_registers dmcu_regs = {
 		DMCU_DCE80_REG_LIST()
 };
@@ -715,6 +717,7 @@ static const struct encoder_feature_support link_enc_feature = {
 };
 
 static struct link_encoder *dce80_link_encoder_create(
+	struct dc_context *ctx,
 	const struct encoder_init_data *enc_init_data)
 {
 	struct dce110_link_encoder *enc110 =
@@ -970,6 +973,7 @@ static bool dce80_construct(
 	dc->caps.min_horizontal_blanking_period = 80;
 	dc->caps.dual_link_dvi = true;
 	dc->caps.extended_aux_timeout_support = false;
+	dc->debug = debug_defaults;
 
 	/*************************************************
 	 *  Create resources                             *
@@ -1370,6 +1374,7 @@ static bool dce83_construct(
 	dc->caps.max_cursor_size = 128;
 	dc->caps.min_horizontal_blanking_period = 80;
 	dc->caps.is_apu = true;
+	dc->debug = debug_defaults;
 
 	/*************************************************
 	 *  Create resources                             *
