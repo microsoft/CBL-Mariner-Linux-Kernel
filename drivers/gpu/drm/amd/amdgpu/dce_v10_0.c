@@ -22,6 +22,8 @@
  */
 
 #include <drm/drm_fourcc.h>
+#include <drm/drm_modeset_helper.h>
+#include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_vblank.h>
 
 #include "amdgpu.h"
@@ -50,8 +52,7 @@
 static void dce_v10_0_set_display_funcs(struct amdgpu_device *adev);
 static void dce_v10_0_set_irq_funcs(struct amdgpu_device *adev);
 
-static const u32 crtc_offsets[] =
-{
+static const u32 crtc_offsets[] = {
 	CRTC0_REGISTER_OFFSET,
 	CRTC1_REGISTER_OFFSET,
 	CRTC2_REGISTER_OFFSET,
@@ -61,8 +62,7 @@ static const u32 crtc_offsets[] =
 	CRTC6_REGISTER_OFFSET
 };
 
-static const u32 hpd_offsets[] =
-{
+static const u32 hpd_offsets[] = {
 	HPD0_REGISTER_OFFSET,
 	HPD1_REGISTER_OFFSET,
 	HPD2_REGISTER_OFFSET,
@@ -119,30 +119,26 @@ static const struct {
 	.hpd = DISP_INTERRUPT_STATUS_CONTINUE5__DC_HPD6_INTERRUPT_MASK
 } };
 
-static const u32 golden_settings_tonga_a11[] =
-{
+static const u32 golden_settings_tonga_a11[] = {
 	mmDCI_CLK_CNTL, 0x00000080, 0x00000000,
 	mmFBC_DEBUG_COMP, 0x000000f0, 0x00000070,
 	mmFBC_MISC, 0x1f311fff, 0x12300000,
 	mmHDMI_CONTROL, 0x31000111, 0x00000011,
 };
 
-static const u32 tonga_mgcg_cgcg_init[] =
-{
+static const u32 tonga_mgcg_cgcg_init[] = {
 	mmXDMA_CLOCK_GATING_CNTL, 0xffffffff, 0x00000100,
 	mmXDMA_MEM_POWER_CNTL, 0x00000101, 0x00000000,
 };
 
-static const u32 golden_settings_fiji_a10[] =
-{
+static const u32 golden_settings_fiji_a10[] = {
 	mmDCI_CLK_CNTL, 0x00000080, 0x00000000,
 	mmFBC_DEBUG_COMP, 0x000000f0, 0x00000070,
 	mmFBC_MISC, 0x1f311fff, 0x12300000,
 	mmHDMI_CONTROL, 0x31000111, 0x00000011,
 };
 
-static const u32 fiji_mgcg_cgcg_init[] =
-{
+static const u32 fiji_mgcg_cgcg_init[] = {
 	mmXDMA_CLOCK_GATING_CNTL, 0xffffffff, 0x00000100,
 	mmXDMA_MEM_POWER_CNTL, 0x00000101, 0x00000000,
 };
@@ -1040,7 +1036,7 @@ static void dce_v10_0_program_watermarks(struct amdgpu_device *adev,
 					    (u32)mode->clock);
 		line_time = (u32) div_u64((u64)mode->crtc_htotal * 1000000,
 					  (u32)mode->clock);
-		line_time = min(line_time, (u32)65535);
+		line_time = min_t(u32, line_time, 65535);
 
 		/* watermark for high clocks */
 		if (adev->pm.dpm_enabled) {
@@ -1070,7 +1066,7 @@ static void dce_v10_0_program_watermarks(struct amdgpu_device *adev,
 		wm_high.num_heads = num_heads;
 
 		/* set for high clocks */
-		latency_watermark_a = min(dce_v10_0_latency_watermark(&wm_high), (u32)65535);
+		latency_watermark_a = min_t(u32, dce_v10_0_latency_watermark(&wm_high), 65535);
 
 		/* possibly force display priority to high */
 		/* should really do this at mode validation time... */
@@ -1109,7 +1105,7 @@ static void dce_v10_0_program_watermarks(struct amdgpu_device *adev,
 		wm_low.num_heads = num_heads;
 
 		/* set for low clocks */
-		latency_watermark_b = min(dce_v10_0_latency_watermark(&wm_low), (u32)65535);
+		latency_watermark_b = min_t(u32, dce_v10_0_latency_watermark(&wm_low), 65535);
 
 		/* possibly force display priority to high */
 		/* should really do this at mode validation time... */
@@ -1423,8 +1419,7 @@ static void dce_v10_0_audio_enable(struct amdgpu_device *adev,
 			   enable ? AZALIA_F0_CODEC_PIN_CONTROL_HOT_PLUG_CONTROL__AUDIO_ENABLED_MASK : 0);
 }
 
-static const u32 pin_offsets[] =
-{
+static const u32 pin_offsets[] = {
 	AUD0_REGISTER_OFFSET,
 	AUD1_REGISTER_OFFSET,
 	AUD2_REGISTER_OFFSET,
@@ -1708,7 +1703,13 @@ static void dce_v10_0_afmt_setmode(struct drm_encoder *encoder,
 	dce_v10_0_audio_write_sad_regs(encoder);
 	dce_v10_0_audio_write_latency_fields(encoder, mode);
 
+#if defined(HAVE_DRM_HDMI_AVI_INFOFRAME_FROM_DISPLAY_MODE_P_P_P)
 	err = drm_hdmi_avi_infoframe_from_display_mode(&frame, connector, mode);
+#elif defined(HAVE_DRM_HDMI_AVI_INFOFRAME_FROM_DISPLAY_MODE_P_P_B)
+	err = drm_hdmi_avi_infoframe_from_display_mode(&frame, mode, false);
+#else
+	err = drm_hdmi_avi_infoframe_from_display_mode(&frame, mode);
+#endif /* HAVE_DRM_HDMI_AVI_INFOFRAME_FROM_DISPLAY_MODE_P_P_P */
 	if (err < 0) {
 		DRM_ERROR("failed to setup AVI infoframe: %zd\n", err);
 		return;
@@ -1809,8 +1810,7 @@ static void dce_v10_0_afmt_fini(struct amdgpu_device *adev)
 	}
 }
 
-static const u32 vga_control_regs[6] =
-{
+static const u32 vga_control_regs[6] = {
 	mmD1VGA_CONTROL,
 	mmD2VGA_CONTROL,
 	mmD3VGA_CONTROL,
@@ -1877,7 +1877,7 @@ static int dce_v10_0_crtc_do_set_base(struct drm_crtc *crtc,
 	/* If atomic, assume fb object is pinned & idle & fenced and
 	 * just update base pointers
 	 */
-	obj = target_fb->obj[0];
+	obj = drm_gem_fb_get_obj(target_fb, 0);
 	abo = gem_to_amdgpu_bo(obj);
 	r = amdgpu_bo_reserve(abo, false);
 	if (unlikely(r != 0))
@@ -2077,7 +2077,7 @@ static int dce_v10_0_crtc_do_set_base(struct drm_crtc *crtc,
 	WREG32(mmMASTER_UPDATE_MODE + amdgpu_crtc->crtc_offset, 0);
 
 	if (!atomic && fb && fb != crtc->primary->fb) {
-		abo = gem_to_amdgpu_bo(fb->obj[0]);
+		abo = gem_to_amdgpu_bo(drm_gem_fb_get_obj(fb, 0));
 		r = amdgpu_bo_reserve(abo, true);
 		if (unlikely(r != 0))
 			return r;
@@ -2490,10 +2490,12 @@ static const struct drm_crtc_funcs dce_v10_0_crtc_funcs = {
 	.set_config = amdgpu_display_crtc_set_config,
 	.destroy = dce_v10_0_crtc_destroy,
 	.page_flip_target = amdgpu_display_crtc_page_flip_target,
+#ifdef HAVE_STRUCT_DRM_CRTC_FUNCS_GET_VBLANK_TIMESTAMP
 	.get_vblank_counter = amdgpu_get_vblank_counter_kms,
 	.enable_vblank = amdgpu_enable_vblank_kms,
 	.disable_vblank = amdgpu_disable_vblank_kms,
 	.get_vblank_timestamp = drm_crtc_vblank_helper_get_vblank_timestamp,
+#endif
 };
 
 static void dce_v10_0_crtc_dpms(struct drm_crtc *crtc, int mode)
@@ -2532,7 +2534,7 @@ static void dce_v10_0_crtc_dpms(struct drm_crtc *crtc, int mode)
 		break;
 	}
 	/* adjust pm to dpms */
-	amdgpu_pm_compute_clocks(adev);
+	amdgpu_dpm_compute_clocks(adev);
 }
 
 static void dce_v10_0_crtc_prepare(struct drm_crtc *crtc)
@@ -2562,7 +2564,7 @@ static void dce_v10_0_crtc_disable(struct drm_crtc *crtc)
 		int r;
 		struct amdgpu_bo *abo;
 
-		abo = gem_to_amdgpu_bo(crtc->primary->fb->obj[0]);
+		abo = gem_to_amdgpu_bo(drm_gem_fb_get_obj(crtc->primary->fb, 0));
 		r = amdgpu_bo_reserve(abo, true);
 		if (unlikely(r))
 			DRM_ERROR("failed to reserve abo before unpin\n");
@@ -2685,7 +2687,9 @@ static const struct drm_crtc_helper_funcs dce_v10_0_crtc_helper_funcs = {
 	.prepare = dce_v10_0_crtc_prepare,
 	.commit = dce_v10_0_crtc_commit,
 	.disable = dce_v10_0_crtc_disable,
+#ifdef HAVE_STRUCT_DRM_CRTC_FUNCS_GET_VBLANK_TIMESTAMP
 	.get_scanout_position = amdgpu_crtc_get_scanout_position,
+#endif
 };
 
 static int dce_v10_0_crtc_init(struct amdgpu_device *adev, int index)
@@ -2798,7 +2802,9 @@ static int dce_v10_0_sw_init(void *handle)
 	adev_to_drm(adev)->mode_config.preferred_depth = 24;
 	adev_to_drm(adev)->mode_config.prefer_shadow = 1;
 
-	adev_to_drm(adev)->mode_config.fb_base = adev->gmc.aper_base;
+#ifdef HAVE_DRM_MODE_CONFIG_FB_MODIFIERS_NOT_SUPPORTED
+	adev_to_drm(adev)->mode_config.fb_modifiers_not_supported = true;
+#endif
 
 	r = amdgpu_display_modeset_create_props(adev);
 	if (r)
@@ -2827,6 +2833,17 @@ static int dce_v10_0_sw_init(void *handle)
 	r = dce_v10_0_audio_init(adev);
 	if (r)
 		return r;
+
+	/* Disable vblank IRQs aggressively for power-saving */
+	/* XXX: can this be enabled for DC? */
+	adev_to_drm(adev)->vblank_disable_immediate = true;
+
+	r = drm_vblank_init(adev_to_drm(adev), adev->mode_info.num_crtc);
+	if (r)
+		return r;
+
+	INIT_DELAYED_WORK(&adev->hotplug_work,
+		  amdgpu_display_hotplug_work_func);
 
 	drm_kms_helper_poll_init(adev_to_drm(adev));
 
@@ -2889,6 +2906,8 @@ static int dce_v10_0_hw_fini(void *handle)
 	}
 
 	dce_v10_0_pageflip_interrupt_fini(adev);
+
+	flush_delayed_work(&adev->hotplug_work);
 
 	return 0;
 }
@@ -3288,7 +3307,7 @@ static int dce_v10_0_hpd_irq(struct amdgpu_device *adev,
 
 	if (disp_int & mask) {
 		dce_v10_0_hpd_int_ack(adev, hpd);
-		schedule_work(&adev->hotplug_work);
+		schedule_delayed_work(&adev->hotplug_work, 0);
 		DRM_DEBUG("IH: HPD%d\n", hpd + 1);
 	}
 
@@ -3636,8 +3655,7 @@ static void dce_v10_0_set_irq_funcs(struct amdgpu_device *adev)
 	adev->hpd_irq.funcs = &dce_v10_0_hpd_irq_funcs;
 }
 
-const struct amdgpu_ip_block_version dce_v10_0_ip_block =
-{
+const struct amdgpu_ip_block_version dce_v10_0_ip_block = {
 	.type = AMD_IP_BLOCK_TYPE_DCE,
 	.major = 10,
 	.minor = 0,
@@ -3645,8 +3663,7 @@ const struct amdgpu_ip_block_version dce_v10_0_ip_block =
 	.funcs = &dce_v10_0_ip_funcs,
 };
 
-const struct amdgpu_ip_block_version dce_v10_1_ip_block =
-{
+const struct amdgpu_ip_block_version dce_v10_1_ip_block = {
 	.type = AMD_IP_BLOCK_TYPE_DCE,
 	.major = 10,
 	.minor = 1,

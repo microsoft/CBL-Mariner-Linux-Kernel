@@ -40,7 +40,7 @@ static void amdgpu_bo_list_free_rcu(struct rcu_head *rcu)
 {
 	struct amdgpu_bo_list *list = container_of(rcu, struct amdgpu_bo_list,
 						   rhead);
-
+	mutex_destroy(&list->bo_list_mutex);
 	kvfree(list);
 }
 
@@ -67,27 +67,16 @@ int amdgpu_bo_list_create(struct amdgpu_device *adev, struct drm_file *filp,
 	struct amdgpu_bo_list_entry *array;
 	struct amdgpu_bo_list *list;
 	uint64_t total_size = 0;
-	size_t size;
 	unsigned i;
 	int r;
 
-	if (num_entries > (SIZE_MAX - sizeof(struct amdgpu_bo_list))
-				/ sizeof(struct amdgpu_bo_list_entry))
-		return -EINVAL;
-
-	size = sizeof(struct amdgpu_bo_list);
-	size += num_entries * sizeof(struct amdgpu_bo_list_entry);
-	list = kvmalloc(size, GFP_KERNEL);
+	list = kvzalloc(struct_size(list, entries, num_entries), GFP_KERNEL);
 	if (!list)
 		return -ENOMEM;
 
 	kref_init(&list->refcount);
-	list->gds_obj = NULL;
-	list->gws_obj = NULL;
-	list->oa_obj = NULL;
 
-	array = amdgpu_bo_list_array_entry(list, 0);
-	memset(array, 0, num_entries * sizeof(struct amdgpu_bo_list_entry));
+	array = list->entries;
 
 	for (i = 0; i < num_entries; ++i) {
 		struct amdgpu_bo_list_entry *entry;
@@ -136,6 +125,7 @@ int amdgpu_bo_list_create(struct amdgpu_device *adev, struct drm_file *filp,
 
 	trace_amdgpu_cs_bo_status(list->num_entries, total_size);
 
+	mutex_init(&list->bo_list_mutex);
 	*result = list;
 	return 0;
 
@@ -208,6 +198,7 @@ void amdgpu_bo_list_get_list(struct amdgpu_bo_list *list,
 			list_add_tail(&e->tv.head, &bucket[priority]);
 
 		e->user_pages = NULL;
+		e->range = NULL;
 	}
 
 	/* Connect the sorted buckets in the output list. */

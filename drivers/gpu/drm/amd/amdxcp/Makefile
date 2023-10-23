@@ -1,0 +1,48 @@
+#
+# Copyright 2023 Advanced Micro Devices, Inc.
+#
+# Permission is hereby granted, free of charge, to any person obtaining a
+# copy of this software and associated documentation files (the "Software"),
+# to deal in the Software without restriction, including without limitation
+# the rights to use, copy, modify, merge, publish, distribute, sublicense,
+# and/or sell copies of the Software, and to permit persons to whom the
+# Software is furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
+# THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
+# OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+# ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+# OTHER DEALINGS IN THE SOFTWARE.
+#
+
+KCL_LINUXINCLUDE=$(subst -I ,-I,$(strip $(LINUXINCLUDE)))
+LINUX_SRCTREE_INCLUDE := \
+	$(filter-out -I%/uapi "-include %/kconfig.h",$(KCL_LINUXINCLUDE))
+USER_INCLUDE := $(filter-out $(LINUX_SRCTREE_INCLUDE), $(KCL_LINUXINCLUDE))
+
+LINUXINCLUDE := \
+	-I$(src)/../../include \
+	-I$(src)/../../include/kcl/header \
+	-include $(src)/../../include/kcl/kcl_version.h \
+	-include $(src)/../../include/rename_symbol.h \
+	-include $(src)/../../amd/dkms/config/config.h \
+	$(LINUX_SRCTREE_INCLUDE) \
+	-I$(src)/../../include/uapi \
+	-I$(src)/../../include/kcl/header/uapi \
+	$(USER_INCLUDE)
+
+amdxcp-y := amdgpu_xcp_drv.o
+
+obj-$(CONFIG_DRM_AMDGPU) += amdxcp.o
+
+ifeq ($(KBUILD_EXTMOD),)
+AMD_XCP_PATH := $(srctree)/$(src)
+else
+AMD_XCP_PATH := $(src)
+endif
+include $(AMD_XCP_PATH)/backport/Makefile
