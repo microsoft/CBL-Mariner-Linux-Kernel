@@ -11,6 +11,9 @@
 
 #include <linux/types.h>
 
+#define VSM_VTL_CALL_FUNC_ID_ENABLE_APS_VTL	0x1FFE0
+#define VSM_VTL_CALL_FUNC_ID_BOOT_APS		0x1FFE1
+
 extern bool hv_vsm_boot_success;
 extern bool hv_vsm_mbec_enabled;
 extern union hv_register_vsm_code_page_offsets vsm_code_page_offsets;
