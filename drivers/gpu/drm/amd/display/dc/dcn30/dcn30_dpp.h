@@ -102,6 +102,7 @@
 	SRI(LB_DATA_FORMAT, DSCL, id), \
 	SRI(LB_MEMORY_CTRL, DSCL, id), \
 	SRI(DSCL_AUTOCAL, DSCL, id), \
+	SRI(DSCL_CONTROL, DSCL, id), \
 	SRI(SCL_TAP_CONTROL, DSCL, id), \
 	SRI(SCL_COEF_RAM_TAP_SELECT, DSCL, id), \
 	SRI(SCL_COEF_RAM_TAP_DATA, DSCL, id), \
@@ -194,7 +195,6 @@
 	TF_SF(CM0_CM_GAMCOR_LUT_DATA, CM_GAMCOR_LUT_DATA, mask_sh),\
 	TF_SF(CM0_CM_GAMCOR_LUT_CONTROL, CM_GAMCOR_LUT_WRITE_COLOR_MASK, mask_sh),\
 	TF_SF(CM0_CM_GAMCOR_LUT_CONTROL, CM_GAMCOR_LUT_READ_COLOR_SEL, mask_sh),\
-	TF_SF(CM0_CM_GAMCOR_LUT_CONTROL, CM_GAMCOR_LUT_READ_DBG, mask_sh),\
 	TF_SF(CM0_CM_GAMCOR_LUT_CONTROL, CM_GAMCOR_LUT_HOST_SEL, mask_sh),\
 	TF_SF(CM0_CM_GAMCOR_LUT_CONTROL, CM_GAMCOR_LUT_CONFIG_MODE, mask_sh),\
 	TF_SF(CM0_CM_GAMCOR_RAMA_START_CNTL_B, CM_GAMCOR_RAMA_EXP_REGION_START_B, mask_sh),\
@@ -237,6 +237,7 @@
 	TF_SF(DSCL0_LB_MEMORY_CTRL, LB_MAX_PARTITIONS, mask_sh),\
 	TF_SF(DSCL0_DSCL_AUTOCAL, AUTOCAL_MODE, mask_sh),\
 	TF_SF(DSCL0_DSCL_AUTOCAL, AUTOCAL_NUM_PIPE, mask_sh),\
+	TF_SF(DSCL0_DSCL_CONTROL, SCL_BOUNDARY_MODE, mask_sh),\
 	TF_SF(DSCL0_DSCL_AUTOCAL, AUTOCAL_PIPE_ID, mask_sh),\
 	TF_SF(DSCL0_SCL_TAP_CONTROL, SCL_V_NUM_TAPS, mask_sh),\
 	TF_SF(DSCL0_SCL_TAP_CONTROL, SCL_H_NUM_TAPS, mask_sh),\
@@ -425,7 +426,6 @@
 	type CM_GAMCOR_LUT_DATA; \
 	type CM_GAMCOR_LUT_WRITE_COLOR_MASK; \
 	type CM_GAMCOR_LUT_READ_COLOR_SEL; \
-	type CM_GAMCOR_LUT_READ_DBG; \
 	type CM_GAMCOR_LUT_HOST_SEL; \
 	type CM_GAMCOR_LUT_CONFIG_MODE; \
 	type CM_GAMCOR_LUT_STATUS; \
@@ -587,6 +587,22 @@ bool dpp3_program_gamcor_lut(
 void dpp3_program_CM_dealpha(
 		struct dpp *dpp_base,
 		uint32_t enable, uint32_t additive_blending);
+
+void dpp30_read_state(struct dpp *dpp_base,
+		struct dcn_dpp_state *s);
+
+bool dpp3_get_optimal_number_of_taps(
+		struct dpp *dpp,
+		struct scaler_data *scl_data,
+		const struct scaling_taps *in_taps);
+
+void dpp3_cnv_setup (
+		struct dpp *dpp_base,
+		enum surface_pixel_format format,
+		enum expansion_mode mode,
+		struct dc_csc_transform input_csc_color_matrix,
+		enum dc_color_space input_color_space,
+		struct cnv_alpha_2bit_lut *alpha_2bit_lut);
 
 void dpp3_program_CM_bias(
 		struct dpp *dpp_base,
