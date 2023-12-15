@@ -27,6 +27,8 @@
 
 #include "dm_services_types.h"
 
+struct abm_save_restore;
+
 struct abm {
 	struct dc_context *ctx;
 	const struct abm_funcs *funcs;
@@ -54,6 +56,15 @@ struct abm_funcs {
 			const char *src,
 			unsigned int bytes,
 			unsigned int inst);
+	bool (*set_abm_pause)(struct abm *abm, bool pause, unsigned int panel_inst, unsigned int otg_inst);
+	bool (*save_restore)(
+			struct abm *abm,
+			unsigned int panel_inst,
+			struct abm_save_restore *pData);
+	bool (*set_pipe_ex)(struct abm *abm,
+			unsigned int otg_inst,
+			unsigned int option,
+			unsigned int panel_inst);
 };
 
 #endif
