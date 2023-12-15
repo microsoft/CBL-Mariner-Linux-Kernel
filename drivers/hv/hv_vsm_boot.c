@@ -17,6 +17,7 @@
 #include <linux/slab.h>
 #include <linux/cpumask.h>
 #include <linux/vmalloc.h>
+#include <linux/vsm.h>
 
 #include "hv_vsm.h"
 
@@ -818,7 +819,7 @@ static int __init hv_vsm_load_secure_kernel(void)
 	return 0;
 }
 
-static int __init hv_vsm_boot_init(void)
+int __init hv_vsm_boot_init(void)
 {
 	cpumask_var_t mask;
 	unsigned int boot_cpu;
@@ -949,8 +950,10 @@ static int __init hv_vsm_boot_init(void)
 
 	/* Boot secondary processors in VTL1 */
 	ret = hv_vsm_boot_ap_vtl();
-	if (!ret)
+	if (!ret) {
 		hv_vsm_boot_success = true;
+		hv_vsm_init_heki();
+	}
 out:
 	set_cpus_allowed_ptr(current, mask);
 	free_cpumask_var(mask);
@@ -964,7 +967,3 @@ free_mem:
 	vsm_skm_pa = 0;
 	return ret;
 }
-
-module_init(hv_vsm_boot_init);
-MODULE_DESCRIPTION("Hyper-V VSM Boot VTL0 Driver");
-MODULE_LICENSE("GPL");
