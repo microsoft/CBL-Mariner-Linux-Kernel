@@ -127,11 +127,10 @@ static struct heki_hypervisor hyperv_heki_hypervisor = {
 	.finish_boot = hv_vsm_signal_end_of_boot,
 };
 
-static int __init hv_vsm_init_heki(void)
+int __init hv_vsm_init_heki(void)
 {
 	if (hv_vsm_boot_success)
 		heki_register_hypervisor(&hyperv_heki_hypervisor);
 
 	return 0;
 }
-late_initcall(hv_vsm_init_heki);
