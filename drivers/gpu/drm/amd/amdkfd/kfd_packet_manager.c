@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
 /*
- * Copyright 2014 Advanced Micro Devices, Inc.
+ * Copyright 2014-2022 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -44,7 +45,7 @@ static void pm_calc_rlib_size(struct packet_manager *pm,
 	unsigned int process_count, queue_count, compute_queue_count, gws_queue_count;
 	unsigned int map_queue_size;
 	unsigned int max_proc_per_quantum = 1;
-	struct kfd_dev *dev = pm->dqm->dev;
+	struct kfd_node *dev = pm->dqm->dev;
 
 	process_count = pm->dqm->processes_count;
 	queue_count = pm->dqm->active_queue_count;
@@ -223,7 +224,7 @@ static int pm_create_runlist_ib(struct packet_manager *pm,
 
 int pm_init(struct packet_manager *pm, struct device_queue_manager *dqm)
 {
-	switch (dqm->dev->device_info->asic_family) {
+	switch (dqm->dev->adev->asic_type) {
 	case CHIP_KAVERI:
 	case CHIP_HAWAII:
 		/* PM4 packet structures on CIK are the same as on VI */
@@ -236,31 +237,17 @@ int pm_init(struct packet_manager *pm, struct device_queue_manager *dqm)
 	case CHIP_VEGAM:
 		pm->pmf = &kfd_vi_pm_funcs;
 		break;
-	case CHIP_VEGA10:
-	case CHIP_VEGA12:
-	case CHIP_VEGA20:
-	case CHIP_RAVEN:
-	case CHIP_RENOIR:
-	case CHIP_ARCTURUS:
-	case CHIP_NAVI10:
-	case CHIP_NAVI12:
-	case CHIP_NAVI14:
-	case CHIP_SIENNA_CICHLID:
-	case CHIP_NAVY_FLOUNDER:
-	case CHIP_VANGOGH:
-	case CHIP_DIMGREY_CAVEFISH:
-	case CHIP_BEIGE_GOBY:
-	case CHIP_YELLOW_CARP:
-	case CHIP_CYAN_SKILLFISH:
-		pm->pmf = &kfd_v9_pm_funcs;
-		break;
-	case CHIP_ALDEBARAN:
-		pm->pmf = &kfd_aldebaran_pm_funcs;
-		break;
 	default:
-		WARN(1, "Unexpected ASIC family %u",
-		     dqm->dev->device_info->asic_family);
-		return -EINVAL;
+		if (KFD_GC_VERSION(dqm->dev) == IP_VERSION(9, 4, 2) ||
+		    KFD_GC_VERSION(dqm->dev) == IP_VERSION(9, 4, 3))
+			pm->pmf = &kfd_aldebaran_pm_funcs;
+		else if (KFD_GC_VERSION(dqm->dev) >= IP_VERSION(9, 0, 1))
+			pm->pmf = &kfd_v9_pm_funcs;
+		else {
+			WARN(1, "Unexpected ASIC family %u",
+			     dqm->dev->adev->asic_type);
+			return -EINVAL;
+		}
 	}
 
 	pm->dqm = dqm;
@@ -383,10 +370,41 @@ out:
 	return retval;
 }
 
-int pm_send_unmap_queue(struct packet_manager *pm, enum kfd_queue_type type,
+int pm_update_grace_period(struct packet_manager *pm, uint32_t grace_period)
+{
+	int retval = 0;
+	uint32_t *buffer, size;
+
+	size = pm->pmf->set_grace_period_size;
+
+	mutex_lock(&pm->lock);
+
+	if (size) {
+		kq_acquire_packet_buffer(pm->priv_queue,
+			size / sizeof(uint32_t),
+			(unsigned int **)&buffer);
+
+		if (!buffer) {
+			pr_err("Failed to allocate buffer on kernel queue\n");
+			retval = -ENOMEM;
+			goto out;
+		}
+
+		retval = pm->pmf->set_grace_period(pm, buffer, grace_period);
+		if (!retval)
+			kq_submit_packet(pm->priv_queue);
+		else
+			kq_rollback_packet(pm->priv_queue);
+	}
+
+out:
+	mutex_unlock(&pm->lock);
+	return retval;
+}
+
+int pm_send_unmap_queue(struct packet_manager *pm,
 			enum kfd_unmap_queues_filter filter,
-			uint32_t filter_param, bool reset,
-			unsigned int sdma_engine)
+			uint32_t filter_param, bool reset)
 {
 	uint32_t *buffer, size;
 	int retval = 0;
@@ -401,8 +419,7 @@ int pm_send_unmap_queue(struct packet_manager *pm, enum kfd_queue_type type,
 		goto out;
 	}
 
-	retval = pm->pmf->unmap_queues(pm, buffer, type, filter, filter_param,
-				       reset, sdma_engine);
+	retval = pm->pmf->unmap_queues(pm, buffer, filter, filter_param, reset);
 	if (!retval)
 		kq_submit_packet(pm->priv_queue);
 	else

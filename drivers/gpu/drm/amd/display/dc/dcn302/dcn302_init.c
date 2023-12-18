@@ -23,11 +23,13 @@
  *
  */
 
-#include "dcn302_hwseq.h"
+#include "dcn302/dcn302_hwseq.h"
 
 #include "dcn30/dcn30_init.h"
 
 #include "dc.h"
+
+#include "dcn302_init.h"
 
 void dcn302_hw_sequencer_construct(struct dc *dc)
 {
