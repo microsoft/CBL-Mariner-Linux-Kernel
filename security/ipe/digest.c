@@ -118,3 +118,43 @@ void ipe_digest_audit(struct audit_buffer *ab, const struct digest_info *info)
 	audit_log_format(ab, ":");
 	audit_log_n_hex(ab, info->digest, info->digest_len);
 }
+
+/**
+ * ipe_digest_dup - Duplicate a digest_info structure.
+ * @src: Pointer to the source digest_info structure.
+ *
+ * Return: A pointer to the duplicated digest or an ERR_PTR() in case of error.
+ */
+struct digest_info *ipe_digest_dup(const struct digest_info *src)
+{
+	struct digest_info *dup = NULL;
+	char *alg_copy = NULL;
+	u8 *digest_copy = NULL;
+
+	if (IS_ERR_OR_NULL(src))
+		return NULL;
+
+	dup = kzalloc(sizeof(*dup), GFP_KERNEL);
+	if (!dup)
+		return ERR_PTR(-ENOMEM);
+
+	alg_copy = kstrdup(src->alg, GFP_KERNEL);
+	if (!alg_copy)
+		goto err;
+
+	digest_copy = kmemdup(src->digest, src->digest_len, GFP_KERNEL);
+	if (!digest_copy)
+		goto err;
+
+	dup->alg = alg_copy;
+	dup->digest = digest_copy;
+	dup->digest_len = src->digest_len;
+
+	return dup;
+
+err:
+	kfree(alg_copy);
+	kfree(digest_copy);
+	kfree(dup);
+	return ERR_PTR(-ENOMEM);
+}

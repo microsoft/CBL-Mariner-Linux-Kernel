@@ -16,6 +16,15 @@
 /* lock for synchronizing writers across ipe policy */
 DEFINE_MUTEX(ipe_policy_lock);
 
+enum ipe_op_type kernel_read_ops[KERNEL_READ_OPS_NUM] = {
+	IPE_OP_FIRMWARE,
+	IPE_OP_KERNEL_MODULE,
+	IPE_OP_KEXEC_IMAGE,
+	IPE_OP_KEXEC_INITRAMFS,
+	IPE_OP_POLICY,
+	IPE_OP_X509
+};
+
 /**
  * ver_to_u64 - Convert an internal ipe_policy_version to a u64.
  * @p: Policy to extract the version from.
