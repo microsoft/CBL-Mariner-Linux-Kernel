@@ -25,6 +25,8 @@ obj-$(CONFIG_SECURITY_IPE) += \
 	policy_parser.o \
 	audit.o \
 
+obj-$(CONFIG_IPE_PROP_INTENDED_PATHNAME) += pathname.o
+
 clean-files := boot-policy.c \
 
 obj-$(CONFIG_SECURITY_IPE_KUNIT_TEST) += \

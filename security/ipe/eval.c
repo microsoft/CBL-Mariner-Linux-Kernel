@@ -17,6 +17,7 @@
 #include "policy.h"
 #include "audit.h"
 #include "digest.h"
+#include "pathname.h"
 
 struct ipe_policy __rcu *ipe_active_policy;
 bool success_audit;
@@ -82,6 +83,17 @@ static void build_ipe_inode_ctx(struct ipe_eval_ctx *ctx, const struct inode *co
 }
 #endif /* CONFIG_IPE_PROP_FS_VERITY */
 
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+static void build_ipe_file_ctx(struct ipe_eval_ctx *ctx, const struct file *const file)
+{
+	ctx->ipe_file = ipe_file(ctx->file);
+}
+#else
+static void build_ipe_file_ctx(struct ipe_eval_ctx *ctx, const struct file *const file)
+{
+}
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
+
 /**
  * ipe_build_eval_ctx() - Build an ipe evaluation context.
  * @ctx: Supplies a pointer to the context to be populated.
@@ -105,6 +117,7 @@ void ipe_build_eval_ctx(struct ipe_eval_ctx *ctx,
 		ino = d_real_inode(file->f_path.dentry);
 		build_ipe_bdev_ctx(ctx, ino);
 		build_ipe_inode_ctx(ctx, ino);
+		build_ipe_file_ctx(ctx, file);
 	}
 }
 
@@ -265,6 +278,23 @@ static bool evaluate_fsv_sig_true(const struct ipe_eval_ctx *const ctx)
 }
 #endif /* CONFIG_IPE_PROP_FS_VERITY_BUILTIN_SIG */
 
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+static bool evaluate_intended_pathname(const struct ipe_eval_ctx *const ctx,
+				       struct ipe_prop *p)
+{
+	return !!ctx->file &&
+	       !!ctx->ipe_file &&
+	       !!ctx->ipe_file->open_path &&
+	       ipe_match_pathname(p->value, ctx->ipe_file->open_path);
+}
+#else
+static bool evaluate_intended_pathname(const struct ipe_eval_ctx *const ctx,
+				       struct ipe_prop *p)
+{
+	return false;
+}
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
+
 /**
  * evaluate_property() - Analyze @ctx against a rule property.
  * @ctx: Supplies a pointer to the context to be evaluated.
@@ -297,6 +327,8 @@ static bool evaluate_property(const struct ipe_eval_ctx *const ctx,
 		return evaluate_fsv_sig_false(ctx);
 	case IPE_PROP_FSV_SIG_TRUE:
 		return evaluate_fsv_sig_true(ctx);
+	case IPE_PROP_INTENDED_PATHNAME:
+		return evaluate_intended_pathname(ctx, p);
 	default:
 		return false;
 	}

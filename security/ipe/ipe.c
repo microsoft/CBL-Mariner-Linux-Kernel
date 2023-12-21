@@ -18,6 +18,9 @@ static struct lsm_blob_sizes ipe_blobs __ro_after_init = {
 #ifdef CONFIG_IPE_PROP_FS_VERITY_BUILTIN_SIG
 	.lbs_inode = sizeof(struct ipe_inode),
 #endif /* CONFIG_IPE_PROP_FS_VERITY_BUILTIN_SIG */
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+	.lbs_file = sizeof(struct ipe_file),
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
 };
 
 struct ipe_superblock *ipe_sb(const struct super_block *sb)
@@ -39,6 +42,13 @@ struct ipe_inode *ipe_inode(const struct inode *inode)
 }
 #endif /* CONFIG_IPE_PROP_FS_VERITY_BUILTIN_SIG */
 
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+struct ipe_file *ipe_file(const struct file *f)
+{
+	return f->f_security + ipe_blobs.lbs_file;
+}
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
+
 static struct security_hook_list ipe_hooks[] __ro_after_init = {
 	LSM_HOOK_INIT(bprm_check_security, ipe_bprm_check_security),
 	LSM_HOOK_INIT(mmap_file, ipe_mmap_file),
@@ -54,6 +64,10 @@ static struct security_hook_list ipe_hooks[] __ro_after_init = {
 	LSM_HOOK_INIT(inode_setintegrity, ipe_inode_setintegrity),
 #endif /* CONFIG_IPE_PROP_FS_VERITY_BUILTIN_SIG */
 	LSM_HOOK_INIT(file_open, ipe_file_open),
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+	LSM_HOOK_INIT(file_free_security, ipe_file_free_security),
+	LSM_HOOK_INIT(file_set_userspace_pathname, ipe_file_set_userspace_pathname),
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
 };
 
 /**
