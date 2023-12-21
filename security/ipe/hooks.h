@@ -52,4 +52,10 @@ int ipe_inode_setintegrity(const struct inode *inode, enum lsm_integrity_type ty
 			   const void *value, size_t size);
 #endif /* CONFIG_IPE_PROP_FS_VERITY_BUILTIN_SIG */
 
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+void ipe_file_free_security(struct file *f);
+
+int ipe_file_set_userspace_pathname(struct file *f, const struct filename *path);
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
+
 #endif /* _IPE_HOOKS_H */

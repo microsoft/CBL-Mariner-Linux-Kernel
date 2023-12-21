@@ -12,6 +12,7 @@
 #include "policy.h"
 #include "policy_parser.h"
 #include "digest.h"
+#include "pathname.h"
 
 #define START_COMMENT	'#'
 #define IPE_POLICY_DELIM " \t"
@@ -284,7 +285,11 @@ static void free_rule(struct ipe_rule *r)
 
 	list_for_each_entry_safe(p, t, &r->props, next) {
 		list_del(&p->next);
-		ipe_digest_free(p->value);
+		if (p->type == IPE_PROP_DMV_ROOTHASH ||
+		    p->type == IPE_PROP_FSV_DIGEST)
+			ipe_digest_free(p->value);
+		else if (p->type == IPE_PROP_INTENDED_PATHNAME)
+			kfree(p->value);
 		kfree(p);
 	}
 
@@ -325,6 +330,12 @@ static struct ipe_rule *dup_rule(struct ipe_rule *r)
 		if (p->type == IPE_PROP_DMV_ROOTHASH ||
 		    p->type == IPE_PROP_FSV_DIGEST) {
 			dup_p->value = ipe_digest_dup(p->value);
+			if (IS_ERR_OR_NULL(dup_p->value)) {
+				kfree(dup_p);
+				goto err;
+			}
+		} else if (p->type == IPE_PROP_INTENDED_PATHNAME) {
+			dup_p->value = kstrdup(p->value, GFP_KERNEL);
 			if (IS_ERR_OR_NULL(dup_p->value)) {
 				kfree(dup_p);
 				goto err;
@@ -395,6 +406,7 @@ static const match_table_t property_tokens = {
 	{IPE_PROP_FSV_DIGEST,		"fsverity_digest=%s"},
 	{IPE_PROP_FSV_SIG_FALSE,	"fsverity_signature=FALSE"},
 	{IPE_PROP_FSV_SIG_TRUE,		"fsverity_signature=TRUE"},
+	{IPE_PROP_INTENDED_PATHNAME,	"intended_pathname=%s"},
 	{IPE_PROP_INVALID,		NULL}
 };
 
@@ -438,7 +450,23 @@ static int parse_property(char *t, struct ipe_rule *r)
 			rc = PTR_ERR(p->value);
 			goto err;
 		}
-		fallthrough;
+		p->type = token;
+		kfree(dup);
+		break;
+	case IPE_PROP_INTENDED_PATHNAME:
+		dup = match_strdup_quoted(&args[0]);
+		if (!dup) {
+			rc = -ENOMEM;
+			goto err;
+		}
+		rc = ipe_validate_pathname_pattern(dup);
+		if (rc) {
+			kfree(dup);
+			goto err;
+		}
+		p->value = dup;
+		p->type = token;
+		break;
 	case IPE_PROP_BOOT_VERIFIED_FALSE:
 	case IPE_PROP_BOOT_VERIFIED_TRUE:
 	case IPE_PROP_DMV_SIG_FALSE:
@@ -456,7 +484,6 @@ static int parse_property(char *t, struct ipe_rule *r)
 	list_add_tail(&p->next, &r->props);
 
 out:
-	kfree(dup);
 	return rc;
 err:
 	kfree(p);
