@@ -25,4 +25,8 @@ struct ipe_bdev *ipe_bdev(struct block_device *b);
 struct ipe_inode *ipe_inode(const struct inode *inode);
 #endif /* CONFIG_IPE_PROP_FS_VERITY */
 
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+struct ipe_file *ipe_file(const struct file *f);
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
+
 #endif /* _IPE_H */

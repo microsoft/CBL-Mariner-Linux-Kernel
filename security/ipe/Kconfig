@@ -53,6 +53,19 @@ config IPE_PROP_FS_VERITY
 
 	  if unsure, answer Y.
 
+config IPE_PROP_INTENDED_PATHNAME
+	bool "Enable property for targeting applications based on application provided-path"
+	help
+	  This option enables IPE's "intended_pathname" property. This is the
+	  original userland, application-provided pathname passed to any open
+	  system call. This can be used by the userland application to signal
+	  its purpose to enforce integrity requirements on paths, such as
+	  verifying all config files in /etc.
+	  WARNING: intended_pathname is not a security property and should
+	  only be used for targeting an application via its intent to open
+	  a file.
+	  if unsure, answer N.
+
 endmenu
 
 config SECURITY_IPE_KUNIT_TEST

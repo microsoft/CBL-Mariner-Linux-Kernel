@@ -307,3 +307,38 @@ int ipe_inode_setsecurity(struct inode *inode, const char *name,
 	return -EOPNOTSUPP;
 }
 #endif /* CONFIG_CONFIG_IPE_PROP_FS_VERITY */
+
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+/**
+ * ipe_file_free_security: LSM hook called on deallocation of a file.
+ * @f: file struct to free internal data from.
+ */
+void ipe_file_free_security(struct file *f)
+{
+	struct ipe_file *fp = ipe_file(f);
+
+	kfree(fp->open_path);
+}
+
+/**
+ * ipe_file_set_userspace_pathname: Allocates a copy of the application provided
+ *                                 file path into the file security blob.
+ * @f: The file structure to source the security blob from.
+ * @path: the filename structure to obtain the application path from.
+ *
+ * The deallocation of the copy is performed in ipe_file_free_security.
+ *
+ * Return:
+ * 0 - OK
+ * -ENOMEM - Out of Memory
+ */
+int ipe_file_set_userspace_pathname(struct file *f, const struct filename *path)
+{
+	struct ipe_file *fp = ipe_file(f);
+
+	fp->open_path = kstrdup_const(path->name, GFP_KERNEL);
+	if (!fp->open_path)
+		return -ENOMEM;
+	return 0;
+}
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
