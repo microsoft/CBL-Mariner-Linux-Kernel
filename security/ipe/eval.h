@@ -37,6 +37,12 @@ struct ipe_inode {
 };
 #endif /* CONFIG_IPE_PROP_FS_VERITY */
 
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+struct ipe_file {
+	const char *open_path;
+};
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
+
 struct ipe_eval_ctx {
 	enum ipe_op_type op;
 	enum ipe_hook_type hook;
@@ -52,6 +58,9 @@ struct ipe_eval_ctx {
 	const struct inode *ino;
 	const struct ipe_inode *ipe_inode;
 #endif /* CONFIG_IPE_PROP_FS_VERITY */
+#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
+	const struct ipe_file *ipe_file;
+#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
 };
 
 enum ipe_match {
