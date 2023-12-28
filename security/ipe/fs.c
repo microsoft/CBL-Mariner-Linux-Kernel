@@ -11,6 +11,7 @@
 #include "eval.h"
 #include "policy.h"
 #include "audit.h"
+#include "measure.h"
 
 static struct dentry *np __ro_after_init;
 static struct dentry *root __ro_after_init;
@@ -43,6 +44,7 @@ static ssize_t setaudit(struct file *f, const char __user *data,
 		return rc;
 
 	WRITE_ONCE(success_audit, value);
+	ipe_measure_state();
 
 	return len;
 }
@@ -96,6 +98,7 @@ static ssize_t setenforce(struct file *f, const char __user *data,
 	if (new_value != old_value) {
 		ipe_audit_enforce(new_value, old_value);
 		WRITE_ONCE(enforce, new_value);
+		ipe_measure_state();
 	}
 
 	return len;
