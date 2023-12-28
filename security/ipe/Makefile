@@ -26,6 +26,7 @@ obj-$(CONFIG_SECURITY_IPE) += \
 	audit.o \
 
 obj-$(CONFIG_IPE_PROP_INTENDED_PATHNAME) += pathname.o
+obj-$(CONFIG_IMA) += measure.o
 
 clean-files := boot-policy.c \
 
