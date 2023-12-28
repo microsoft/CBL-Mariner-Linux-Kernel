@@ -12,6 +12,7 @@
 #include "policy.h"
 #include "eval.h"
 #include "fs.h"
+#include "measure.h"
 
 #define MAX_VERSION_SIZE ARRAY_SIZE("65535.65535.65535")
 
@@ -228,6 +229,8 @@ static ssize_t setactive(struct file *f, const char __user *data,
 	}
 
 	rc = ipe_set_active_pol(p);
+	if (!rc)
+		ipe_measure_state();
 
 out:
 	inode_unlock(root);

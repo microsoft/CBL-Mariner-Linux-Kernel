@@ -12,6 +12,7 @@
 #include "policy.h"
 #include "policy_parser.h"
 #include "audit.h"
+#include "measure.h"
 
 /* lock for synchronizing writers across ipe policy */
 DEFINE_MUTEX(ipe_policy_lock);
@@ -132,6 +133,7 @@ int ipe_update_policy(struct inode *root, const char *text, size_t textlen,
 		mutex_unlock(&ipe_policy_lock);
 		synchronize_rcu();
 		ipe_audit_policy_activation(old, new);
+		ipe_measure_state();
 	} else {
 		mutex_unlock(&ipe_policy_lock);
 	}
