@@ -411,6 +411,16 @@ eval:
 	if (!READ_ONCE(enforce))
 		rc = 0;
 
+	/* OVL Errata: anonymous memory exempted from EXECUTE
+	 *
+	 * Will be still emitted as if it is permissive to track errors.
+	 * (mmap anonymous memory) libffi - Revert Work Item #32130890
+	 * (mmap + mprotect) libmozjs/polkit - Revert Work Item #32130890
+	 */
+	if ((ctx->hook == IPE_HOOK_MMAP || ctx->hook == IPE_HOOK_MPROTECT) &&
+	    !ctx->file)
+		rc = 0;
+
 	return rc;
 }
 
