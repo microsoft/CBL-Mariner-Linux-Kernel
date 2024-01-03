@@ -23,8 +23,9 @@
  *
  */
 
+#include <linux/string_helpers.h>
 #include <linux/uaccess.h>
-
+#include <linux/debugfs.h>
 #include "dc.h"
 #include "amdgpu.h"
 #include "amdgpu_dm.h"
@@ -33,9 +34,14 @@
 #include "dmub/dmub_srv.h"
 #include "resource.h"
 #include "dsc.h"
-#include "dc_link_dp.h"
 #include "link_hwss.h"
 #include "dc/dc_dmub_srv.h"
+#include "link/protocols/link_dp_capability.h"
+#include "inc/hw/dchubbub.h"
+
+#ifdef CONFIG_DRM_AMD_SECURE_DISPLAY
+#include "amdgpu_dm_psr.h"
+#endif
 
 struct dmub_debugfs_trace_header {
 	uint32_t entry_count;
@@ -49,10 +55,12 @@ struct dmub_debugfs_trace_entry {
 	uint32_t param1;
 };
 
-static inline const char *yesno(bool v)
-{
-	return v ? "yes" : "no";
-}
+static const char *const mst_progress_status[] = {
+	"probe",
+	"remote_edid",
+	"allocate_new_payload",
+	"clear_allocated_payload",
+};
 
 /* parse_write_buffer_into_params - Helper function to parse debugfs write buffer into an array
  *
@@ -78,12 +86,10 @@ static int parse_write_buffer_into_params(char *wr_buf, uint32_t wr_buf_size,
 
 	wr_buf_ptr = wr_buf;
 
-	r = copy_from_user(wr_buf_ptr, buf, wr_buf_size);
-
-		/* r is bytes not be copied */
-	if (r >= wr_buf_size) {
-		DRM_DEBUG_DRIVER("user data not be read\n");
-		return -EINVAL;
+	/* r is bytes not be copied */
+	if (copy_from_user(wr_buf_ptr, buf, wr_buf_size)) {
+		DRM_DEBUG_DRIVER("user data could not be read successfully\n");
+		return -EFAULT;
 	}
 
 	/* check number of parameters. isspace could not differ space and \n */
@@ -249,6 +255,7 @@ static ssize_t dp_link_settings_write(struct file *f, const char __user *buf,
 {
 	struct amdgpu_dm_connector *connector = file_inode(f)->i_private;
 	struct dc_link *link = connector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(connector->base.dev);
 	struct dc *dc = (struct dc *)link->dc;
 	struct dc_link_settings prefer_link_settings;
 	char *wr_buf = NULL;
@@ -296,6 +303,9 @@ static ssize_t dp_link_settings_write(struct file *f, const char __user *buf,
 	case LINK_RATE_RBR2:
 	case LINK_RATE_HIGH2:
 	case LINK_RATE_HIGH3:
+	case LINK_RATE_UHBR10:
+	case LINK_RATE_UHBR13_5:
+	case LINK_RATE_UHBR20:
 		break;
 	default:
 		valid_input = false;
@@ -305,6 +315,9 @@ static ssize_t dp_link_settings_write(struct file *f, const char __user *buf,
 	if (!valid_input) {
 		kfree(wr_buf);
 		DRM_DEBUG_DRIVER("Invalid Input value No HW will be programmed\n");
+		mutex_lock(&adev->dm.dc_lock);
+		dc_link_set_preferred_training_settings(dc, NULL, NULL, link, false);
+		mutex_unlock(&adev->dm.dc_lock);
 		return size;
 	}
 
@@ -316,12 +329,162 @@ static ssize_t dp_link_settings_write(struct file *f, const char __user *buf,
 	prefer_link_settings.lane_count = param[0];
 	prefer_link_settings.link_rate = param[1];
 
-	dc_link_set_preferred_training_settings(dc, &prefer_link_settings, NULL, link, true);
+	mutex_lock(&adev->dm.dc_lock);
+	dc_link_set_preferred_training_settings(dc, &prefer_link_settings, NULL, link, false);
+	mutex_unlock(&adev->dm.dc_lock);
 
 	kfree(wr_buf);
 	return size;
 }
 
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_MGR_BASE
+static bool dp_mst_is_end_device(struct amdgpu_dm_connector *aconnector)
+{
+	bool is_end_device = false;
+	struct drm_dp_mst_topology_mgr *mgr = NULL;
+	struct drm_dp_mst_port *port = NULL;
+
+	if (aconnector->mst_root && aconnector->mst_root->mst_mgr.mst_state) {
+		mgr = &aconnector->mst_root->mst_mgr;
+		port = aconnector->mst_output_port;
+
+		drm_modeset_lock(&mgr->base.lock, NULL);
+		if (port->pdt == DP_PEER_DEVICE_SST_SINK ||
+			port->pdt == DP_PEER_DEVICE_DP_LEGACY_CONV)
+			is_end_device = true;
+		drm_modeset_unlock(&mgr->base.lock);
+	}
+
+	return is_end_device;
+}
+
+/* Change MST link setting
+ *
+ * valid lane count value: 1, 2, 4
+ * valid link rate value:
+ * 06h = 1.62Gbps per lane
+ * 0Ah = 2.7Gbps per lane
+ * 0Ch = 3.24Gbps per lane
+ * 14h = 5.4Gbps per lane
+ * 1Eh = 8.1Gbps per lane
+ * 3E8h = 10.0Gbps per lane
+ * 546h = 13.5Gbps per lane
+ * 7D0h = 20.0Gbps per lane
+ *
+ * debugfs is located at /sys/kernel/debug/dri/0/DP-x/mst_link_settings
+ *
+ * for example, to force to  2 lane, 10.0GHz,
+ * echo 2 0x3e8 > /sys/kernel/debug/dri/0/DP-x/mst_link_settings
+ *
+ * Valid input will trigger hotplug event to get new link setting applied
+ * Invalid input will trigger training setting reset
+ *
+ * The usage can be referred to link_settings entry
+ *
+ */
+static ssize_t dp_mst_link_setting(struct file *f, const char __user *buf,
+				 size_t size, loff_t *pos)
+{
+	struct amdgpu_dm_connector *aconnector = file_inode(f)->i_private;
+	struct dc_link *link = aconnector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(aconnector->base.dev);
+	struct dc *dc = (struct dc *)link->dc;
+	struct dc_link_settings prefer_link_settings;
+	char *wr_buf = NULL;
+	const uint32_t wr_buf_size = 40;
+	/* 0: lane_count; 1: link_rate */
+	int max_param_num = 2;
+	uint8_t param_nums = 0;
+	long param[2];
+	bool valid_input = true;
+
+	if (!dp_mst_is_end_device(aconnector))
+		return -EINVAL;
+
+	if (size == 0)
+		return -EINVAL;
+
+	wr_buf = kcalloc(wr_buf_size, sizeof(char), GFP_KERNEL);
+	if (!wr_buf)
+		return -ENOSPC;
+
+	if (parse_write_buffer_into_params(wr_buf, wr_buf_size,
+					   (long *)param, buf,
+					   max_param_num,
+					   &param_nums)) {
+		kfree(wr_buf);
+		return -EINVAL;
+	}
+
+	if (param_nums <= 0) {
+		kfree(wr_buf);
+		DRM_DEBUG_DRIVER("user data not be read\n");
+		return -EINVAL;
+	}
+
+	switch (param[0]) {
+	case LANE_COUNT_ONE:
+	case LANE_COUNT_TWO:
+	case LANE_COUNT_FOUR:
+		break;
+	default:
+		valid_input = false;
+		break;
+	}
+
+	switch (param[1]) {
+	case LINK_RATE_LOW:
+	case LINK_RATE_HIGH:
+	case LINK_RATE_RBR2:
+	case LINK_RATE_HIGH2:
+	case LINK_RATE_HIGH3:
+	case LINK_RATE_UHBR10:
+	case LINK_RATE_UHBR13_5:
+	case LINK_RATE_UHBR20:
+		break;
+	default:
+		valid_input = false;
+		break;
+	}
+
+	if (!valid_input) {
+		kfree(wr_buf);
+		DRM_DEBUG_DRIVER("Invalid Input value No HW will be programmed\n");
+		mutex_lock(&adev->dm.dc_lock);
+		dc_link_set_preferred_training_settings(dc, NULL, NULL, link, false);
+		mutex_unlock(&adev->dm.dc_lock);
+		return -EINVAL;
+	}
+
+	/* save user force lane_count, link_rate to preferred settings
+	 * spread spectrum will not be changed
+	 */
+	prefer_link_settings.link_spread = link->cur_link_settings.link_spread;
+	prefer_link_settings.use_link_rate_set = false;
+	prefer_link_settings.lane_count = param[0];
+	prefer_link_settings.link_rate = param[1];
+
+	/* skip immediate retrain, and train to new link setting after hotplug event triggered */
+	mutex_lock(&adev->dm.dc_lock);
+	dc_link_set_preferred_training_settings(dc, &prefer_link_settings, NULL, link, true);
+	mutex_unlock(&adev->dm.dc_lock);
+
+	mutex_lock(&aconnector->base.dev->mode_config.mutex);
+	aconnector->base.force = DRM_FORCE_OFF;
+	mutex_unlock(&aconnector->base.dev->mode_config.mutex);
+	drm_kms_helper_hotplug_event(aconnector->base.dev);
+
+	msleep(100);
+
+	mutex_lock(&aconnector->base.dev->mode_config.mutex);
+	aconnector->base.force = DRM_FORCE_UNSPECIFIED;
+	mutex_unlock(&aconnector->base.dev->mode_config.mutex);
+	drm_kms_helper_hotplug_event(aconnector->base.dev);
+
+	kfree(wr_buf);
+	return size;
+}
+#endif
 /* function: get current DP PHY settings: voltage swing, pre-emphasis,
  * post-cursor2 (defined by VESA DP specification)
  *
@@ -381,9 +544,9 @@ static ssize_t dp_phy_settings_read(struct file *f, char __user *buf,
 		return -EINVAL;
 
 	snprintf(rd_buf, rd_buf_size, "  %d  %d  %d\n",
-			link->cur_lane_setting.VOLTAGE_SWING,
-			link->cur_lane_setting.PRE_EMPHASIS,
-			link->cur_lane_setting.POST_CURSOR2);
+			link->cur_lane_setting[0].VOLTAGE_SWING,
+			link->cur_lane_setting[0].PRE_EMPHASIS,
+			link->cur_lane_setting[0].POST_CURSOR2);
 
 	while (size) {
 		if (*pos >= rd_buf_size)
@@ -405,69 +568,42 @@ static ssize_t dp_phy_settings_read(struct file *f, char __user *buf,
 	return result;
 }
 
-static int dp_lttpr_status_show(struct seq_file *m, void *d)
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
+static int dp_lttpr_status_show(struct seq_file *m, void *unused)
 {
-	char *data;
-	struct amdgpu_dm_connector *connector = file_inode(m->file)->i_private;
-	struct dc_link *link = connector->dc_link;
-	uint32_t read_size = 1;
-	uint8_t repeater_count = 0;
+	struct drm_connector *connector = m->private;
+	struct amdgpu_dm_connector *aconnector =
+		to_amdgpu_dm_connector(connector);
+	struct dc_lttpr_caps caps = aconnector->dc_link->dpcd_caps.lttpr_caps;
 
-	data = kzalloc(read_size, GFP_KERNEL);
-	if (!data)
-		return 0;
+	if (connector->status != connector_status_connected)
+		return -ENODEV;
 
-	dm_helpers_dp_read_dpcd(link->ctx, link, 0xF0002, data, read_size);
+	seq_printf(m, "phy repeater count: %u (raw: 0x%x)\n",
+		   dp_parse_lttpr_repeater_count(caps.phy_repeater_cnt),
+		   caps.phy_repeater_cnt);
 
-	switch ((uint8_t)*data) {
-	case 0x80:
-		repeater_count = 1;
+	seq_puts(m, "phy repeater mode: ");
+
+	switch (caps.mode) {
+	case DP_PHY_REPEATER_MODE_TRANSPARENT:
+		seq_puts(m, "transparent");
 		break;
-	case 0x40:
-		repeater_count = 2;
+	case DP_PHY_REPEATER_MODE_NON_TRANSPARENT:
+		seq_puts(m, "non-transparent");
 		break;
-	case 0x20:
-		repeater_count = 3;
-		break;
-	case 0x10:
-		repeater_count = 4;
-		break;
-	case 0x8:
-		repeater_count = 5;
-		break;
-	case 0x4:
-		repeater_count = 6;
-		break;
-	case 0x2:
-		repeater_count = 7;
-		break;
-	case 0x1:
-		repeater_count = 8;
-		break;
-	case 0x0:
-		repeater_count = 0;
+	case 0x00:
+		seq_puts(m, "non lttpr");
 		break;
 	default:
-		repeater_count = (uint8_t)*data;
+		seq_printf(m, "read error (raw: 0x%x)", caps.mode);
 		break;
 	}
 
-	seq_printf(m, "phy repeater count: %d\n", repeater_count);
-
-	dm_helpers_dp_read_dpcd(link->ctx, link, 0xF0003, data, read_size);
-
-	if ((uint8_t)*data == 0x55)
-		seq_printf(m, "phy repeater mode: transparent\n");
-	else if ((uint8_t)*data == 0xAA)
-		seq_printf(m, "phy repeater mode: non-transparent\n");
-	else if ((uint8_t)*data == 0x00)
-		seq_printf(m, "phy repeater mode: non lttpr\n");
-	else
-		seq_printf(m, "phy repeater mode: read error\n");
-
-	kfree(data);
+	seq_puts(m, "\n");
 	return 0;
 }
+#endif
 
 static ssize_t dp_phy_settings_write(struct file *f, const char __user *buf,
 				 size_t size, loff_t *pos)
@@ -539,11 +675,11 @@ static ssize_t dp_phy_settings_write(struct file *f, const char __user *buf,
 
 	/* apply phy settings from user */
 	for (r = 0; r < link_lane_settings.link_settings.lane_count; r++) {
-		link_lane_settings.lane_settings[r].VOLTAGE_SWING =
+		link_lane_settings.hw_lane_settings[r].VOLTAGE_SWING =
 				(enum dc_voltage_swing) (param[0]);
-		link_lane_settings.lane_settings[r].PRE_EMPHASIS =
+		link_lane_settings.hw_lane_settings[r].PRE_EMPHASIS =
 				(enum dc_pre_emphasis) (param[1]);
-		link_lane_settings.lane_settings[r].POST_CURSOR2 =
+		link_lane_settings.hw_lane_settings[r].POST_CURSOR2 =
 				(enum dc_post_cursor2) (param[2]);
 	}
 
@@ -737,9 +873,9 @@ static ssize_t dp_phy_test_pattern_debugfs_write(struct file *f, const char __us
 	}
 
 	for (i = 0; i < (unsigned int)(link_training_settings.link_settings.lane_count); i++)
-		link_training_settings.lane_settings[i] = link->cur_lane_setting;
+		link_training_settings.hw_lane_settings[i] = link->cur_lane_setting[i];
 
-	dc_link_set_test_pattern(
+	dc_link_dp_set_test_pattern(
 		link,
 		test_pattern,
 		DP_TEST_PATTERN_COLOR_SPACE_RGB,
@@ -827,29 +963,61 @@ static int dmub_fw_state_show(struct seq_file *m, void *data)
 	return seq_write(m, state_base, state_size);
 }
 
-/*
- * Returns the current and maximum output bpc for the connector.
- * Example usage: cat /sys/kernel/debug/dri/0/DP-1/output_bpc
+/* psr_capability_show() - show eDP panel PSR capability
+ *
+ * The read function: sink_psr_capability_show
+ * Shows if sink has PSR capability or not.
+ * If yes - the PSR version is appended
+ *
+ *	cat /sys/kernel/debug/dri/0/eDP-X/psr_capability
+ *
+ * Expected output:
+ * "Sink support: no\n" - if panel doesn't support PSR
+ * "Sink support: yes [0x01]\n" - if panel supports PSR1
+ * "Driver support: no\n" - if driver doesn't support PSR
+ * "Driver support: yes [0x01]\n" - if driver supports PSR1
  */
-static int output_bpc_show(struct seq_file *m, void *data)
+static int psr_capability_show(struct seq_file *m, void *data)
 {
 	struct drm_connector *connector = m->private;
-	struct drm_device *dev = connector->dev;
-	struct drm_crtc *crtc = NULL;
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
+	struct dc_link *link = aconnector->dc_link;
+
+	if (!link)
+		return -ENODEV;
+
+	if (link->type == dc_connection_none)
+		return -ENODEV;
+
+	if (!(link->connector_signal & SIGNAL_TYPE_EDP))
+		return -ENODEV;
+
+	seq_printf(m, "Sink support: %s", str_yes_no(link->dpcd_caps.psr_info.psr_version != 0));
+	if (link->dpcd_caps.psr_info.psr_version)
+		seq_printf(m, " [0x%02x]", link->dpcd_caps.psr_info.psr_version);
+	seq_puts(m, "\n");
+
+	seq_printf(m, "Driver support: %s", str_yes_no(link->psr_settings.psr_feature_enabled));
+	if (link->psr_settings.psr_version)
+		seq_printf(m, " [0x%02x]", link->psr_settings.psr_version);
+	seq_puts(m, "\n");
+
+	return 0;
+}
+
+/*
+ * Returns the current bpc for the crtc.
+ * Example usage: cat /sys/kernel/debug/dri/0/crtc-0/amdgpu_current_bpc
+ */
+static int amdgpu_current_bpc_show(struct seq_file *m, void *data)
+{
+	struct drm_crtc *crtc = m->private;
+	struct drm_device *dev = crtc->dev;
 	struct dm_crtc_state *dm_crtc_state = NULL;
 	int res = -ENODEV;
 	unsigned int bpc;
 
 	mutex_lock(&dev->mode_config.mutex);
-	drm_modeset_lock(&dev->mode_config.connection_mutex, NULL);
-
-	if (connector->state == NULL)
-		goto unlock;
-
-	crtc = connector->state->crtc;
-	if (crtc == NULL)
-		goto unlock;
-
 	drm_modeset_lock(&crtc->mutex, NULL);
 	if (crtc->state == NULL)
 		goto unlock;
@@ -879,18 +1047,70 @@ static int output_bpc_show(struct seq_file *m, void *data)
 	}
 
 	seq_printf(m, "Current: %u\n", bpc);
-	seq_printf(m, "Maximum: %u\n", connector->display_info.bpc);
 	res = 0;
 
 unlock:
-	if (crtc)
-		drm_modeset_unlock(&crtc->mutex);
-
-	drm_modeset_unlock(&dev->mode_config.connection_mutex);
+	drm_modeset_unlock(&crtc->mutex);
 	mutex_unlock(&dev->mode_config.mutex);
 
 	return res;
 }
+DEFINE_SHOW_ATTRIBUTE(amdgpu_current_bpc);
+
+/*
+ * Returns the current colorspace for the crtc.
+ * Example usage: cat /sys/kernel/debug/dri/0/crtc-0/amdgpu_current_colorspace
+ */
+static int amdgpu_current_colorspace_show(struct seq_file *m, void *data)
+{
+	struct drm_crtc *crtc = m->private;
+	struct drm_device *dev = crtc->dev;
+	struct dm_crtc_state *dm_crtc_state = NULL;
+	int res = -ENODEV;
+
+	mutex_lock(&dev->mode_config.mutex);
+	drm_modeset_lock(&crtc->mutex, NULL);
+	if (crtc->state == NULL)
+		goto unlock;
+
+	dm_crtc_state = to_dm_crtc_state(crtc->state);
+	if (dm_crtc_state->stream == NULL)
+		goto unlock;
+
+	switch (dm_crtc_state->stream->output_color_space) {
+	case COLOR_SPACE_SRGB:
+		seq_puts(m, "sRGB");
+		break;
+	case COLOR_SPACE_YCBCR601:
+	case COLOR_SPACE_YCBCR601_LIMITED:
+		seq_puts(m, "BT601_YCC");
+		break;
+	case COLOR_SPACE_YCBCR709:
+	case COLOR_SPACE_YCBCR709_LIMITED:
+		seq_puts(m, "BT709_YCC");
+		break;
+	case COLOR_SPACE_ADOBERGB:
+		seq_puts(m, "opRGB");
+		break;
+	case COLOR_SPACE_2020_RGB_FULLRANGE:
+		seq_puts(m, "BT2020_RGB");
+		break;
+	case COLOR_SPACE_2020_YCBCR:
+		seq_puts(m, "BT2020_YCC");
+		break;
+	default:
+		goto unlock;
+	}
+	res = 0;
+
+unlock:
+	drm_modeset_unlock(&crtc->mutex);
+	mutex_unlock(&dev->mode_config.mutex);
+
+	return res;
+}
+DEFINE_SHOW_ATTRIBUTE(amdgpu_current_colorspace);
+
 
 /*
  * Example usage:
@@ -933,7 +1153,6 @@ static ssize_t dp_dsc_passthrough_set(struct file *f, const char __user *buf,
 	return 0;
 }
 
-#ifdef CONFIG_DRM_AMD_DC_HDCP
 /*
  * Returns the HDCP capability of the Display (1.4 for now).
  *
@@ -970,7 +1189,6 @@ static int hdcp_sink_capability_show(struct seq_file *m, void *data)
 
 	return 0;
 }
-#endif
 
 /*
  * Returns whether the connected display is internal and not hotpluggable.
@@ -984,6 +1202,35 @@ static int internal_display_show(struct seq_file *m, void *data)
 
 	seq_printf(m, "Internal: %u\n", link->is_internal_display);
 
+	return 0;
+}
+
+/*
+ * Returns the number of segments used if ODM Combine mode is enabled.
+ * Example usage: cat /sys/kernel/debug/dri/0/DP-1/odm_combine_segments
+ */
+static int odm_combine_segments_show(struct seq_file *m, void *unused)
+{
+	struct drm_connector *connector = m->private;
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
+	struct dc_link *link = aconnector->dc_link;
+	struct pipe_ctx *pipe_ctx = NULL;
+	int i, segments = -EOPNOTSUPP;
+
+	for (i = 0; i < MAX_PIPES; i++) {
+		pipe_ctx = &link->dc->current_state->res_ctx.pipe_ctx[i];
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == link)
+			break;
+	}
+
+	if (connector->status != connector_status_connected)
+		return -ENODEV;
+
+	if (pipe_ctx != NULL && pipe_ctx->stream_res.tg->funcs->get_odm_combine_segments)
+		pipe_ctx->stream_res.tg->funcs->get_odm_combine_segments(pipe_ctx->stream_res.tg, &segments);
+
+	seq_printf(m, "%d\n", segments);
 	return 0;
 }
 
@@ -1027,88 +1274,6 @@ static ssize_t dp_sdp_message_debugfs_write(struct file *f, const char __user *b
 	return write_size;
 }
 
-static ssize_t dp_dpcd_address_write(struct file *f, const char __user *buf,
-				 size_t size, loff_t *pos)
-{
-	int r;
-	struct amdgpu_dm_connector *connector = file_inode(f)->i_private;
-
-	if (size < sizeof(connector->debugfs_dpcd_address))
-		return -EINVAL;
-
-	r = copy_from_user(&connector->debugfs_dpcd_address,
-			buf, sizeof(connector->debugfs_dpcd_address));
-
-	return size - r;
-}
-
-static ssize_t dp_dpcd_size_write(struct file *f, const char __user *buf,
-				 size_t size, loff_t *pos)
-{
-	int r;
-	struct amdgpu_dm_connector *connector = file_inode(f)->i_private;
-
-	if (size < sizeof(connector->debugfs_dpcd_size))
-		return -EINVAL;
-
-	r = copy_from_user(&connector->debugfs_dpcd_size,
-			buf, sizeof(connector->debugfs_dpcd_size));
-
-	if (connector->debugfs_dpcd_size > 256)
-		connector->debugfs_dpcd_size = 0;
-
-	return size - r;
-}
-
-static ssize_t dp_dpcd_data_write(struct file *f, const char __user *buf,
-				 size_t size, loff_t *pos)
-{
-	int r;
-	char *data;
-	struct amdgpu_dm_connector *connector = file_inode(f)->i_private;
-	struct dc_link *link = connector->dc_link;
-	uint32_t write_size = connector->debugfs_dpcd_size;
-
-	if (!write_size || size < write_size)
-		return -EINVAL;
-
-	data = kzalloc(write_size, GFP_KERNEL);
-	if (!data)
-		return 0;
-
-	r = copy_from_user(data, buf, write_size);
-
-	dm_helpers_dp_write_dpcd(link->ctx, link,
-			connector->debugfs_dpcd_address, data, write_size - r);
-	kfree(data);
-	return write_size - r;
-}
-
-static ssize_t dp_dpcd_data_read(struct file *f, char __user *buf,
-				 size_t size, loff_t *pos)
-{
-	int r;
-	char *data;
-	struct amdgpu_dm_connector *connector = file_inode(f)->i_private;
-	struct dc_link *link = connector->dc_link;
-	uint32_t read_size = connector->debugfs_dpcd_size;
-
-	if (!read_size || size < read_size)
-		return 0;
-
-	data = kzalloc(read_size, GFP_KERNEL);
-	if (!data)
-		return 0;
-
-	dm_helpers_dp_read_dpcd(link->ctx, link,
-			connector->debugfs_dpcd_address, data, read_size);
-
-	r = copy_to_user(buf, data, read_size);
-
-	kfree(data);
-	return read_size - r;
-}
-
 /* function: Read link's DSC & FEC capabilities
  *
  *
@@ -1149,7 +1314,7 @@ static int dp_dsc_fec_support_show(struct seq_file *m, void *data)
 			break;
 		}
 		dpcd_caps = aconnector->dc_link->dpcd_caps;
-		if (aconnector->port) {
+		if (aconnector->mst_output_port) {
 			/* aconnector sets dsc_aux during get_modes call
 			 * if MST connector has it means it can either
 			 * enable DSC on the sink device or on MST branch
@@ -1168,8 +1333,8 @@ static int dp_dsc_fec_support_show(struct seq_file *m, void *data)
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);
 
-	seq_printf(m, "FEC_Sink_Support: %s\n", yesno(is_fec_supported));
-	seq_printf(m, "DSC_Sink_Support: %s\n", yesno(is_dsc_supported));
+	seq_printf(m, "FEC_Sink_Support: %s\n", str_yes_no(is_fec_supported));
+	seq_printf(m, "DSC_Sink_Support: %s\n", str_yes_no(is_dsc_supported));
 
 	return ret;
 }
@@ -1196,12 +1361,14 @@ static ssize_t trigger_hotplug(struct file *f, const char __user *buf,
 	struct drm_connector *connector = &aconnector->base;
 	struct dc_link *link = NULL;
 	struct drm_device *dev = connector->dev;
+	struct amdgpu_device *adev = drm_to_adev(dev);
 	enum dc_connection_type new_connection_type = dc_connection_none;
 	char *wr_buf = NULL;
 	uint32_t wr_buf_size = 42;
 	int max_param_num = 1;
 	long param[1] = {0};
 	uint8_t param_nums = 0;
+	bool ret = false;
 
 	if (!aconnector || !aconnector->dc_link)
 		return -EINVAL;
@@ -1224,20 +1391,32 @@ static ssize_t trigger_hotplug(struct file *f, const char __user *buf,
 		return -EINVAL;
 	}
 
+	kfree(wr_buf);
+
 	if (param_nums <= 0) {
 		DRM_DEBUG_DRIVER("user data not be read\n");
-		kfree(wr_buf);
+		return -EINVAL;
+	}
+
+	mutex_lock(&aconnector->hpd_lock);
+
+	/* Don't support for mst end device*/
+	if (aconnector->mst_root) {
+		mutex_unlock(&aconnector->hpd_lock);
 		return -EINVAL;
 	}
 
 	if (param[0] == 1) {
-		mutex_lock(&aconnector->hpd_lock);
 
-		if (!dc_link_detect_sink(aconnector->dc_link, &new_connection_type) &&
+		if (!dc_link_detect_connection_type(aconnector->dc_link, &new_connection_type) &&
 			new_connection_type != dc_connection_none)
 			goto unlock;
 
-		if (!dc_link_detect(aconnector->dc_link, DETECT_REASON_HPD))
+		mutex_lock(&adev->dm.dc_lock);
+		ret = dc_link_detect(aconnector->dc_link, DETECT_REASON_HPD);
+		mutex_unlock(&adev->dm.dc_lock);
+
+		if (!ret)
 			goto unlock;
 
 		amdgpu_dm_update_connector_after_detect(aconnector);
@@ -1246,7 +1425,7 @@ static ssize_t trigger_hotplug(struct file *f, const char __user *buf,
 		dm_restore_drm_connector_state(dev, connector);
 		drm_modeset_unlock_all(dev);
 
-		drm_kms_helper_hotplug_event(dev);
+		drm_kms_helper_connector_hotplug_event(connector);
 	} else if (param[0] == 0) {
 		if (!aconnector->dc_link)
 			goto unlock;
@@ -1264,17 +1443,20 @@ static ssize_t trigger_hotplug(struct file *f, const char __user *buf,
 
 		amdgpu_dm_update_connector_after_detect(aconnector);
 
+		/* If the aconnector is the root node in mst topology */
+		if (aconnector->mst_mgr.mst_state == true)
+			dc_link_reset_cur_dp_mst_topology(link);
+
 		drm_modeset_lock_all(dev);
 		dm_restore_drm_connector_state(dev, connector);
 		drm_modeset_unlock_all(dev);
 
-		drm_kms_helper_hotplug_event(dev);
+		drm_kms_helper_connector_hotplug_event(connector);
 	}
 
 unlock:
 	mutex_unlock(&aconnector->hpd_lock);
 
-	kfree(wr_buf);
 	return size;
 }
 
@@ -1315,14 +1497,9 @@ static ssize_t dp_dsc_clock_en_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -1421,12 +1598,12 @@ static ssize_t dp_dsc_clock_en_write(struct file *f, const char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
-	if (!pipe_ctx || !pipe_ctx->stream)
+	if (!pipe_ctx->stream)
 		goto done;
 
 	// Get CRTC state
@@ -1506,14 +1683,9 @@ static ssize_t dp_dsc_slice_width_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -1610,12 +1782,12 @@ static ssize_t dp_dsc_slice_width_write(struct file *f, const char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
-	if (!pipe_ctx || !pipe_ctx->stream)
+	if (!pipe_ctx->stream)
 		goto done;
 
 	// Safely get CRTC state
@@ -1695,14 +1867,9 @@ static ssize_t dp_dsc_slice_height_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -1799,12 +1966,12 @@ static ssize_t dp_dsc_slice_height_write(struct file *f, const char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
-	if (!pipe_ctx || !pipe_ctx->stream)
+	if (!pipe_ctx->stream)
 		goto done;
 
 	// Get CRTC state
@@ -1880,14 +2047,9 @@ static ssize_t dp_dsc_bits_per_pixel_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -1981,12 +2143,12 @@ static ssize_t dp_dsc_bits_per_pixel_write(struct file *f, const char __user *bu
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
-	if (!pipe_ctx || !pipe_ctx->stream)
+	if (!pipe_ctx->stream)
 		goto done;
 
 	// Get CRTC state
@@ -2060,14 +2222,9 @@ static ssize_t dp_dsc_pic_width_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -2121,14 +2278,9 @@ static ssize_t dp_dsc_pic_height_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -2197,14 +2349,9 @@ static ssize_t dp_dsc_chunk_size_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -2273,14 +2420,9 @@ static ssize_t dp_dsc_slice_bpg_offset_read(struct file *f, char __user *buf,
 
 	for (i = 0; i < MAX_PIPES; i++) {
 		pipe_ctx = &aconnector->dc_link->dc->current_state->res_ctx.pipe_ctx[i];
-			if (pipe_ctx && pipe_ctx->stream &&
-			    pipe_ctx->stream->link == aconnector->dc_link)
-				break;
-	}
-
-	if (!pipe_ctx) {
-		kfree(rd_buf);
-		return -ENXIO;
+		if (pipe_ctx->stream &&
+		    pipe_ctx->stream->link == aconnector->dc_link)
+			break;
 	}
 
 	dsc = pipe_ctx->stream_res.dsc;
@@ -2311,7 +2453,6 @@ static ssize_t dp_dsc_slice_bpg_offset_read(struct file *f, char __user *buf,
 	kfree(rd_buf);
 	return result;
 }
-
 
 /*
  * function description: Read max_requested_bpc property from the connector
@@ -2493,15 +2634,128 @@ static int target_backlight_show(struct seq_file *m, void *unused)
 	return 0;
 }
 
+/*
+ * function description: Determine if the connector is mst connector
+ *
+ * This function helps to determine whether a connector is a mst connector.
+ * - "root" stands for the root connector of the topology
+ * - "branch" stands for branch device of the topology
+ * - "end" stands for leaf node connector of the topology
+ * - "no" stands for the connector is not a device of a mst topology
+ * Access it with the following command:
+ *
+ *	cat /sys/kernel/debug/dri/0/DP-X/is_mst_connector
+ *
+ */
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_MGR_BASE
+static int dp_is_mst_connector_show(struct seq_file *m, void *unused)
+{
+	struct drm_connector *connector = m->private;
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
+	struct drm_dp_mst_topology_mgr *mgr = NULL;
+	struct drm_dp_mst_port *port = NULL;
+	char *role = NULL;
+
+	mutex_lock(&aconnector->hpd_lock);
+
+	if (aconnector->mst_mgr.mst_state) {
+		role = "root";
+	} else if (aconnector->mst_root &&
+		aconnector->mst_root->mst_mgr.mst_state) {
+
+		role = "end";
+
+		mgr = &aconnector->mst_root->mst_mgr;
+		port = aconnector->mst_output_port;
+
+		drm_modeset_lock(&mgr->base.lock, NULL);
+		if (port->pdt == DP_PEER_DEVICE_MST_BRANCHING &&
+			port->mcs)
+			role = "branch";
+		drm_modeset_unlock(&mgr->base.lock);
+
+	} else {
+		role = "no";
+	}
+
+	seq_printf(m, "%s\n", role);
+
+	mutex_unlock(&aconnector->hpd_lock);
+
+	return 0;
+}
+#endif
+
+/*
+ * function description: Read out the mst progress status
+ *
+ * This function helps to determine the mst progress status of
+ * a mst connector.
+ *
+ * Access it with the following command:
+ *
+ *	cat /sys/kernel/debug/dri/0/DP-X/mst_progress_status
+ *
+ */
+static int dp_mst_progress_status_show(struct seq_file *m, void *unused)
+{
+	struct drm_connector *connector = m->private;
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
+	struct amdgpu_device *adev = drm_to_adev(connector->dev);
+	int i;
+
+	mutex_lock(&aconnector->hpd_lock);
+	mutex_lock(&adev->dm.dc_lock);
+
+	if (aconnector->mst_status == MST_STATUS_DEFAULT) {
+		seq_puts(m, "disabled\n");
+	} else {
+		for (i = 0; i < sizeof(mst_progress_status)/sizeof(char *); i++)
+			seq_printf(m, "%s:%s\n",
+				mst_progress_status[i],
+				aconnector->mst_status & BIT(i) ? "done" : "not_done");
+	}
+
+	mutex_unlock(&adev->dm.dc_lock);
+	mutex_unlock(&aconnector->hpd_lock);
+
+	return 0;
+}
+
+/*
+ * Reports whether the connected display is a USB4 DPIA tunneled display
+ * Example usage: cat /sys/kernel/debug/dri/0/DP-8/is_dpia_link
+ */
+static int is_dpia_link_show(struct seq_file *m, void *data)
+{
+	struct drm_connector *connector = m->private;
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
+	struct dc_link *link = aconnector->dc_link;
+
+	if (connector->status != connector_status_connected)
+		return -ENODEV;
+
+	seq_printf(m, "%s\n", (link->ep_type == DISPLAY_ENDPOINT_USB4_DPIA) ? "yes" :
+				(link->ep_type == DISPLAY_ENDPOINT_PHY) ? "no" : "unknown");
+
+	return 0;
+}
+
 DEFINE_SHOW_ATTRIBUTE(dp_dsc_fec_support);
 DEFINE_SHOW_ATTRIBUTE(dmub_fw_state);
 DEFINE_SHOW_ATTRIBUTE(dmub_tracebuffer);
-DEFINE_SHOW_ATTRIBUTE(output_bpc);
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 DEFINE_SHOW_ATTRIBUTE(dp_lttpr_status);
-#ifdef CONFIG_DRM_AMD_DC_HDCP
-DEFINE_SHOW_ATTRIBUTE(hdcp_sink_capability);
 #endif
+DEFINE_SHOW_ATTRIBUTE(hdcp_sink_capability);
 DEFINE_SHOW_ATTRIBUTE(internal_display);
+DEFINE_SHOW_ATTRIBUTE(odm_combine_segments);
+DEFINE_SHOW_ATTRIBUTE(psr_capability);
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_MGR_BASE
+DEFINE_SHOW_ATTRIBUTE(dp_is_mst_connector);
+#endif
+DEFINE_SHOW_ATTRIBUTE(dp_mst_progress_status);
+DEFINE_SHOW_ATTRIBUTE(is_dpia_link);
 
 static const struct file_operations dp_dsc_clock_en_debugfs_fops = {
 	.owner = THIS_MODULE,
@@ -2587,25 +2841,6 @@ static const struct file_operations sdp_message_fops = {
 	.llseek = default_llseek
 };
 
-static const struct file_operations dp_dpcd_address_debugfs_fops = {
-	.owner = THIS_MODULE,
-	.write = dp_dpcd_address_write,
-	.llseek = default_llseek
-};
-
-static const struct file_operations dp_dpcd_size_debugfs_fops = {
-	.owner = THIS_MODULE,
-	.write = dp_dpcd_size_write,
-	.llseek = default_llseek
-};
-
-static const struct file_operations dp_dpcd_data_debugfs_fops = {
-	.owner = THIS_MODULE,
-	.read = dp_dpcd_data_read,
-	.write = dp_dpcd_data_write,
-	.llseek = default_llseek
-};
-
 static const struct file_operations dp_max_bpc_debugfs_fops = {
 	.owner = THIS_MODULE,
 	.read = dp_max_bpc_read,
@@ -2618,6 +2853,13 @@ static const struct file_operations dp_dsc_disable_passthrough_debugfs_fops = {
 	.write = dp_dsc_passthrough_set,
 	.llseek = default_llseek
 };
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_MGR_BASE
+static const struct file_operations dp_mst_link_settings_debugfs_fops = {
+	.owner = THIS_MODULE,
+	.write = dp_mst_link_setting,
+	.llseek = default_llseek
+};
+#endif
 
 static const struct {
 	char *name;
@@ -2625,15 +2867,12 @@ static const struct {
 } dp_debugfs_entries[] = {
 		{"link_settings", &dp_link_settings_debugfs_fops},
 		{"phy_settings", &dp_phy_settings_debugfs_fop},
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 		{"lttpr_status", &dp_lttpr_status_fops},
-		{"test_pattern", &dp_phy_test_pattern_fops},
-#ifdef CONFIG_DRM_AMD_DC_HDCP
-		{"hdcp_sink_capability", &hdcp_sink_capability_fops},
 #endif
+		{"test_pattern", &dp_phy_test_pattern_fops},
+		{"hdcp_sink_capability", &hdcp_sink_capability_fops},
 		{"sdp_message", &sdp_message_fops},
-		{"aux_dpcd_address", &dp_dpcd_address_debugfs_fops},
-		{"aux_dpcd_size", &dp_dpcd_size_debugfs_fops},
-		{"aux_dpcd_data", &dp_dpcd_data_debugfs_fops},
 		{"dsc_clock_en", &dp_dsc_clock_en_debugfs_fops},
 		{"dsc_slice_width", &dp_dsc_slice_width_debugfs_fops},
 		{"dsc_slice_height", &dp_dsc_slice_height_debugfs_fops},
@@ -2645,16 +2884,23 @@ static const struct {
 		{"dp_dsc_fec_support", &dp_dsc_fec_support_fops},
 		{"max_bpc", &dp_max_bpc_debugfs_fops},
 		{"dsc_disable_passthrough", &dp_dsc_disable_passthrough_debugfs_fops},
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_MGR_BASE
+		{"is_mst_connector", &dp_is_mst_connector_fops},
+#endif
+		{"mst_progress_status", &dp_mst_progress_status_fops},
+		{"is_dpia_link", &is_dpia_link_fops},
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_MGR_BASE
+		{"mst_link_settings", &dp_mst_link_settings_debugfs_fops}
+#endif
 };
 
-#ifdef CONFIG_DRM_AMD_DC_HDCP
 static const struct {
 	char *name;
 	const struct file_operations *fops;
 } hdmi_debugfs_entries[] = {
 		{"hdcp_sink_capability", &hdcp_sink_capability_fops}
 };
-#endif
+
 /*
  * Force YUV420 output if available from the given mode
  */
@@ -2679,8 +2925,10 @@ static int force_yuv420_output_get(void *data, u64 *val)
 	return 0;
 }
 
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 DEFINE_DEBUGFS_ATTRIBUTE(force_yuv420_output_fops, force_yuv420_output_get,
 			 force_yuv420_output_set, "%llu\n");
+#endif
 
 /*
  *  Read PSR state
@@ -2694,6 +2942,48 @@ static int psr_get(void *data, u64 *val)
 	dc_link_get_psr_state(link, &state);
 
 	*val = state;
+
+	return 0;
+}
+
+/*
+ *  Read PSR state residency
+ */
+static int psr_read_residency(void *data, u64 *val)
+{
+	struct amdgpu_dm_connector *connector = data;
+	struct dc_link *link = connector->dc_link;
+	u32 residency;
+
+	link->dc->link_srv->edp_get_psr_residency(link, &residency);
+
+	*val = (u64)residency;
+
+	return 0;
+}
+
+/* read allow_edp_hotplug_detection */
+static int allow_edp_hotplug_detection_get(void *data, u64 *val)
+{
+	struct amdgpu_dm_connector *aconnector = data;
+	struct drm_connector *connector = &aconnector->base;
+	struct drm_device *dev = connector->dev;
+	struct amdgpu_device *adev = drm_to_adev(dev);
+
+	*val = adev->dm.dc->config.allow_edp_hotplug_detection;
+
+	return 0;
+}
+
+/* set allow_edp_hotplug_detection */
+static int allow_edp_hotplug_detection_set(void *data, u64 val)
+{
+	struct amdgpu_dm_connector *aconnector = data;
+	struct drm_connector *connector = &aconnector->base;
+	struct drm_device *dev = connector->dev;
+	struct amdgpu_device *adev = drm_to_adev(dev);
+
+	adev->dm.dc->config.allow_edp_hotplug_detection = (uint32_t) val;
 
 	return 0;
 }
@@ -2729,10 +3019,18 @@ static int dmcub_trace_event_state_get(void *data, u64 *val)
 	return 0;
 }
 
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 DEFINE_DEBUGFS_ATTRIBUTE(dmcub_trace_event_state_fops, dmcub_trace_event_state_get,
 			 dmcub_trace_event_state_set, "%llu\n");
 
 DEFINE_DEBUGFS_ATTRIBUTE(psr_fops, psr_get, NULL, "%llu\n");
+DEFINE_DEBUGFS_ATTRIBUTE(psr_residency_fops, psr_read_residency, NULL,
+			 "%llu\n");
+
+DEFINE_DEBUGFS_ATTRIBUTE(allow_edp_hotplug_detection_fops,
+			allow_edp_hotplug_detection_get,
+			allow_edp_hotplug_detection_set, "%llu\n");
+#endif
 
 DEFINE_SHOW_ATTRIBUTE(current_backlight);
 DEFINE_SHOW_ATTRIBUTE(target_backlight);
@@ -2741,10 +3039,146 @@ static const struct {
 	char *name;
 	const struct file_operations *fops;
 } connector_debugfs_entries[] = {
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 		{"force_yuv420_output", &force_yuv420_output_fops},
-		{"output_bpc", &output_bpc_fops},
+#endif
 		{"trigger_hotplug", &trigger_hotplug_debugfs_fops},
-		{"internal_display", &internal_display_fops}
+		{"internal_display", &internal_display_fops},
+		{"odm_combine_segments", &odm_combine_segments_fops}
+};
+
+/*
+ * Returns supported customized link rates by this eDP panel.
+ * Example usage: cat /sys/kernel/debug/dri/0/eDP-x/ilr_setting
+ */
+static int edp_ilr_show(struct seq_file *m, void *unused)
+{
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(m->private);
+	struct dc_link *link = aconnector->dc_link;
+	uint8_t supported_link_rates[16];
+	uint32_t link_rate_in_khz;
+	uint32_t entry = 0;
+	uint8_t dpcd_rev;
+
+	memset(supported_link_rates, 0, sizeof(supported_link_rates));
+	dm_helpers_dp_read_dpcd(link->ctx, link, DP_SUPPORTED_LINK_RATES,
+		supported_link_rates, sizeof(supported_link_rates));
+
+	dpcd_rev = link->dpcd_caps.dpcd_rev.raw;
+
+	if (dpcd_rev >= DP_DPCD_REV_13 &&
+		(supported_link_rates[entry+1] != 0 || supported_link_rates[entry] != 0)) {
+
+		for (entry = 0; entry < 16; entry += 2) {
+			link_rate_in_khz = (supported_link_rates[entry+1] * 0x100 +
+										supported_link_rates[entry]) * 200;
+			seq_printf(m, "[%d] %d kHz\n", entry/2, link_rate_in_khz);
+		}
+	} else {
+		seq_puts(m, "ILR is not supported by this eDP panel.\n");
+	}
+
+	return 0;
+}
+
+/*
+ * Set supported customized link rate to eDP panel.
+ *
+ * echo <lane_count>  <link_rate option> > ilr_setting
+ *
+ * for example, supported ILR : [0] 1620000 kHz [1] 2160000 kHz [2] 2430000 kHz ...
+ * echo 4 1 > /sys/kernel/debug/dri/0/eDP-x/ilr_setting
+ * to set 4 lanes and 2.16 GHz
+ */
+static ssize_t edp_ilr_write(struct file *f, const char __user *buf,
+				 size_t size, loff_t *pos)
+{
+	struct amdgpu_dm_connector *connector = file_inode(f)->i_private;
+	struct dc_link *link = connector->dc_link;
+	struct amdgpu_device *adev = drm_to_adev(connector->base.dev);
+	struct dc *dc = (struct dc *)link->dc;
+	struct dc_link_settings prefer_link_settings;
+	char *wr_buf = NULL;
+	const uint32_t wr_buf_size = 40;
+	/* 0: lane_count; 1: link_rate */
+	int max_param_num = 2;
+	uint8_t param_nums = 0;
+	long param[2];
+	bool valid_input = true;
+
+	if (size == 0)
+		return -EINVAL;
+
+	wr_buf = kcalloc(wr_buf_size, sizeof(char), GFP_KERNEL);
+	if (!wr_buf)
+		return -ENOMEM;
+
+	if (parse_write_buffer_into_params(wr_buf, wr_buf_size,
+					   (long *)param, buf,
+					   max_param_num,
+					   &param_nums)) {
+		kfree(wr_buf);
+		return -EINVAL;
+	}
+
+	if (param_nums <= 0) {
+		kfree(wr_buf);
+		return -EINVAL;
+	}
+
+	switch (param[0]) {
+	case LANE_COUNT_ONE:
+	case LANE_COUNT_TWO:
+	case LANE_COUNT_FOUR:
+		break;
+	default:
+		valid_input = false;
+		break;
+	}
+
+	if (param[1] >= link->dpcd_caps.edp_supported_link_rates_count)
+		valid_input = false;
+
+	if (!valid_input) {
+		kfree(wr_buf);
+		DRM_DEBUG_DRIVER("Invalid Input value. No HW will be programmed\n");
+		prefer_link_settings.use_link_rate_set = false;
+		mutex_lock(&adev->dm.dc_lock);
+		dc_link_set_preferred_training_settings(dc, NULL, NULL, link, false);
+		mutex_unlock(&adev->dm.dc_lock);
+		return size;
+	}
+
+	/* save user force lane_count, link_rate to preferred settings
+	 * spread spectrum will not be changed
+	 */
+	prefer_link_settings.link_spread = link->cur_link_settings.link_spread;
+	prefer_link_settings.lane_count = param[0];
+	prefer_link_settings.use_link_rate_set = true;
+	prefer_link_settings.link_rate_set = param[1];
+	prefer_link_settings.link_rate = link->dpcd_caps.edp_supported_link_rates[param[1]];
+
+	mutex_lock(&adev->dm.dc_lock);
+	dc_link_set_preferred_training_settings(dc, &prefer_link_settings,
+						NULL, link, false);
+	mutex_unlock(&adev->dm.dc_lock);
+
+	kfree(wr_buf);
+	return size;
+}
+
+static int edp_ilr_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, edp_ilr_show, inode->i_private);
+}
+
+static const struct file_operations edp_ilr_debugfs_fops = {
+	.owner = THIS_MODULE,
+	.open = edp_ilr_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+	.write = edp_ilr_write
 };
 
 void connector_debugfs_init(struct amdgpu_dm_connector *connector)
@@ -2760,13 +3194,23 @@ void connector_debugfs_init(struct amdgpu_dm_connector *connector)
 					    dp_debugfs_entries[i].fops);
 		}
 	}
+
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 	if (connector->base.connector_type == DRM_MODE_CONNECTOR_eDP) {
+		debugfs_create_file_unsafe("psr_capability", 0444, dir, connector, &psr_capability_fops);
 		debugfs_create_file_unsafe("psr_state", 0444, dir, connector, &psr_fops);
+		debugfs_create_file_unsafe("psr_residency", 0444, dir,
+					   connector, &psr_residency_fops);
 		debugfs_create_file("amdgpu_current_backlight_pwm", 0444, dir, connector,
 				    &current_backlight_fops);
 		debugfs_create_file("amdgpu_target_backlight_pwm", 0444, dir, connector,
 				    &target_backlight_fops);
+		debugfs_create_file("ilr_setting", 0644, dir, connector,
+					&edp_ilr_debugfs_fops);
+		debugfs_create_file("allow_edp_hotplug_detection", 0644, dir, connector,
+					&allow_edp_hotplug_detection_fops);
 	}
+#endif
 
 	for (i = 0; i < ARRAY_SIZE(connector_debugfs_entries); i++) {
 		debugfs_create_file(connector_debugfs_entries[i].name,
@@ -2774,10 +3218,6 @@ void connector_debugfs_init(struct amdgpu_dm_connector *connector)
 				    connector_debugfs_entries[i].fops);
 	}
 
-	connector->debugfs_dpcd_address = 0;
-	connector->debugfs_dpcd_size = 0;
-
-#ifdef CONFIG_DRM_AMD_DC_HDCP
 	if (connector->base.connector_type == DRM_MODE_CONNECTOR_HDMIA) {
 		for (i = 0; i < ARRAY_SIZE(hdmi_debugfs_entries); i++) {
 			debugfs_create_file(hdmi_debugfs_entries[i].name,
@@ -2785,7 +3225,6 @@ void connector_debugfs_init(struct amdgpu_dm_connector *connector)
 					    hdmi_debugfs_entries[i].fops);
 		}
 	}
-#endif
 }
 
 #ifdef CONFIG_DRM_AMD_SECURE_DISPLAY
@@ -2799,8 +3238,8 @@ static int crc_win_x_start_set(void *data, u64 val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	acrtc->dm_irq_params.crc_window.x_start = (uint16_t) val;
-	acrtc->dm_irq_params.crc_window.update_win = false;
+	acrtc->dm_irq_params.window_param.x_start = (uint16_t) val;
+	acrtc->dm_irq_params.window_param.update_win = false;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2816,7 +3255,7 @@ static int crc_win_x_start_get(void *data, u64 *val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	*val = acrtc->dm_irq_params.crc_window.x_start;
+	*val = acrtc->dm_irq_params.window_param.x_start;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2836,8 +3275,8 @@ static int crc_win_y_start_set(void *data, u64 val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	acrtc->dm_irq_params.crc_window.y_start = (uint16_t) val;
-	acrtc->dm_irq_params.crc_window.update_win = false;
+	acrtc->dm_irq_params.window_param.y_start = (uint16_t) val;
+	acrtc->dm_irq_params.window_param.update_win = false;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2853,7 +3292,7 @@ static int crc_win_y_start_get(void *data, u64 *val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	*val = acrtc->dm_irq_params.crc_window.y_start;
+	*val = acrtc->dm_irq_params.window_param.y_start;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2872,8 +3311,8 @@ static int crc_win_x_end_set(void *data, u64 val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	acrtc->dm_irq_params.crc_window.x_end = (uint16_t) val;
-	acrtc->dm_irq_params.crc_window.update_win = false;
+	acrtc->dm_irq_params.window_param.x_end = (uint16_t) val;
+	acrtc->dm_irq_params.window_param.update_win = false;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2889,7 +3328,7 @@ static int crc_win_x_end_get(void *data, u64 *val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	*val = acrtc->dm_irq_params.crc_window.x_end;
+	*val = acrtc->dm_irq_params.window_param.x_end;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2908,8 +3347,8 @@ static int crc_win_y_end_set(void *data, u64 val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	acrtc->dm_irq_params.crc_window.y_end = (uint16_t) val;
-	acrtc->dm_irq_params.crc_window.update_win = false;
+	acrtc->dm_irq_params.window_param.y_end = (uint16_t) val;
+	acrtc->dm_irq_params.window_param.update_win = false;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2925,7 +3364,7 @@ static int crc_win_y_end_get(void *data, u64 *val)
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(crtc);
 
 	spin_lock_irq(&drm_dev->event_lock);
-	*val = acrtc->dm_irq_params.crc_window.y_end;
+	*val = acrtc->dm_irq_params.window_param.y_end;
 	spin_unlock_irq(&drm_dev->event_lock);
 
 	return 0;
@@ -2938,41 +3377,26 @@ DEFINE_DEBUGFS_ATTRIBUTE(crc_win_y_end_fops, crc_win_y_end_get,
  */
 static int crc_win_update_set(void *data, u64 val)
 {
-	struct drm_crtc *new_crtc = data;
-	struct drm_crtc *old_crtc = NULL;
-	struct amdgpu_crtc *new_acrtc, *old_acrtc;
-	struct amdgpu_device *adev = drm_to_adev(new_crtc->dev);
-	struct crc_rd_work *crc_rd_wrk = adev->dm.crc_rd_wrk;
-
-	if (!crc_rd_wrk)
-		return 0;
+	struct drm_crtc *crtc = data;
+	struct amdgpu_crtc *acrtc;
+	struct amdgpu_device *adev = drm_to_adev(crtc->dev);
 
 	if (val) {
+		acrtc = to_amdgpu_crtc(crtc);
+		mutex_lock(&adev->dm.dc_lock);
+		/* PSR may write to OTG CRC window control register,
+		 * so close it before starting secure_display.
+		 */
+		amdgpu_dm_psr_disable(acrtc->dm_irq_params.stream);
+
 		spin_lock_irq(&adev_to_drm(adev)->event_lock);
-		spin_lock_irq(&crc_rd_wrk->crc_rd_work_lock);
-		if (crc_rd_wrk->crtc) {
-			old_crtc = crc_rd_wrk->crtc;
-			old_acrtc = to_amdgpu_crtc(old_crtc);
-		}
-		new_acrtc = to_amdgpu_crtc(new_crtc);
 
-		if (old_crtc && old_crtc != new_crtc) {
-			old_acrtc->dm_irq_params.crc_window.activated = false;
-			old_acrtc->dm_irq_params.crc_window.update_win = false;
-			old_acrtc->dm_irq_params.crc_window.skip_frame_cnt = 0;
+		acrtc->dm_irq_params.window_param.activated = true;
+		acrtc->dm_irq_params.window_param.update_win = true;
+		acrtc->dm_irq_params.window_param.skip_frame_cnt = 0;
 
-			new_acrtc->dm_irq_params.crc_window.activated = true;
-			new_acrtc->dm_irq_params.crc_window.update_win = true;
-			new_acrtc->dm_irq_params.crc_window.skip_frame_cnt = 0;
-			crc_rd_wrk->crtc = new_crtc;
-		} else {
-			new_acrtc->dm_irq_params.crc_window.activated = true;
-			new_acrtc->dm_irq_params.crc_window.update_win = true;
-			new_acrtc->dm_irq_params.crc_window.skip_frame_cnt = 0;
-			crc_rd_wrk->crtc = new_crtc;
-		}
-		spin_unlock_irq(&crc_rd_wrk->crc_rd_work_lock);
 		spin_unlock_irq(&adev_to_drm(adev)->event_lock);
+		mutex_unlock(&adev->dm.dc_lock);
 	}
 
 	return 0;
@@ -2989,9 +3413,10 @@ static int crc_win_update_get(void *data, u64 *val)
 
 DEFINE_DEBUGFS_ATTRIBUTE(crc_win_update_fops, crc_win_update_get,
 			 crc_win_update_set, "%llu\n");
-
+#endif
 void crtc_debugfs_init(struct drm_crtc *crtc)
 {
+#ifdef CONFIG_DRM_AMD_SECURE_DISPLAY
 	struct dentry *dir = debugfs_lookup("crc", crtc->debugfs_entry);
 
 	if (!dir)
@@ -3008,8 +3433,13 @@ void crtc_debugfs_init(struct drm_crtc *crtc)
 	debugfs_create_file_unsafe("crc_win_update", 0644, dir, crtc,
 				   &crc_win_update_fops);
 	dput(dir);
-}
 #endif
+	debugfs_create_file("amdgpu_current_bpc", 0644, crtc->debugfs_entry,
+			    crtc, &amdgpu_current_bpc_fops);
+	debugfs_create_file("amdgpu_current_colorspace", 0644, crtc->debugfs_entry,
+			    crtc, &amdgpu_current_colorspace_fops);
+}
+
 /*
  * Writes DTN log state to the user supplied buffer.
  * Example usage: cat /sys/kernel/debug/dri/0/amdgpu_dm_dtn_log
@@ -3099,6 +3529,7 @@ static int mst_topo_show(struct seq_file *m, void *unused)
 	return 0;
 }
 
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 /*
  * Sets trigger hpd for MST topologies.
  * All connected connectors will be rediscovered and re started as needed if val of 1 is sent.
@@ -3121,7 +3552,10 @@ static int trigger_hpd_mst_set(void *data, u64 val)
 			aconnector = to_amdgpu_dm_connector(connector);
 			if (aconnector->dc_link->type == dc_connection_mst_branch &&
 			    aconnector->mst_mgr.aux) {
+				mutex_lock(&adev->dm.dc_lock);
 				dc_link_detect(aconnector->dc_link, DETECT_REASON_HPD);
+				mutex_unlock(&adev->dm.dc_lock);
+
 				drm_dp_mst_topology_mgr_set_mst(&aconnector->mst_mgr, true);
 			}
 		}
@@ -3132,12 +3566,12 @@ static int trigger_hpd_mst_set(void *data, u64 val)
 			if (!aconnector->dc_link)
 				continue;
 
-			if (!aconnector->mst_port)
+			if (!aconnector->mst_root)
 				continue;
 
 			link = aconnector->dc_link;
-			dp_receiver_power_ctrl(link, false);
-			drm_dp_mst_topology_mgr_set_mst(&aconnector->mst_port->mst_mgr, false);
+			dc_link_dp_receiver_power_ctrl(link, false);
+			drm_dp_mst_topology_mgr_set_mst(&aconnector->mst_root->mst_mgr, false);
 			link->mst_stream_alloc_table.stream_count = 0;
 			memset(link->mst_stream_alloc_table.stream_allocations, 0,
 					sizeof(link->mst_stream_alloc_table.stream_allocations));
@@ -3163,7 +3597,7 @@ static int trigger_hpd_mst_get(void *data, u64 *val)
 
 DEFINE_DEBUGFS_ATTRIBUTE(trigger_hpd_mst_ops, trigger_hpd_mst_get,
 			 trigger_hpd_mst_set, "%llu\n");
-
+#endif
 
 /*
  * Sets the force_timing_sync debug option from the given string.
@@ -3194,10 +3628,13 @@ static int force_timing_sync_get(void *data, u64 *val)
 	return 0;
 }
 
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 DEFINE_DEBUGFS_ATTRIBUTE(force_timing_sync_ops, force_timing_sync_get,
 			 force_timing_sync_set, "%llu\n");
+#endif
 
 
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 /*
  * Disables all HPD and HPD RX interrupt handling in the
  * driver when set to 1. Default is 0.
@@ -3227,6 +3664,80 @@ static int disable_hpd_get(void *data, u64 *val)
 
 DEFINE_DEBUGFS_ATTRIBUTE(disable_hpd_ops, disable_hpd_get,
 			 disable_hpd_set, "%llu\n");
+#endif
+
+/*
+ * Prints hardware capabilities. These are used for IGT testing.
+ */
+static int capabilities_show(struct seq_file *m, void *unused)
+{
+	struct amdgpu_device *adev = (struct amdgpu_device *)m->private;
+	struct dc *dc = adev->dm.dc;
+	bool mall_supported = dc->caps.mall_size_total;
+	unsigned int mall_in_use = false;
+	struct hubbub *hubbub = dc->res_pool->hubbub;
+
+	if (hubbub->funcs->get_mall_en)
+		hubbub->funcs->get_mall_en(hubbub, &mall_in_use);
+
+	seq_printf(m, "mall supported: %s, enabled: %s\n",
+			   mall_supported ? "yes" : "no", mall_in_use ? "yes" : "no");
+
+	return 0;
+}
+
+DEFINE_SHOW_ATTRIBUTE(capabilities);
+
+/*
+ * Temporary w/a to force sst sequence in M42D DP2 mst receiver
+ * Example usage: echo 1 > /sys/kernel/debug/dri/0/amdgpu_dm_dp_set_mst_en_for_sst
+ */
+static int dp_force_sst_set(void *data, u64 val)
+{
+	struct amdgpu_device *adev = data;
+
+	adev->dm.dc->debug.set_mst_en_for_sst = val;
+
+	return 0;
+}
+
+static int dp_force_sst_get(void *data, u64 *val)
+{
+	struct amdgpu_device *adev = data;
+
+	*val = adev->dm.dc->debug.set_mst_en_for_sst;
+
+	return 0;
+}
+
+#if defined(DEFINE_DEBUGFS_ATTRIBUTE)
+DEFINE_DEBUGFS_ATTRIBUTE(dp_set_mst_en_for_sst_ops, dp_force_sst_get,
+			 dp_force_sst_set, "%llu\n");
+
+/*
+ * Force DP2 sequence without VESA certified cable.
+ * Example usage: echo 1 > /sys/kernel/debug/dri/0/amdgpu_dm_dp_ignore_cable_id
+ */
+static int dp_ignore_cable_id_set(void *data, u64 val)
+{
+	struct amdgpu_device *adev = data;
+
+	adev->dm.dc->debug.ignore_cable_id = val;
+
+	return 0;
+}
+
+static int dp_ignore_cable_id_get(void *data, u64 *val)
+{
+	struct amdgpu_device *adev = data;
+
+	*val = adev->dm.dc->debug.ignore_cable_id;
+
+	return 0;
+}
+DEFINE_DEBUGFS_ATTRIBUTE(dp_ignore_cable_id_ops, dp_ignore_cable_id_get,
+			 dp_ignore_cable_id_set, "%llu\n");
+#endif
 
 /*
  * Sets the DC visual confirm debug option from the given string.
@@ -3255,8 +3766,44 @@ static int visual_confirm_get(void *data, u64 *val)
 }
 
 DEFINE_SHOW_ATTRIBUTE(mst_topo);
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
 DEFINE_DEBUGFS_ATTRIBUTE(visual_confirm_fops, visual_confirm_get,
 			 visual_confirm_set, "%llu\n");
+
+
+/*
+ * Sets the DC skip_detection_link_training debug option from the given string.
+ * Example usage: echo 1 > /sys/kernel/debug/dri/0/amdgpu_skip_detection_link_training
+ */
+static int skip_detection_link_training_set(void *data, u64 val)
+{
+	struct amdgpu_device *adev = data;
+
+	if (val == 0)
+		adev->dm.dc->debug.skip_detection_link_training = false;
+	else
+		adev->dm.dc->debug.skip_detection_link_training = true;
+
+	return 0;
+}
+
+/*
+ * Reads the DC skip_detection_link_training debug option value into the given buffer.
+ * Example usage: cat /sys/kernel/debug/dri/0/amdgpu_dm_skip_detection_link_training
+ */
+static int skip_detection_link_training_get(void *data, u64 *val)
+{
+	struct amdgpu_device *adev = data;
+
+	*val = adev->dm.dc->debug.skip_detection_link_training;
+
+	return 0;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(skip_detection_link_training_fops,
+			 skip_detection_link_training_get,
+			 skip_detection_link_training_set, "%llu\n");
+#endif
 
 /*
  * Dumps the DCC_EN bit for each pipe.
@@ -3339,11 +3886,21 @@ void dtn_debugfs_init(struct amdgpu_device *adev)
 
 	debugfs_create_file("amdgpu_mst_topology", 0444, root,
 			    adev, &mst_topo_fops);
+	debugfs_create_file("amdgpu_dm_capabilities", 0444, root,
+			    adev, &capabilities_fops);
 	debugfs_create_file("amdgpu_dm_dtn_log", 0644, root, adev,
 			    &dtn_log_fops);
 
+#ifdef DEFINE_DEBUGFS_ATTRIBUTE
+	debugfs_create_file("amdgpu_dm_dp_set_mst_en_for_sst", 0644, root, adev,
+				&dp_set_mst_en_for_sst_ops);
+	debugfs_create_file("amdgpu_dm_dp_ignore_cable_id", 0644, root, adev,
+				&dp_ignore_cable_id_ops);
 	debugfs_create_file_unsafe("amdgpu_dm_visual_confirm", 0644, root, adev,
 				   &visual_confirm_fops);
+
+	debugfs_create_file_unsafe("amdgpu_dm_skip_detection_link_training", 0644, root, adev,
+				   &skip_detection_link_training_fops);
 
 	debugfs_create_file_unsafe("amdgpu_dm_dmub_tracebuffer", 0644, root,
 				   adev, &dmub_tracebuffer_fops);
@@ -3365,5 +3922,5 @@ void dtn_debugfs_init(struct amdgpu_device *adev)
 
 	debugfs_create_file_unsafe("amdgpu_dm_disable_hpd", 0644, root, adev,
 				   &disable_hpd_ops);
-
+#endif
 }

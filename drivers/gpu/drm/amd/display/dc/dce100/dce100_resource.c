@@ -23,8 +23,6 @@
  *
  */
 
-#include <linux/slab.h>
-
 #include "dm_services.h"
 
 #include "link_encoder.h"
@@ -32,7 +30,7 @@
 
 #include "resource.h"
 #include "include/irq_service_interface.h"
-#include "../virtual/virtual_stream_encoder.h"
+#include "virtual/virtual_stream_encoder.h"
 #include "dce110/dce110_resource.h"
 #include "dce110/dce110_timing_generator.h"
 #include "irq/dce110/irq_service_dce110.h"
@@ -45,7 +43,7 @@
 #include "dce/dce_clock_source.h"
 #include "dce/dce_audio.h"
 #include "dce/dce_hwseq.h"
-#include "dce100/dce100_hw_sequencer.h"
+#include "dce100/dce100_hwseq.h"
 #include "dce/dce_panel_cntl.h"
 
 #include "reg_helper.h"
@@ -403,6 +401,10 @@ static const struct dc_plane_cap plane_cap = {
 	}
 };
 
+static const struct dc_debug_options debug_defaults = {
+		.enable_legacy_fast_update = true,
+};
+
 #define CTX  ctx
 #define REG(reg) mm ## reg
 
@@ -614,6 +616,7 @@ static const struct encoder_feature_support link_enc_feature = {
 };
 
 static struct link_encoder *dce100_link_encoder_create(
+	struct dc_context *ctx,
 	const struct encoder_init_data *enc_init_data)
 {
 	struct dce110_link_encoder *enc110 =
@@ -821,7 +824,7 @@ static enum dc_status build_mapped_resource(
 		struct dc_state *context,
 		struct dc_stream_state *stream)
 {
-	struct pipe_ctx *pipe_ctx = resource_get_head_pipe_for_stream(&context->res_ctx, stream);
+	struct pipe_ctx *pipe_ctx = resource_get_otg_master_for_stream(&context->res_ctx, stream);
 
 	if (!pipe_ctx)
 		return DC_ERROR_UNEXPECTED;
@@ -1072,6 +1075,7 @@ static bool dce100_resource_construct(
 	dc->caps.dual_link_dvi = true;
 	dc->caps.disable_dp_clk_share = true;
 	dc->caps.extended_aux_timeout_support = false;
+	dc->debug = debug_defaults;
 
 	for (i = 0; i < pool->base.pipe_count; i++) {
 		pool->base.timing_generators[i] =
