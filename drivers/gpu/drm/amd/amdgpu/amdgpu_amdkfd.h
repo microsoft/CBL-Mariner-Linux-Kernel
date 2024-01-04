@@ -25,6 +25,7 @@
 #ifndef AMDGPU_AMDKFD_H_INCLUDED
 #define AMDGPU_AMDKFD_H_INCLUDED
 
+#include <linux/list.h>
 #include <linux/types.h>
 #include <linux/mm.h>
 #include <linux/kthread.h>
@@ -32,7 +33,6 @@
 #include <linux/mmu_notifier.h>
 #include <linux/memremap.h>
 #include <kgd_kfd_interface.h>
-#include <drm/ttm/ttm_execbuf_util.h>
 #include "amdgpu_gfx.h"
 #include "amdgpu_sync.h"
 #include "amdgpu_vm.h"
@@ -77,8 +77,7 @@ struct kgd_mem {
 #endif
 	struct list_head attachments;
 	/* protected by amdkfd_process_info.lock */
-	struct ttm_validate_buffer validate_list;
-	struct ttm_validate_buffer resv_list;
+	struct list_head validate_list;
 	uint32_t domain;
 	unsigned int mapped_to_gpu_memory;
 	uint64_t va;
@@ -170,11 +169,6 @@ int amdgpu_amdkfd_submit_ib(struct amdgpu_device *adev,
 				uint32_t *ib_cmd, uint32_t ib_len);
 void amdgpu_amdkfd_set_compute_idle(struct amdgpu_device *adev, bool idle);
 bool amdgpu_amdkfd_have_atomics_support(struct amdgpu_device *adev);
-int amdgpu_amdkfd_flush_gpu_tlb_vmid(struct amdgpu_device *adev,
-				uint16_t vmid);
-int amdgpu_amdkfd_flush_gpu_tlb_pasid(struct amdgpu_device *adev,
-				uint16_t pasid, enum TLB_FLUSH_TYPE flush_type,
-				uint32_t inst);
 
 bool amdgpu_amdkfd_is_kfd_vmid(struct amdgpu_device *adev, u32 vmid);
 
@@ -505,7 +499,7 @@ static inline void kgd2kfd_suspend(struct kfd_dev *kfd, bool run_pm, bool force)
 {
 }
 
-static inline int kgd2kfd_resume(struct kfd_dev *kfd, bool run_pm, bool sync)
+static inline int kgd2kfd_resume(struct kfd_dev *kfd, bool run_pm)
 {
 	return 0;
 }

@@ -255,6 +255,7 @@ enum DC_DEBUG_MASK {
 	DC_FORCE_SUBVP_MCLK_SWITCH = 0x20,
 	DC_DISABLE_MPO = 0x40,
 	DC_ENABLE_DPIA_TRACE = 0x80,
+	DC_ENABLE_DML2 = 0x100,
 };
 
 enum amd_dpm_forced_level;
@@ -271,6 +272,8 @@ enum amd_dpm_forced_level;
  * @hw_init: sets up the hw state
  * @hw_fini: tears down the hw state
  * @late_fini: final cleanup
+ * @prepare_suspend: handle IP specific changes to prepare for suspend
+ *                   (such as allocating any required memory)
  * @suspend: handles IP specific hw/sw changes for suspend
  * @resume: handles IP specific hw/sw changes for resume
  * @is_idle: returns current IP block idle status

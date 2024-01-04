@@ -1567,10 +1567,14 @@ u64 amdgpu_bo_gpu_offset(struct amdgpu_bo *bo)
 u64 amdgpu_bo_gpu_offset_no_check(struct amdgpu_bo *bo)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
-	uint64_t offset;
+	uint64_t offset = AMDGPU_BO_INVALID_OFFSET;
 
-	offset = (bo->tbo.resource->start << PAGE_SHIFT) +
-		 amdgpu_ttm_domain_start(adev, bo->tbo.resource->mem_type);
+	if (bo->tbo.resource->mem_type == TTM_PL_TT)
+		offset = amdgpu_gmc_agp_addr(&bo->tbo);
+
+	if (offset == AMDGPU_BO_INVALID_OFFSET)
+		offset = (bo->tbo.resource->start << PAGE_SHIFT) +
+			amdgpu_ttm_domain_start(adev, bo->tbo.resource->mem_type);
 
 	return amdgpu_gmc_sign_extend(offset);
 }
@@ -1634,11 +1638,11 @@ u64 amdgpu_bo_print_info(int id, struct amdgpu_bo *bo, struct seq_file *m)
 				placement = "VRAM";
 			break;
 		case AMDGPU_GEM_DOMAIN_DGMA:
-            		placement = "DGMA";
-            		break;
+			placement = "DGMA";
+			break;
 		case AMDGPU_GEM_DOMAIN_DGMA_IMPORT:
-            		placement = "DGMA_IMPORT";
-            		break;
+			placement = "DGMA_IMPORT";
+			break;
 		case AMDGPU_GEM_DOMAIN_GTT:
 			placement = "GTT";
 			break;

@@ -570,7 +570,6 @@ static void update_config(void *handle, struct cp_psp_stream_config *config)
 	process_output(hdcp_w);
 	mutex_unlock(&hdcp_w->mutex);
 #endif
-
 }
 
 /**

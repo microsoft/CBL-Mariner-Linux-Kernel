@@ -761,7 +761,7 @@ static ssize_t amdgpu_set_pp_od_clk_voltage(struct device *dev,
 	if (adev->in_suspend && !adev->in_runpm)
 		return -EPERM;
 
-	if (count > 127)
+	if (count > 127 || count == 0)
 		return -EINVAL;
 
 	if (*buf == 's')
@@ -781,7 +781,8 @@ static ssize_t amdgpu_set_pp_od_clk_voltage(struct device *dev,
 	else
 		return -EINVAL;
 
-	memcpy(buf_cpy, buf, count+1);
+	memcpy(buf_cpy, buf, count);
+	buf_cpy[count] = 0;
 
 	tmp_str = buf_cpy;
 
@@ -797,6 +798,9 @@ static ssize_t amdgpu_set_pp_od_clk_voltage(struct device *dev,
 		if (ret)
 			return -EINVAL;
 		parameter_size++;
+
+		if (!tmp_str)
+			break;
 
 		while (isspace(*tmp_str))
 			tmp_str++;
@@ -985,12 +989,13 @@ static ssize_t amdgpu_get_pp_features(struct device *dev,
  * Reading back the files will show you the available power levels within
  * the power state and the clock information for those levels. If deep sleep is
  * applied to a clock, the level will be denoted by a special level 'S:'
- * E.g.,
- *	S: 19Mhz *
- *	0: 615Mhz
- *	1: 800Mhz
- *	2: 888Mhz
- *	3: 1000Mhz
+ * E.g., ::
+ *
+ *  S: 19Mhz *
+ *  0: 615Mhz
+ *  1: 800Mhz
+ *  2: 888Mhz
+ *  3: 1000Mhz
  *
  *
  * To manually adjust these states, first select manual using
@@ -1794,6 +1799,44 @@ static ssize_t amdgpu_set_apu_thermal_cap(struct device *dev,
 	return count;
 }
 
+static int amdgpu_pm_metrics_attr_update(struct amdgpu_device *adev,
+					 struct amdgpu_device_attr *attr,
+					 uint32_t mask,
+					 enum amdgpu_device_attr_states *states)
+{
+	if (amdgpu_dpm_get_pm_metrics(adev, NULL, 0) == -EOPNOTSUPP)
+		*states = ATTR_STATE_UNSUPPORTED;
+
+	return 0;
+}
+
+static ssize_t amdgpu_get_pm_metrics(struct device *dev,
+				     struct device_attribute *attr, char *buf)
+{
+	struct drm_device *ddev = dev_get_drvdata(dev);
+	struct amdgpu_device *adev = drm_to_adev(ddev);
+	ssize_t size = 0;
+	int ret;
+
+	if (amdgpu_in_reset(adev))
+		return -EPERM;
+	if (adev->in_suspend && !adev->in_runpm)
+		return -EPERM;
+
+	ret = pm_runtime_get_sync(ddev->dev);
+	if (ret < 0) {
+		pm_runtime_put_autosuspend(ddev->dev);
+		return ret;
+	}
+
+	size = amdgpu_dpm_get_pm_metrics(adev, buf, PAGE_SIZE);
+
+	pm_runtime_mark_last_busy(ddev->dev);
+	pm_runtime_put_autosuspend(ddev->dev);
+
+	return size;
+}
+
 /**
  * DOC: gpu_metrics
  *
@@ -2091,6 +2134,8 @@ static struct amdgpu_device_attr amdgpu_device_attrs[] = {
 	AMDGPU_DEVICE_ATTR_RW(smartshift_bias,				ATTR_FLAG_BASIC,
 			      .attr_update = ss_bias_attr_update),
 	AMDGPU_DEVICE_ATTR_RW(xgmi_plpd_policy,				ATTR_FLAG_BASIC),
+	AMDGPU_DEVICE_ATTR_RO(pm_metrics,				ATTR_FLAG_BASIC,
+			      .attr_update = amdgpu_pm_metrics_attr_update),
 };
 
 static int default_attr_update(struct amdgpu_device *adev, struct amdgpu_device_attr *attr,
@@ -2192,6 +2237,22 @@ static int default_attr_update(struct amdgpu_device *adev, struct amdgpu_device_
 			*states = ATTR_STATE_UNSUPPORTED;
 	} else if (DEVICE_ATTR_IS(xgmi_plpd_policy)) {
 		if (amdgpu_dpm_get_xgmi_plpd_mode(adev, NULL) == XGMI_PLPD_NONE)
+			*states = ATTR_STATE_UNSUPPORTED;
+	} else if (DEVICE_ATTR_IS(pp_dpm_mclk_od)) {
+		if (amdgpu_dpm_get_mclk_od(adev) == -EOPNOTSUPP)
+			*states = ATTR_STATE_UNSUPPORTED;
+	} else if (DEVICE_ATTR_IS(pp_dpm_sclk_od)) {
+		if (amdgpu_dpm_get_sclk_od(adev) == -EOPNOTSUPP)
+			*states = ATTR_STATE_UNSUPPORTED;
+	} else if (DEVICE_ATTR_IS(apu_thermal_cap)) {
+		u32 limit;
+
+		if (amdgpu_dpm_get_apu_thermal_limit(adev, &limit) ==
+		    -EOPNOTSUPP)
+			*states = ATTR_STATE_UNSUPPORTED;
+	} else if (DEVICE_ATTR_IS(pp_dpm_pcie)) {
+		if (gc_ver == IP_VERSION(9, 4, 2) ||
+		    gc_ver == IP_VERSION(9, 4, 3))
 			*states = ATTR_STATE_UNSUPPORTED;
 	}
 
@@ -3284,10 +3345,6 @@ static umode_t hwmon_attributes_visible(struct kobject *kobj,
 	uint32_t gc_ver = amdgpu_ip_version(adev, GC_HWIP, 0);
 	uint32_t tmp;
 
-	/* under multi-vf mode, the hwmon attributes are all not supported */
-	if (amdgpu_sriov_vf(adev) && !amdgpu_sriov_is_pp_one_vf(adev))
-		return 0;
-
 	/* under pp one vf mode manage of hwmon attributes is not supported */
 	if (amdgpu_sriov_is_pp_one_vf(adev))
 		effective_mode &= ~S_IWUSR;
@@ -3678,6 +3735,9 @@ static umode_t fan_curve_visible(struct amdgpu_device *adev)
  * When you have finished the editing, write "c" (commit) to the file to commit
  * your changes.
  *
+ * If you want to reset to the default value, write "r" (reset) to the file to
+ * reset them
+ *
  * This setting works under auto fan control mode only. It adjusts the PMFW's
  * behavior about the maximum speed in RPM the fan can spin. Setting via this
  * interface will switch the fan control to auto mode implicitly.
@@ -3732,6 +3792,9 @@ static umode_t acoustic_limit_threshold_visible(struct amdgpu_device *adev)
  *
  * When you have finished the editing, write "c" (commit) to the file to commit
  * your changes.
+ *
+ * If you want to reset to the default value, write "r" (reset) to the file to
+ * reset them
  *
  * This setting works under auto fan control mode only. It can co-exist with
  * other settings which can work also under auto mode. It adjusts the PMFW's
@@ -3790,6 +3853,9 @@ static umode_t acoustic_target_threshold_visible(struct amdgpu_device *adev)
  * When you have finished the editing, write "c" (commit) to the file to commit
  * your changes.
  *
+ * If you want to reset to the default value, write "r" (reset) to the file to
+ * reset them
+ *
  * This setting works under auto fan control mode only. It can co-exist with
  * other settings which can work also under auto mode. Paring with the
  * acoustic_target_rpm_threshold setting, they define the maximum speed in
@@ -3847,6 +3913,9 @@ static umode_t fan_target_temperature_visible(struct amdgpu_device *adev)
  *
  * When you have finished the editing, write "c" (commit) to the file to commit
  * your changes.
+ *
+ * If you want to reset to the default value, write "r" (reset) to the file to
+ * reset them
  *
  * This setting works under auto fan control mode only. It can co-exist with
  * other settings which can work also under auto mode. It adjusts the PMFW's
@@ -4146,6 +4215,7 @@ err_out:
 
 int amdgpu_pm_sysfs_init(struct amdgpu_device *adev)
 {
+	enum amdgpu_sriov_vf_mode mode;
 	uint32_t mask = 0;
 	int ret;
 
@@ -4157,17 +4227,21 @@ int amdgpu_pm_sysfs_init(struct amdgpu_device *adev)
 	if (adev->pm.dpm_enabled == 0)
 		return 0;
 
-	adev->pm.int_hwmon_dev = hwmon_device_register_with_groups(adev->dev,
-								   DRIVER_NAME, adev,
-								   hwmon_groups);
-	if (IS_ERR(adev->pm.int_hwmon_dev)) {
-		ret = PTR_ERR(adev->pm.int_hwmon_dev);
-		dev_err(adev->dev,
-			"Unable to register hwmon device: %d\n", ret);
-		return ret;
+	mode = amdgpu_virt_get_sriov_vf_mode(adev);
+
+	/* under multi-vf mode, the hwmon attributes are all not supported */
+	if (mode != SRIOV_VF_MODE_MULTI_VF) {
+		adev->pm.int_hwmon_dev = hwmon_device_register_with_groups(adev->dev,
+														DRIVER_NAME, adev,
+														hwmon_groups);
+		if (IS_ERR(adev->pm.int_hwmon_dev)) {
+			ret = PTR_ERR(adev->pm.int_hwmon_dev);
+			dev_err(adev->dev, "Unable to register hwmon device: %d\n", ret);
+			return ret;
+		}
 	}
 
-	switch (amdgpu_virt_get_sriov_vf_mode(adev)) {
+	switch (mode) {
 	case SRIOV_VF_MODE_ONE_VF:
 		mask = ATTR_FLAG_ONEVF;
 		break;
@@ -4274,10 +4348,10 @@ static int amdgpu_debugfs_pm_info_pp(struct seq_file *m, struct amdgpu_device *a
 		seq_printf(m, "\t%u mV (VDDNB)\n", value);
 	size = sizeof(uint32_t);
 	if (!amdgpu_dpm_read_sensor(adev, AMDGPU_PP_SENSOR_GPU_AVG_POWER, (void *)&query, &size))
-		seq_printf(m, "\t%u.%u W (average GPU)\n", query >> 8, query & 0xff);
+		seq_printf(m, "\t%u.%02u W (average GPU)\n", query >> 8, query & 0xff);
 	size = sizeof(uint32_t);
 	if (!amdgpu_dpm_read_sensor(adev, AMDGPU_PP_SENSOR_GPU_INPUT_POWER, (void *)&query, &size))
-		seq_printf(m, "\t%u.%u W (current GPU)\n", query >> 8, query & 0xff);
+		seq_printf(m, "\t%u.%02u W (current GPU)\n", query >> 8, query & 0xff);
 	size = sizeof(value);
 	seq_printf(m, "\n");
 

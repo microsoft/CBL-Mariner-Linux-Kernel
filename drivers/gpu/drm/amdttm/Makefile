@@ -31,6 +31,7 @@ $(TTM_NAME)-y := ttm_tt.o ttm_bo.o ttm_bo_util.o ttm_bo_vm.o ttm_module.o \
 $(TTM_NAME)-$(CONFIG_AGP) += ttm_agp_backend.o
 
 obj-$(CONFIG_DRM_TTM) += $(TTM_NAME).o
+obj-$(CONFIG_DRM_TTM_KUNIT_TEST) += tests/
 
 ifeq ($(KBUILD_EXTMOD),)
 TTM_FULL_PATH := $(srctree)/$(src)

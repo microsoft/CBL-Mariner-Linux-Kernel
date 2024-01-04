@@ -67,6 +67,7 @@ MODULE_FIRMWARE("amdgpu/gc_11_0_0_pfp.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_0_0_me.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_0_0_mec.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_0_0_rlc.bin");
+MODULE_FIRMWARE("amdgpu/gc_11_0_0_rlc_1.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_0_0_toc.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_0_1_pfp.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_0_1_me.bin");
@@ -88,6 +89,10 @@ MODULE_FIRMWARE("amdgpu/gc_11_5_0_pfp.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_5_0_me.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_5_0_mec.bin");
 MODULE_FIRMWARE("amdgpu/gc_11_5_0_rlc.bin");
+
+static const struct soc15_reg_golden golden_settings_gc_11_0[] = {
+	SOC15_REG_GOLDEN_VALUE(GC, 0, regTCP_CNTL, 0x20000000, 0x20000000)
+};
 
 static const struct soc15_reg_golden golden_settings_gc_11_0_1[] =
 {
@@ -289,6 +294,9 @@ static void gfx_v11_0_set_kiq_pm4_funcs(struct amdgpu_device *adev)
 
 static void gfx_v11_0_init_golden_registers(struct amdgpu_device *adev)
 {
+	if (amdgpu_sriov_vf(adev))
+		return;
+
 	switch (amdgpu_ip_version(adev, GC_HWIP, 0)) {
 	case IP_VERSION(11, 0, 1):
 	case IP_VERSION(11, 0, 4):
@@ -304,6 +312,10 @@ static void gfx_v11_0_init_golden_registers(struct amdgpu_device *adev)
 	default:
 		break;
 	}
+	soc15_program_register_sequence(adev,
+					golden_settings_gc_11_0,
+					(const u32)ARRAY_SIZE(golden_settings_gc_11_0));
+
 }
 
 static void gfx_v11_0_write_data_to_reg(struct amdgpu_ring *ring, int eng_sel,
@@ -419,7 +431,7 @@ static int gfx_v11_0_ring_test_ib(struct amdgpu_ring *ring, long timeout)
 		adev->wb.wb[index] = cpu_to_le32(0xCAFEDEAD);
 		cpu_ptr = &adev->wb.wb[index];
 
-		r = amdgpu_ib_get(adev, NULL, 16, AMDGPU_IB_POOL_DIRECT, &ib);
+		r = amdgpu_ib_get(adev, NULL, 20, AMDGPU_IB_POOL_DIRECT, &ib);
 		if (r) {
 			DRM_ERROR("amdgpu: failed to get ib (%ld).\n", r);
 			goto err1;
@@ -556,7 +568,11 @@ static int gfx_v11_0_init_microcode(struct amdgpu_device *adev)
 	}
 
 	if (!amdgpu_sriov_vf(adev)) {
-		snprintf(fw_name, sizeof(fw_name), "amdgpu/%s_rlc.bin", ucode_prefix);
+		if (amdgpu_ip_version(adev, GC_HWIP, 0) == IP_VERSION(11, 0, 0) &&
+		    adev->pdev->revision == 0xCE)
+			snprintf(fw_name, sizeof(fw_name), "amdgpu/gc_11_0_0_rlc_1.bin");
+		else
+			snprintf(fw_name, sizeof(fw_name), "amdgpu/%s_rlc.bin", ucode_prefix);
 		err = amdgpu_ucode_request(adev, &adev->gfx.rlc_fw, fw_name);
 		if (err)
 			goto out;
@@ -590,6 +606,14 @@ static int gfx_v11_0_init_microcode(struct amdgpu_device *adev)
 	adev->gfx.mec2_fw = NULL;
 
 	gfx_v11_0_check_fw_cp_gfx_shadow(adev);
+
+	if (adev->gfx.imu.funcs && adev->gfx.imu.funcs->init_microcode) {
+		err = adev->gfx.imu.funcs->init_microcode(adev);
+		if (err)
+			DRM_ERROR("Failed to init imu firmware!\n");
+		return err;
+	}
+
 out:
 	if (err) {
 		amdgpu_ucode_release(&adev->gfx.pfp_fw);
@@ -1395,14 +1419,6 @@ static int gfx_v11_0_sw_init(void *handle)
 		return r;
 
 	adev->gfx.gfx_current_status = AMDGPU_GFX_NORMAL_MODE;
-
-	if (adev->gfx.imu.funcs) {
-		if (adev->gfx.imu.funcs->init_microcode) {
-			r = adev->gfx.imu.funcs->init_microcode(adev);
-			if (r)
-				DRM_ERROR("Failed to load imu firmware!\n");
-		}
-	}
 
 	gfx_v11_0_me_init(adev);
 
@@ -3715,11 +3731,11 @@ static int gfx_v11_0_gfx_init_queue(struct amdgpu_ring *ring)
 		soc21_grbm_select(adev, 0, 0, 0, 0);
 		mutex_unlock(&adev->srbm_mutex);
 		if (adev->gfx.me.mqd_backup[mqd_idx])
-			memcpy(adev->gfx.me.mqd_backup[mqd_idx], mqd, sizeof(*mqd));
+			memcpy_fromio(adev->gfx.me.mqd_backup[mqd_idx], mqd, sizeof(*mqd));
 	} else {
 		/* restore mqd with the backup copy */
 		if (adev->gfx.me.mqd_backup[mqd_idx])
-			memcpy(mqd, adev->gfx.me.mqd_backup[mqd_idx], sizeof(*mqd));
+			memcpy_toio(mqd, adev->gfx.me.mqd_backup[mqd_idx], sizeof(*mqd));
 		/* reset the ring */
 		ring->wptr = 0;
 		*ring->wptr_cpu_addr = 0;
@@ -4008,7 +4024,7 @@ static int gfx_v11_0_kiq_init_queue(struct amdgpu_ring *ring)
 	if (amdgpu_in_reset(adev)) { /* for GPU_RESET case */
 		/* reset MQD to a clean status */
 		if (adev->gfx.kiq[0].mqd_backup)
-			memcpy(mqd, adev->gfx.kiq[0].mqd_backup, sizeof(*mqd));
+			memcpy_toio(mqd, adev->gfx.kiq[0].mqd_backup, sizeof(*mqd));
 
 		/* reset ring buffer */
 		ring->wptr = 0;
@@ -4031,7 +4047,7 @@ static int gfx_v11_0_kiq_init_queue(struct amdgpu_ring *ring)
 		mutex_unlock(&adev->srbm_mutex);
 
 		if (adev->gfx.kiq[0].mqd_backup)
-			memcpy(adev->gfx.kiq[0].mqd_backup, mqd, sizeof(*mqd));
+			memcpy_fromio(adev->gfx.kiq[0].mqd_backup, mqd, sizeof(*mqd));
 	}
 
 	return 0;
@@ -4052,11 +4068,11 @@ static int gfx_v11_0_kcq_init_queue(struct amdgpu_ring *ring)
 		mutex_unlock(&adev->srbm_mutex);
 
 		if (adev->gfx.mec.mqd_backup[mqd_idx])
-			memcpy(adev->gfx.mec.mqd_backup[mqd_idx], mqd, sizeof(*mqd));
+			memcpy_fromio(adev->gfx.mec.mqd_backup[mqd_idx], mqd, sizeof(*mqd));
 	} else {
 		/* restore MQD to a clean status */
 		if (adev->gfx.mec.mqd_backup[mqd_idx])
-			memcpy(mqd, adev->gfx.mec.mqd_backup[mqd_idx], sizeof(*mqd));
+			memcpy_toio(mqd, adev->gfx.mec.mqd_backup[mqd_idx], sizeof(*mqd));
 		/* reset ring buffer */
 		ring->wptr = 0;
 		atomic64_set((atomic64_t *)ring->wptr_cpu_addr, 0);
@@ -4373,6 +4389,10 @@ static int gfx_v11_0_hw_init(void *handle)
 	r = gfx_v11_0_cp_resume(adev);
 	if (r)
 		return r;
+
+	/* get IMU version from HW if it's not set */
+	if (!adev->gfx.imu_fw_version)
+		adev->gfx.imu_fw_version = RREG32_SOC15(GC, 0, regGFX_IMU_SCRATCH_0);
 
 	return r;
 }

@@ -775,6 +775,14 @@
 #define regPCIE_USB4_ERR_CNTL5_BASE_IDX                                                                 5
 #define regPCIE_USB4_LC_CNTL1                                                                           0x420179
 #define regPCIE_USB4_LC_CNTL1_BASE_IDX                                                                  5
+#define regBIF_BIF256_CI256_RC3X4_USB4_CPM_CONTROL                                                      0x420118
+#define regBIF_BIF256_CI256_RC3X4_USB4_CPM_CONTROL_BASE_IDX                                             5
+#define regBIF_BIF256_CI256_RC3X4_USB4_PCIE_CNTL2                                                       0x42001c
+#define regBIF_BIF256_CI256_RC3X4_USB4_PCIE_CNTL2_BASE_IDX                                              5
+#define regBIF_BIF256_CI256_RC3X4_USB4_PCIE_TX_POWER_CTRL_1                                             0x420187
+#define regBIF_BIF256_CI256_RC3X4_USB4_PCIE_TX_POWER_CTRL_1_BASE_IDX                                    5
+#define regBIF_BIF256_CI256_RC3X4_USB4_PCIE_MST_CTRL_3                                                  0x4201c6
+#define regBIF_BIF256_CI256_RC3X4_USB4_PCIE_MST_CTRL_3_BASE_IDX                                         5
 
 
 // addressBlock: nbio_nbif0_bif_cfg_dev0_rc_bifcfgdecp
@@ -8187,9 +8195,9 @@
 #define regBIF_BX0_PCIE_INDEX_BASE_IDX                                                                  5
 #define regBIF_BX0_PCIE_DATA                                                                            0x800d
 #define regBIF_BX0_PCIE_DATA_BASE_IDX                                                                   5
-#define regBIF_BX0_PCIE_INDEX2                                                                          0xe
+#define regBIF_BX0_PCIE_INDEX2                                                                          0x800e
 #define regBIF_BX0_PCIE_INDEX2_BASE_IDX                                                                 0
-#define regBIF_BX0_PCIE_DATA2                                                                           0xf
+#define regBIF_BX0_PCIE_DATA2                                                                           0x800f
 #define regBIF_BX0_PCIE_DATA2_BASE_IDX                                                                  0
 #define regBIF_BX0_SBIOS_SCRATCH_0                                                                      0x8048
 #define regBIF_BX0_SBIOS_SCRATCH_0_BASE_IDX                                                             5
@@ -8678,7 +8686,10 @@
 #define regBIF_BX_PF1_MM_DATA_BASE_IDX                                                                  0
 #define regBIF_BX_PF1_MM_INDEX_HI                                                                       0x0006
 #define regBIF_BX_PF1_MM_INDEX_HI_BASE_IDX                                                              0
-
+#define regBIF_BX_PF1_RSMU_INDEX                                                                        0x0000
+#define regBIF_BX_PF1_RSMU_INDEX_BASE_IDX                                                               1
+#define regBIF_BX_PF1_RSMU_DATA                                                                         0x0001
+#define regBIF_BX_PF1_RSMU_DATA_BASE_IDX                                                                1
 
 // addressBlock: nbio_nbif0_bif_bx_BIFDEC1:1
 // base address: 0x0

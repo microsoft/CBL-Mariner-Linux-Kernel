@@ -1019,6 +1019,7 @@ static void kfd_process_destroy_pdds(struct kfd_process *p)
 		if (pdd->qpd.cwsr_kaddr && !pdd->qpd.cwsr_base)
 			free_pages((unsigned long)pdd->qpd.cwsr_kaddr,
 				get_order(KFD_CWSR_TBA_TMA_SIZE));
+
 		idr_destroy(&pdd->alloc_idr);
 		mutex_destroy(&pdd->qpd.doorbell_lock);
 
@@ -1422,8 +1423,13 @@ bool kfd_process_xnack_mode(struct kfd_process *p, bool supported)
 		 * per-process XNACK mode selection. But let the dev->noretry
 		 * setting still influence the default XNACK mode.
 		 */
-		if (supported && KFD_SUPPORT_XNACK_PER_PROCESS(dev))
+		if (supported && KFD_SUPPORT_XNACK_PER_PROCESS(dev)) {
+			if (!amdgpu_sriov_xnack_support(dev->kfd->adev)) {
+				pr_debug("SRIOV platform xnack not supported\n");
+				return false;
+			}
 			continue;
+		}
 
 		/* GFXv10 and later GPUs do not support shader preemption
 		 * during page faults. This can lead to poor QoS for queue
@@ -1684,7 +1690,6 @@ int kfd_process_device_init_vm(struct kfd_process_device *pdd,
 		return ret;
 	}
 	pdd->drm_priv = drm_file->private_data;
-	atomic64_set(&pdd->tlb_seq, 0);
 
 	ret = kfd_process_device_reserve_ib_mem(pdd);
 	if (ret)
@@ -2261,36 +2266,6 @@ int kfd_reserved_mem_mmap(struct kfd_node *dev, struct kfd_process *process,
 	return remap_pfn_range(vma, vma->vm_start,
 			       PFN_DOWN(__pa(qpd->cwsr_kaddr)),
 			       KFD_CWSR_TBA_TMA_SIZE, vma->vm_page_prot);
-}
-
-void kfd_flush_tlb(struct kfd_process_device *pdd, enum TLB_FLUSH_TYPE type)
-{
-	struct amdgpu_vm *vm = drm_priv_to_vm(pdd->drm_priv);
-	uint64_t tlb_seq = amdgpu_vm_tlb_seq(vm);
-	struct kfd_node *dev = pdd->dev;
-	uint32_t xcc_mask = dev->xcc_mask;
-	int xcc = 0;
-
-	/*
-	 * It can be that we race and lose here, but that is extremely unlikely
-	 * and the worst thing which could happen is that we flush the changes
-	 * into the TLB once more which is harmless.
-	 */
-	if (atomic64_xchg(&pdd->tlb_seq, tlb_seq) == tlb_seq)
-		return;
-
-	if (dev->dqm->sched_policy == KFD_SCHED_POLICY_NO_HWS) {
-		/* Nothing to flush until a VMID is assigned, which
-		 * only happens when the first queue is created.
-		 */
-		if (pdd->qpd.vmid)
-			amdgpu_amdkfd_flush_gpu_tlb_vmid(dev->adev,
-							pdd->qpd.vmid);
-	} else {
-		for_each_inst(xcc, xcc_mask)
-			amdgpu_amdkfd_flush_gpu_tlb_pasid(
-				dev->adev, pdd->process->pasid, type, xcc);
-	}
 }
 
 /* assumes caller holds process lock. */

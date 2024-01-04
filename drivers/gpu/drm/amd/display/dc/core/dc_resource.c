@@ -69,8 +69,8 @@
 #include "dcn314/dcn314_resource.h"
 #include "dcn315/dcn315_resource.h"
 #include "dcn316/dcn316_resource.h"
-#include "../dcn32/dcn32_resource.h"
-#include "../dcn321/dcn321_resource.h"
+#include "dcn32/dcn32_resource.h"
+#include "dcn321/dcn321_resource.h"
 #include "dcn35/dcn35_resource.h"
 
 #define VISUAL_CONFIRM_BASE_DEFAULT 3
@@ -321,10 +321,11 @@ struct resource_pool *dc_create_resource_pool(struct dc  *dc,
 				res_pool->ref_clocks.xtalin_clock_inKhz;
 			res_pool->ref_clocks.dchub_ref_clock_inKhz =
 				res_pool->ref_clocks.xtalin_clock_inKhz;
-			if (res_pool->hubbub && res_pool->hubbub->funcs->get_dchub_ref_freq)
-				res_pool->hubbub->funcs->get_dchub_ref_freq(res_pool->hubbub,
-					res_pool->ref_clocks.dccg_ref_clock_inKhz,
-					&res_pool->ref_clocks.dchub_ref_clock_inKhz);
+			if (dc->debug.using_dml2)
+				if (res_pool->hubbub && res_pool->hubbub->funcs->get_dchub_ref_freq)
+					res_pool->hubbub->funcs->get_dchub_ref_freq(res_pool->hubbub,
+										    res_pool->ref_clocks.dccg_ref_clock_inKhz,
+										    &res_pool->ref_clocks.dchub_ref_clock_inKhz);
 		} else
 			ASSERT_CRITICAL(false);
 	}
@@ -1763,6 +1764,29 @@ int recource_find_free_pipe_not_used_in_cur_res_ctx(
 	return free_pipe_idx;
 }
 
+int recource_find_free_pipe_used_as_otg_master_in_cur_res_ctx(
+		const struct resource_context *cur_res_ctx,
+		struct resource_context *new_res_ctx,
+		const struct resource_pool *pool)
+{
+	int free_pipe_idx = FREE_PIPE_INDEX_NOT_FOUND;
+	const struct pipe_ctx *new_pipe, *cur_pipe;
+	int i;
+
+	for (i = 0; i < pool->pipe_count; i++) {
+		cur_pipe = &cur_res_ctx->pipe_ctx[i];
+		new_pipe = &new_res_ctx->pipe_ctx[i];
+
+		if (resource_is_pipe_type(cur_pipe, OTG_MASTER) &&
+				resource_is_pipe_type(new_pipe, FREE_PIPE)) {
+			free_pipe_idx = i;
+			break;
+		}
+	}
+
+	return free_pipe_idx;
+}
+
 int resource_find_free_pipe_used_as_cur_sec_dpp_in_mpcc_combine(
 		const struct resource_context *cur_res_ctx,
 		struct resource_context *new_res_ctx,
@@ -2232,7 +2256,7 @@ static struct pipe_ctx *get_last_dpp_pipe_in_mpcc_combine(
 }
 
 static bool update_pipe_params_after_odm_slice_count_change(
-		const struct dc_stream_state *stream,
+		struct pipe_ctx *otg_master,
 		struct dc_state *context,
 		const struct resource_pool *pool)
 {
@@ -2242,9 +2266,12 @@ static bool update_pipe_params_after_odm_slice_count_change(
 
 	for (i = 0; i < pool->pipe_count && result; i++) {
 		pipe = &context->res_ctx.pipe_ctx[i];
-		if (pipe->stream == stream && pipe->plane_state)
+		if (pipe->stream == otg_master->stream && pipe->plane_state)
 			result = resource_build_scaling_params(pipe);
 	}
+
+	if (pool->funcs->build_pipe_pix_clk_params)
+		pool->funcs->build_pipe_pix_clk_params(otg_master);
 	return result;
 }
 
@@ -2927,7 +2954,7 @@ bool resource_update_pipes_for_stream_with_slice_count(
 					otg_master, new_ctx, pool);
 	if (result)
 		result = update_pipe_params_after_odm_slice_count_change(
-				otg_master->stream, new_ctx, pool);
+				otg_master, new_ctx, pool);
 	return result;
 }
 
@@ -3585,6 +3612,7 @@ static void mark_seamless_boot_stream(
  *       |________|_______________|___________|_____________|
  */
 static bool acquire_otg_master_pipe_for_stream(
+		const struct dc_state *cur_ctx,
 		struct dc_state *new_ctx,
 		const struct resource_pool *pool,
 		struct dc_stream_state *stream)
@@ -3598,7 +3626,22 @@ static bool acquire_otg_master_pipe_for_stream(
 	int pipe_idx;
 	struct pipe_ctx *pipe_ctx = NULL;
 
-	pipe_idx = resource_find_any_free_pipe(&new_ctx->res_ctx, pool);
+	/*
+	 * Upper level code is responsible to optimize unnecessary addition and
+	 * removal for unchanged streams. So unchanged stream will keep the same
+	 * OTG master instance allocated. When current stream is removed and a
+	 * new stream is added, we want to reuse the OTG instance made available
+	 * by the removed stream first. If not found, we try to avoid of using
+	 * any free pipes already used in current context as this could tear
+	 * down exiting ODM/MPC/MPO configuration unnecessarily.
+	 */
+	pipe_idx = recource_find_free_pipe_used_as_otg_master_in_cur_res_ctx(
+			&cur_ctx->res_ctx, &new_ctx->res_ctx, pool);
+	if (pipe_idx == FREE_PIPE_INDEX_NOT_FOUND)
+		pipe_idx = recource_find_free_pipe_not_used_in_cur_res_ctx(
+				&cur_ctx->res_ctx, &new_ctx->res_ctx, pool);
+	if (pipe_idx == FREE_PIPE_INDEX_NOT_FOUND)
+		pipe_idx = resource_find_any_free_pipe(&new_ctx->res_ctx, pool);
 	if (pipe_idx != FREE_PIPE_INDEX_NOT_FOUND) {
 		pipe_ctx = &new_ctx->res_ctx.pipe_ctx[pipe_idx];
 		memset(pipe_ctx, 0, sizeof(*pipe_ctx));
@@ -3658,7 +3701,7 @@ enum dc_status resource_map_pool_resources(
 
 	if (!acquired)
 		/* acquire new resources */
-		acquired = acquire_otg_master_pipe_for_stream(
+		acquired = acquire_otg_master_pipe_for_stream(dc->current_state,
 				context, pool, stream);
 
 	pipe_ctx = resource_get_otg_master_for_stream(&context->res_ctx, stream);
@@ -4228,7 +4271,7 @@ static void set_avi_info_frame(
 	switch (stream->content_type) {
 	case DISPLAY_CONTENT_TYPE_NO_DATA:
 		hdmi_info.bits.CN0_CN1 = 0;
-		hdmi_info.bits.ITC = 0;
+		hdmi_info.bits.ITC = 1;
 		break;
 	case DISPLAY_CONTENT_TYPE_GRAPHICS:
 		hdmi_info.bits.CN0_CN1 = 0;
@@ -4511,7 +4554,7 @@ void dc_resource_state_copy_construct(
 	struct dml2_context *dml2 = NULL;
 
 	// Need to preserve allocated dml2 context
-	if (src_ctx->clk_mgr->ctx->dc->debug.using_dml2)
+	if (src_ctx->clk_mgr && src_ctx->clk_mgr->ctx->dc->debug.using_dml2)
 		dml2 = dst_ctx->bw_ctx.dml2;
 #endif
 
@@ -4519,7 +4562,7 @@ void dc_resource_state_copy_construct(
 
 #ifdef CONFIG_DRM_AMD_DC_FP
 	// Preserve allocated dml2 context
-	if (src_ctx->clk_mgr->ctx->dc->debug.using_dml2)
+	if (src_ctx->clk_mgr && src_ctx->clk_mgr->ctx->dc->debug.using_dml2)
 		dst_ctx->bw_ctx.dml2 = dml2;
 #endif
 
@@ -4730,7 +4773,7 @@ void resource_build_bit_depth_reduction_params(struct dc_stream_state *stream,
 			option = DITHER_OPTION_SPATIAL8;
 			break;
 		case COLOR_DEPTH_101010:
-			option = DITHER_OPTION_SPATIAL10;
+			option = DITHER_OPTION_TRUN10;
 			break;
 		default:
 			option = DITHER_OPTION_DISABLE;
@@ -4756,6 +4799,8 @@ void resource_build_bit_depth_reduction_params(struct dc_stream_state *stream,
 			option == DITHER_OPTION_TRUN10_SPATIAL8_FM6) {
 		fmt_bit_depth->flags.TRUNCATE_ENABLED = 1;
 		fmt_bit_depth->flags.TRUNCATE_DEPTH = 2;
+		if (option == DITHER_OPTION_TRUN10)
+			fmt_bit_depth->flags.TRUNCATE_MODE = 1;
 	}
 
 	/* special case - Formatter can only reduce by 4 bits at most.
@@ -5189,6 +5234,9 @@ bool dc_resource_acquire_secondary_pipe_for_mpc_odm_legacy(
 	sec_next = sec_pipe->next_odm_pipe;
 	sec_prev = sec_pipe->prev_odm_pipe;
 
+	if (pri_pipe == NULL)
+		return false;
+
 	*sec_pipe = *pri_pipe;
 
 	sec_pipe->top_pipe = sec_top;
@@ -5270,7 +5318,7 @@ bool check_subvp_sw_cursor_fallback_req(const struct dc *dc, struct dc_stream_st
 	if (dc->current_state->stream_count == 1 && stream->timing.v_addressable >= 2880 &&
 			((stream->timing.pix_clk_100hz * 100) / stream->timing.v_total / stream->timing.h_total) < 120)
 		return true;
-	else if (dc->current_state->stream_count > 1 && stream->timing.v_addressable >= 2160 &&
+	else if (dc->current_state->stream_count > 1 && stream->timing.v_addressable >= 1080 &&
 			((stream->timing.pix_clk_100hz * 100) / stream->timing.v_total / stream->timing.h_total) < 120)
 		return true;
 

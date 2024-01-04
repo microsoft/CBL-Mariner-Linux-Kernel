@@ -48,11 +48,6 @@
 
 #include "ttm_module.h"
 
-#define TTM_MAX_ORDER (PMD_SHIFT - PAGE_SHIFT)
-#define __TTM_DIM_ORDER (TTM_MAX_ORDER + 1)
-/* Some architectures have a weird PMD_SHIFT */
-#define TTM_DIM_ORDER (__TTM_DIM_ORDER <= MAX_ORDER ? __TTM_DIM_ORDER : MAX_ORDER)
-
 /**
  * struct ttm_pool_dma - Helper object for coherent DMA mappings
  *
@@ -71,11 +66,11 @@ module_param(page_pool_size, ulong, 0644);
 
 static atomic_long_t allocated_pages;
 
-static struct ttm_pool_type global_write_combined[TTM_DIM_ORDER];
-static struct ttm_pool_type global_uncached[TTM_DIM_ORDER];
+static struct ttm_pool_type global_write_combined[MAX_ORDER + 1];
+static struct ttm_pool_type global_uncached[MAX_ORDER + 1];
 
-static struct ttm_pool_type global_dma32_write_combined[TTM_DIM_ORDER];
-static struct ttm_pool_type global_dma32_uncached[TTM_DIM_ORDER];
+static struct ttm_pool_type global_dma32_write_combined[MAX_ORDER + 1];
+static struct ttm_pool_type global_dma32_uncached[MAX_ORDER + 1];
 
 static spinlock_t shrinker_lock;
 static struct list_head shrinker_list;
@@ -450,7 +445,7 @@ int ttm_pool_alloc(struct ttm_pool *pool, struct ttm_tt *tt,
 	else
 		gfp_flags |= GFP_HIGHUSER;
 
-	for (order = min_t(unsigned int, TTM_MAX_ORDER, __fls(num_pages));
+	for (order = min_t(unsigned int, MAX_ORDER, __fls(num_pages));
 	     num_pages;
 	     order = min_t(unsigned int, order, __fls(num_pages))) {
 		struct ttm_pool_type *pt;
@@ -571,7 +566,7 @@ void ttm_pool_init(struct ttm_pool *pool, struct device *dev,
 
 	if (use_dma_alloc || nid != NUMA_NO_NODE) {
 		for (i = 0; i < TTM_NUM_CACHING_TYPES; ++i)
-			for (j = 0; j < TTM_DIM_ORDER; ++j)
+			for (j = 0; j <= MAX_ORDER; ++j)
 				ttm_pool_type_init(&pool->caching[i].orders[j],
 						   pool, i, j);
 	}
@@ -592,7 +587,7 @@ void ttm_pool_fini(struct ttm_pool *pool)
 
 	if (pool->use_dma_alloc || pool->nid != NUMA_NO_NODE) {
 		for (i = 0; i < TTM_NUM_CACHING_TYPES; ++i)
-			for (j = 0; j < TTM_DIM_ORDER; ++j)
+			for (j = 0; j <= MAX_ORDER; ++j)
 				ttm_pool_type_fini(&pool->caching[i].orders[j]);
 	}
 
@@ -647,7 +642,7 @@ static void ttm_pool_debugfs_header(struct seq_file *m)
 	unsigned int i;
 
 	seq_puts(m, "\t ");
-	for (i = 0; i < TTM_DIM_ORDER; ++i)
+	for (i = 0; i <= MAX_ORDER; ++i)
 		seq_printf(m, " ---%2u---", i);
 	seq_puts(m, "\n");
 }
@@ -658,7 +653,7 @@ static void ttm_pool_debugfs_orders(struct ttm_pool_type *pt,
 {
 	unsigned int i;
 
-	for (i = 0; i < TTM_DIM_ORDER; ++i)
+	for (i = 0; i <= MAX_ORDER; ++i)
 		seq_printf(m, " %8u", ttm_pool_type_count(&pt[i]));
 	seq_puts(m, "\n");
 }
@@ -761,16 +756,13 @@ int ttm_pool_mgr_init(unsigned long num_pages)
 {
 	unsigned int i;
 
-	BUILD_BUG_ON(TTM_DIM_ORDER > MAX_ORDER);
-	BUILD_BUG_ON(TTM_DIM_ORDER < 1);
-
 	if (!page_pool_size)
 		page_pool_size = num_pages;
 
 	spin_lock_init(&shrinker_lock);
 	INIT_LIST_HEAD(&shrinker_list);
 
-	for (i = 0; i < TTM_DIM_ORDER; ++i) {
+	for (i = 0; i <= MAX_ORDER; ++i) {
 		ttm_pool_type_init(&global_write_combined[i], NULL,
 				   ttm_write_combined, i);
 		ttm_pool_type_init(&global_uncached[i], NULL, ttm_uncached, i);
@@ -803,7 +795,7 @@ void ttm_pool_mgr_fini(void)
 {
 	unsigned int i;
 
-	for (i = 0; i < TTM_DIM_ORDER; ++i) {
+	for (i = 0; i <= MAX_ORDER; ++i) {
 		ttm_pool_type_fini(&global_write_combined[i]);
 		ttm_pool_type_fini(&global_uncached[i]);
 

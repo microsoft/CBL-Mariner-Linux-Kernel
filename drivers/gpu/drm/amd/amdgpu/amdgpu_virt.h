@@ -366,6 +366,7 @@ u32 amdgpu_sriov_rreg(struct amdgpu_device *adev,
 bool amdgpu_virt_fw_load_skip_check(struct amdgpu_device *adev,
 			uint32_t ucode_id);
 void amdgpu_virt_post_reset(struct amdgpu_device *adev);
+bool amdgpu_sriov_xnack_support(struct amdgpu_device *adev);
 bool amdgpu_virt_get_rlcg_reg_access_flag(struct amdgpu_device *adev,
 					  u32 acc_flags, u32 hwip,
 					  bool write, u32 *rlcg_flag);

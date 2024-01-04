@@ -53,7 +53,6 @@
 
 #include <drm/ttm/ttm_bo.h>
 #include <drm/ttm/ttm_placement.h>
-#include <drm/ttm/ttm_execbuf_util.h>
 
 #include <drm/amdgpu_drm.h>
 #include <drm/drm_gem.h>
@@ -111,6 +110,8 @@
 #include "amdgpu_mca.h"
 #include "amdgpu_ras.h"
 #include "amdgpu_xcp.h"
+#include "amdgpu_seq64.h"
+#include "amdgpu_reg_state.h"
 
 #define MAX_GPU_INSTANCE		64
 
@@ -250,6 +251,7 @@ extern int amdgpu_umsch_mm;
 extern int amdgpu_seamless;
 
 extern int amdgpu_user_partt_mode;
+extern int amdgpu_agp;
 
 #define AMDGPU_VM_MAX_NUM_CTX			4096
 #define AMDGPU_SG_THRESHOLD			(256*1024*1024)
@@ -365,9 +367,6 @@ struct amdgpu_ip_block_version {
 	const struct amd_ip_funcs *funcs;
 };
 
-#define HW_REV(_Major, _Minor, _Rev) \
-	((((uint32_t) (_Major)) << 16) | ((uint32_t) (_Minor) << 8) | ((uint32_t) (_Rev)))
-
 struct amdgpu_ip_block {
 	struct amdgpu_ip_block_status status;
 	const struct amdgpu_ip_block_version *version;
@@ -438,29 +437,11 @@ extern const struct dma_buf_ops amdgpu_dmabuf_ops;
  * alignment).
  */
 
-#define AMDGPU_SA_NUM_FENCE_LISTS	32
-
 struct amdgpu_sa_manager {
-	wait_queue_head_t	wq;
-	struct amdgpu_bo	*bo;
-	struct list_head	*hole;
-	struct list_head	flist[AMDGPU_SA_NUM_FENCE_LISTS];
-	struct list_head	olist;
-	unsigned		size;
-	uint64_t		gpu_addr;
-	void			*cpu_ptr;
-	uint32_t		domain;
-	uint32_t		align;
-};
-
-/* sub-allocation buffer */
-struct amdgpu_sa_bo {
-	struct list_head		olist;
-	struct list_head		flist;
-	struct amdgpu_sa_manager	*manager;
-	unsigned			soffset;
-	unsigned			eoffset;
-	struct dma_fence	        *fence;
+	struct drm_suballoc_manager	base;
+	struct amdgpu_bo		*bo;
+	uint64_t			gpu_addr;
+	void				*cpu_ptr;
 };
 
 int amdgpu_fence_slab_init(void);
@@ -494,6 +475,7 @@ struct amdgpu_fpriv {
 	struct amdgpu_vm	vm;
 	struct amdgpu_bo_va	*prt_va;
 	struct amdgpu_bo_va	*csa_va;
+	struct amdgpu_bo_va	*seq64_va;
 	struct mutex		bo_list_lock;
 	struct idr		bo_list_handles;
 	struct amdgpu_ctx_mgr	ctx_mgr;
@@ -534,6 +516,31 @@ struct amdgpu_allowed_register_entry {
 	bool grbm_indexed;
 };
 
+/**
+ * enum amd_reset_method - Methods for resetting AMD GPU devices
+ *
+ * @AMD_RESET_METHOD_NONE: The device will not be reset.
+ * @AMD_RESET_LEGACY: Method reserved for SI, CIK and VI ASICs.
+ * @AMD_RESET_MODE0: Reset the entire ASIC. Not currently available for the
+ *                   any device.
+ * @AMD_RESET_MODE1: Resets all IP blocks on the ASIC (SDMA, GFX, VCN, etc.)
+ *                   individually. Suitable only for some discrete GPU, not
+ *                   available for all ASICs.
+ * @AMD_RESET_MODE2: Resets a lesser level of IPs compared to MODE1. Which IPs
+ *                   are reset depends on the ASIC. Notably doesn't reset IPs
+ *                   shared with the CPU on APUs or the memory controllers (so
+ *                   VRAM is not lost). Not available on all ASICs.
+ * @AMD_RESET_BACO: BACO (Bus Alive, Chip Off) method powers off and on the card
+ *                  but without powering off the PCI bus. Suitable only for
+ *                  discrete GPUs.
+ * @AMD_RESET_PCI: Does a full bus reset using core Linux subsystem PCI reset
+ *                 and does a secondary bus reset or FLR, depending on what the
+ *                 underlying hardware supports.
+ *
+ * Methods available for AMD GPU driver for resetting the device. Not all
+ * methods are suitable for every device. User can override the method using
+ * module parameter `reset_method`.
+ */
 enum amd_reset_method {
 	AMD_RESET_METHOD_NONE = -1,
 	AMD_RESET_METHOD_LEGACY = 0,
@@ -613,6 +620,10 @@ struct amdgpu_asic_funcs {
 				  const struct amdgpu_video_codecs **codecs);
 	/* encode "> 32bits" smn addressing */
 	u64 (*encode_ext_smn_addressing)(int ext_id);
+
+	ssize_t (*get_reg_state)(struct amdgpu_device *adev,
+				 enum amdgpu_reg_state reg_state, void *buf,
+				 size_t max_size);
 };
 
 /*
@@ -809,6 +820,17 @@ struct amdgpu_mqd {
 #define AMDGPU_MAX_DF_PERFMONS 4
 struct amdgpu_reset_domain;
 struct amdgpu_fru_info;
+
+struct amdgpu_reset_info {
+	/* reset dump register */
+	u32 *reset_dump_reg_list;
+	u32 *reset_dump_reg_value;
+	int num_regs;
+
+#ifdef CONFIG_DEV_COREDUMP
+	struct amdgpu_coredump_info *coredump_info;
+#endif
+};
 
 /*
  * Non-zero (true) if the GPU has VRAM. Zero (false) otherwise.
@@ -1018,6 +1040,9 @@ struct amdgpu_device {
 	/* GDS */
 	struct amdgpu_gds		gds;
 
+	/* for userq and VM fences */
+	struct amdgpu_seq64		seq64;
+
 	/* KFD */
 	struct amdgpu_kfd_dev		kfd;
 
@@ -1124,10 +1149,7 @@ struct amdgpu_device {
 
 	struct mutex			benchmark_mutex;
 
-	/* reset dump register */
-	uint32_t                        *reset_dump_reg_list;
-	uint32_t			*reset_dump_reg_value;
-	int                             num_regs;
+	struct amdgpu_reset_info	reset_info;
 
 	bool                            scpm_enabled;
 	uint32_t                        scpm_status;
@@ -1154,14 +1176,12 @@ static inline uint32_t amdgpu_ip_version(const struct amdgpu_device *adev,
 	return adev->ip_versions[ip][inst] & ~0xFFU;
 }
 
-#ifdef CONFIG_DEV_COREDUMP
-struct amdgpu_coredump_info {
-	struct amdgpu_device		*adev;
-	struct amdgpu_task_info         reset_task_info;
-	struct timespec64               reset_time;
-	bool                            reset_vram_lost;
-};
-#endif
+static inline uint32_t amdgpu_ip_version_full(const struct amdgpu_device *adev,
+					      uint8_t ip, uint8_t inst)
+{
+	/* This returns full version - major/minor/rev/variant/subrevision */
+	return adev->ip_versions[ip][inst];
+}
 
 static inline struct amdgpu_device *drm_to_adev(struct drm_device *ddev)
 {
@@ -1386,9 +1406,7 @@ void amdgpu_device_pci_config_reset(struct amdgpu_device *adev);
 int amdgpu_device_pci_reset(struct amdgpu_device *adev);
 bool amdgpu_device_need_post(struct amdgpu_device *adev);
 bool amdgpu_device_seamless_boot_supported(struct amdgpu_device *adev);
-bool amdgpu_device_pcie_dynamic_switching_supported(void);
 bool amdgpu_device_should_use_aspm(struct amdgpu_device *adev);
-bool amdgpu_device_aspm_support_quirk(void);
 
 void amdgpu_cs_report_moved_bytes(struct amdgpu_device *adev, u64 num_bytes,
 				  u64 num_vis_bytes);

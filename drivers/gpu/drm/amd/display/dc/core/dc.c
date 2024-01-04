@@ -1521,7 +1521,7 @@ static void program_timing_sync(
 
 		}
 
-		/* remove any other pipes that are already been synced */
+		/* remove any other unblanked pipes as they have already been synced */
 		if (dc->config.use_pipe_ctx_sync_logic) {
 			/* check pipe's syncd to decide which pipe to be removed */
 			for (j = 1; j < group_size; j++) {
@@ -1534,6 +1534,7 @@ static void program_timing_sync(
 					pipe_set[j]->pipe_idx_syncd = pipe_set[0]->pipe_idx_syncd;
 			}
 		} else {
+			/* remove any other pipes by checking valid plane */
 			for (j = j + 1; j < group_size; j++) {
 				bool is_blanked;
 
@@ -1964,6 +1965,10 @@ static enum dc_status dc_commit_state_no_check(struct dc *dc, struct dc_state *c
 		wait_for_no_pipes_pending(dc, context);
 		/* pplib is notified if disp_num changed */
 		dc->hwss.optimize_bandwidth(dc, context);
+		/* Need to do otg sync again as otg could be out of sync due to otg
+		 * workaround applied during clock update
+		 */
+		dc_trigger_sync(dc, context);
 	}
 
 	if (dc->hwss.update_dsc_pg)
@@ -2254,23 +2259,16 @@ struct dc_state *dc_copy_state(struct dc_state *src_ctx)
 {
 	int i, j;
 	struct dc_state *new_ctx = kvmalloc(sizeof(struct dc_state), GFP_KERNEL);
-#ifdef CONFIG_DRM_AMD_DC_FP
-	struct dml2_context *dml2 =  NULL;
-#endif
 
 	if (!new_ctx)
 		return NULL;
 	memcpy(new_ctx, src_ctx, sizeof(struct dc_state));
 
 #ifdef CONFIG_DRM_AMD_DC_FP
-	if (new_ctx->bw_ctx.dml2) {
-		dml2 = kzalloc(sizeof(struct dml2_context), GFP_KERNEL);
-		if (!dml2)
-			return NULL;
-
-		memcpy(dml2, src_ctx->bw_ctx.dml2, sizeof(struct dml2_context));
-		new_ctx->bw_ctx.dml2 = dml2;
-	}
+	if (new_ctx->bw_ctx.dml2 && !dml2_create_copy(&new_ctx->bw_ctx.dml2, src_ctx->bw_ctx.dml2)) {
+		dc_release_state(new_ctx);
+		return NULL;
+ 	}
 #endif
 
 	for (i = 0; i < MAX_PIPES; i++) {
@@ -2581,6 +2579,9 @@ static enum surface_update_type det_surface_update(const struct dc *dc,
 
 	if (u->gamut_remap_matrix)
 		update_flags->bits.gamut_remap_change = 1;
+
+	if (u->blend_tf)
+		update_flags->bits.gamma_change = 1;
 
 	if (u->gamma) {
 		enum surface_pixel_format format = SURFACE_PIXEL_FORMAT_GRPH_BEGIN;
@@ -3097,6 +3098,9 @@ static bool update_planes_and_stream_state(struct dc *dc,
 	if (update_type >= update_surface_trace_level)
 		update_surface_trace(dc, srf_updates, surface_count);
 
+	for (i = 0; i < surface_count; i++)
+		copy_surface_update_to_plane(srf_updates[i].surface, &srf_updates[i]);
+
 	if (update_type >= UPDATE_TYPE_FULL) {
 		struct dc_plane_state *new_planes[MAX_SURFACES] = {0};
 
@@ -3138,8 +3142,6 @@ static bool update_planes_and_stream_state(struct dc *dc,
 	for (i = 0; i < surface_count; i++) {
 		struct dc_plane_state *surface = srf_updates[i].surface;
 
-		copy_surface_update_to_plane(surface, &srf_updates[i]);
-
 		if (update_type >= UPDATE_TYPE_MED) {
 			for (j = 0; j < dc->res_pool->pipe_count; j++) {
 				struct pipe_ctx *pipe_ctx = &context->res_ctx.pipe_ctx[j];
@@ -3175,7 +3177,7 @@ static bool update_planes_and_stream_state(struct dc *dc,
 			struct pipe_ctx *otg_master = resource_get_otg_master_for_stream(&context->res_ctx,
 					context->streams[i]);
 
-			if (otg_master->stream->test_pattern.type != DP_TEST_PATTERN_VIDEO_MODE)
+			if (otg_master && otg_master->stream->test_pattern.type != DP_TEST_PATTERN_VIDEO_MODE)
 				resource_build_test_pattern_params(&context->res_ctx, otg_master);
 		}
 	}
@@ -3575,7 +3577,8 @@ static void wait_for_outstanding_hw_updates(struct dc *dc, const struct dc_state
 		mpcc_inst = hubp->inst;
 		// MPCC inst is equal to pipe index in practice
 		for (opp_inst = 0; opp_inst < opp_count; opp_inst++) {
-			if (dc->res_pool->opps[opp_inst]->mpcc_disconnect_pending[mpcc_inst]) {
+			if ((dc->res_pool->opps[opp_inst] != NULL) &&
+				(dc->res_pool->opps[opp_inst]->mpcc_disconnect_pending[mpcc_inst])) {
 				dc->res_pool->mpc->funcs->wait_for_idle(dc->res_pool->mpc, mpcc_inst);
 				dc->res_pool->opps[opp_inst]->mpcc_disconnect_pending[mpcc_inst] = false;
 				break;
@@ -4112,8 +4115,17 @@ static bool commit_minimal_transition_state_for_windowed_mpo_odm(struct dc *dc,
 	bool success = false;
 	struct dc_state *minimal_transition_context;
 	struct pipe_split_policy_backup policy;
+	struct mall_temp_config mall_temp_config;
 
 	/* commit based on new context */
+	/* Since all phantom pipes are removed in full validation,
+	 * we have to save and restore the subvp/mall config when
+	 * we do a minimal transition since the flags marking the
+	 * pipe as subvp/phantom will be cleared (dc copy constructor
+	 * creates a shallow copy).
+	 */
+	if (dc->res_pool->funcs->save_mall_state)
+		dc->res_pool->funcs->save_mall_state(dc, context, &mall_temp_config);
 	minimal_transition_context = create_minimal_transition_state(dc,
 			context, &policy);
 	if (minimal_transition_context) {
@@ -4122,9 +4134,20 @@ static bool commit_minimal_transition_state_for_windowed_mpo_odm(struct dc *dc,
 			dc->hwss.is_pipe_topology_transition_seamless(
 					dc, minimal_transition_context, context)) {
 			DC_LOG_DC("%s base = new state\n", __func__);
+
 			success = dc_commit_state_no_check(dc, minimal_transition_context) == DC_OK;
 		}
 		release_minimal_transition_state(dc, minimal_transition_context, &policy);
+		if (dc->res_pool->funcs->restore_mall_state)
+			dc->res_pool->funcs->restore_mall_state(dc, context, &mall_temp_config);
+		/* If we do a minimal transition with plane removal and the context
+		 * has subvp we also have to retain back the phantom stream / planes
+		 * since the refcount is decremented as part of the min transition
+		 * (we commit a state with no subvp, so the phantom streams / planes
+		 * had to be removed).
+		 */
+		if (dc->res_pool->funcs->retain_phantom_pipes)
+			dc->res_pool->funcs->retain_phantom_pipes(dc, context);
 	}
 
 	if (!success) {
@@ -4347,7 +4370,6 @@ static bool full_update_required(struct dc *dc,
 				srf_updates[i].in_transfer_func ||
 				srf_updates[i].func_shaper ||
 				srf_updates[i].lut3d_func ||
-				srf_updates[i].blend_tf ||
 				srf_updates[i].surface->force_full_update ||
 				(srf_updates[i].flip_addr &&
 				srf_updates[i].flip_addr->address.tmz_surface != srf_updates[i].surface->address.tmz_surface) ||
@@ -4884,6 +4906,9 @@ void dc_allow_idle_optimizations(struct dc *dc, bool allow)
 	if (dc->debug.disable_idle_power_optimizations)
 		return;
 
+	if (dc->caps.ips_support && (dc->config.disable_ips == DMUB_IPS_DISABLE_ALL))
+		return;
+
 	if (dc->clk_mgr != NULL && dc->clk_mgr->funcs->is_smu_present)
 		if (!dc->clk_mgr->funcs->is_smu_present(dc->clk_mgr))
 			return;
@@ -4893,6 +4918,26 @@ void dc_allow_idle_optimizations(struct dc *dc, bool allow)
 
 	if (dc->hwss.apply_idle_power_optimizations && dc->hwss.apply_idle_power_optimizations(dc, allow))
 		dc->idle_optimizations_allowed = allow;
+}
+
+bool dc_dmub_is_ips_idle_state(struct dc *dc)
+{
+	uint32_t idle_state = 0;
+
+	if (dc->debug.disable_idle_power_optimizations)
+		return false;
+
+	if (!dc->caps.ips_support || (dc->config.disable_ips == DMUB_IPS_DISABLE_ALL))
+		return false;
+
+	if (dc->hwss.get_idle_state)
+		idle_state = dc->hwss.get_idle_state(dc);
+
+	if (!(idle_state & DMUB_IPS1_ALLOW_MASK) ||
+		!(idle_state & DMUB_IPS2_ALLOW_MASK))
+		return true;
+
+	return false;
 }
 
 /* set min and max memory clock to lowest and highest DPM level, respectively */

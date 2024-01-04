@@ -559,7 +559,7 @@ int amdgpu_amdkfd_get_xgmi_bandwidth_mbytes(struct amdgpu_device *dst,
 	struct amdgpu_device *adev = dst, *peer_adev;
 	int num_links;
 
-	if (adev->asic_type != CHIP_ALDEBARAN)
+	if (amdgpu_ip_version(adev, GC_HWIP, 0) < IP_VERSION(9, 4, 2))
 		return 0;
 
 	if (src)
@@ -695,12 +695,19 @@ err:
 
 void amdgpu_amdkfd_set_compute_idle(struct amdgpu_device *adev, bool idle)
 {
+	enum amd_powergating_state state = idle ? AMD_PG_STATE_GATE : AMD_PG_STATE_UNGATE;
 	/* Temporary workaround to fix issues observed in some
 	 * compute applications when GFXOFF is enabled on GFX11.
 	 */
 	if (IP_VERSION_MAJ(amdgpu_ip_version(adev, GC_HWIP, 0)) == 11) {
 		pr_debug("GFXOFF is %s\n", idle ? "enabled" : "disabled");
 		amdgpu_gfx_off_ctrl(adev, idle);
+	} else if ((IP_VERSION_MAJ(amdgpu_ip_version(adev, GC_HWIP, 0)) == 9) &&
+		(adev->flags & AMD_IS_APU)) {
+		/* Disable GFXOFF and PG. Temporary workaround
+		 * to fix some compute applications issue on GFX9.
+		 */
+		adev->ip_blocks[AMD_IP_BLOCK_TYPE_GFX].version->funcs->set_powergating_state((void *)adev, state);
 	}
 	amdgpu_dpm_switch_power_profile(adev,
 					PP_SMC_POWER_PROFILE_COMPUTE,
@@ -713,35 +720,6 @@ bool amdgpu_amdkfd_is_kfd_vmid(struct amdgpu_device *adev, u32 vmid)
 		return vmid >= adev->vm_manager.first_kfd_vmid;
 
 	return false;
-}
-
-int amdgpu_amdkfd_flush_gpu_tlb_vmid(struct amdgpu_device *adev,
-				     uint16_t vmid)
-{
-	if (adev->family == AMDGPU_FAMILY_AI) {
-		int i;
-
-		for_each_set_bit(i, adev->vmhubs_mask, AMDGPU_MAX_VMHUBS)
-			amdgpu_gmc_flush_gpu_tlb(adev, vmid, i, 0);
-	} else {
-		amdgpu_gmc_flush_gpu_tlb(adev, vmid, AMDGPU_GFXHUB(0), 0);
-	}
-
-	return 0;
-}
-
-int amdgpu_amdkfd_flush_gpu_tlb_pasid(struct amdgpu_device *adev,
-				      uint16_t pasid,
-				      enum TLB_FLUSH_TYPE flush_type,
-				      uint32_t inst)
-{
-	bool all_hub = false;
-
-	if (adev->family == AMDGPU_FAMILY_AI ||
-	    adev->family == AMDGPU_FAMILY_RV)
-		all_hub = true;
-
-	return amdgpu_gmc_flush_gpu_tlb_pasid(adev, pasid, flush_type, all_hub, inst);
 }
 
 bool amdgpu_amdkfd_have_atomics_support(struct amdgpu_device *adev)

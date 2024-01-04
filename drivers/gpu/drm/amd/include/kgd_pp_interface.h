@@ -421,7 +421,7 @@ struct amd_pm_funcs {
 	int (*set_hard_min_dcefclk_by_freq)(void *handle, uint32_t clock);
 	int (*set_hard_min_fclk_by_freq)(void *handle, uint32_t clock);
 	int (*set_min_deep_sleep_dcefclk)(void *handle, uint32_t clock);
-	int (*get_asic_baco_capability)(void *handle, bool *cap);
+	bool (*get_asic_baco_capability)(void *handle);
 	int (*get_asic_baco_state)(void *handle, int *state);
 	int (*set_asic_baco_state)(void *handle, int state);
 	int (*get_ppfeature_status)(void *handle, char *buf);
@@ -431,6 +431,7 @@ struct amd_pm_funcs {
 	int (*set_df_cstate)(void *handle, enum pp_df_cstate state);
 	int (*set_xgmi_pstate)(void *handle, uint32_t pstate);
 	ssize_t (*get_gpu_metrics)(void *handle, void **table);
+	ssize_t (*get_pm_metrics)(void *handle, void *pmmetrics, size_t size);
 	int (*set_watermarks_for_clock_ranges)(void *handle,
 					       struct pp_smu_wm_range_sets *ranges);
 	int (*display_disable_memory_clock_switch)(void *handle,
@@ -444,6 +445,7 @@ struct amd_pm_funcs {
 				   struct dpm_clocks *clock_table);
 	int (*get_smu_prv_buf_details)(void *handle, void **addr, size_t *size);
 	void (*pm_compute_clocks)(void *handle);
+	int (*notify_rlc_state)(void *handle, bool en);
 };
 
 struct metrics_table_header {
@@ -1057,4 +1059,106 @@ struct gpu_metrics_v2_4 {
 	uint16_t			average_soc_current;
 	uint16_t			average_gfx_current;
 };
+
+struct gpu_metrics_v3_0 {
+	struct metrics_table_header	common_header;
+
+	/* Temperature */
+	/* gfx temperature on APUs */
+	uint16_t			temperature_gfx;
+	/* soc temperature on APUs */
+	uint16_t			temperature_soc;
+	/* CPU core temperature on APUs */
+	uint16_t			temperature_core[16];
+	/* skin temperature on APUs */
+	uint16_t			temperature_skin;
+
+	/* Utilization */
+	/* time filtered GFX busy % [0-100] */
+	uint16_t			average_gfx_activity;
+	/* time filtered VCN busy % [0-100] */
+	uint16_t			average_vcn_activity;
+	/* time filtered IPU per-column busy % [0-100] */
+	uint16_t			average_ipu_activity[8];
+	/* time filtered per-core C0 residency % [0-100]*/
+	uint16_t			average_core_c0_activity[16];
+	/* time filtered DRAM read bandwidth [MB/sec] */
+	uint16_t			average_dram_reads;
+	/* time filtered DRAM write bandwidth [MB/sec] */
+	uint16_t			average_dram_writes;
+	/* time filtered IPU read bandwidth [MB/sec] */
+	uint16_t			average_ipu_reads;
+	/* time filtered IPU write bandwidth [MB/sec] */
+	uint16_t			average_ipu_writes;
+
+	/* Driver attached timestamp (in ns) */
+	uint64_t			system_clock_counter;
+
+	/* Power/Energy */
+	/* time filtered power used for PPT/STAPM [APU+dGPU] [mW] */
+	uint32_t			average_socket_power;
+	/* time filtered IPU power [mW] */
+	uint16_t			average_ipu_power;
+	/* time filtered APU power [mW] */
+	uint32_t			average_apu_power;
+	/* time filtered GFX power [mW] */
+	uint32_t			average_gfx_power;
+	/* time filtered dGPU power [mW] */
+	uint32_t			average_dgpu_power;
+	/* time filtered sum of core power across all cores in the socket [mW] */
+	uint32_t			average_all_core_power;
+	/* calculated core power [mW] */
+	uint16_t			average_core_power[16];
+	/* time filtered total system power [mW] */
+	uint16_t			average_sys_power;
+	/* maximum IRM defined STAPM power limit [mW] */
+	uint16_t			stapm_power_limit;
+	/* time filtered STAPM power limit [mW] */
+	uint16_t			current_stapm_power_limit;
+
+	/* time filtered clocks [MHz] */
+	uint16_t			average_gfxclk_frequency;
+	uint16_t			average_socclk_frequency;
+	uint16_t			average_vpeclk_frequency;
+	uint16_t			average_ipuclk_frequency;
+	uint16_t			average_fclk_frequency;
+	uint16_t			average_vclk_frequency;
+	uint16_t			average_uclk_frequency;
+	uint16_t			average_mpipu_frequency;
+
+	/* Current clocks */
+	/* target core frequency [MHz] */
+	uint16_t			current_coreclk[16];
+	/* CCLK frequency limit enforced on classic cores [MHz] */
+	uint16_t			current_core_maxfreq;
+	/* GFXCLK frequency limit enforced on GFX [MHz] */
+	uint16_t			current_gfx_maxfreq;
+
+	/* Throttle Residency (ASIC dependent) */
+	uint32_t			throttle_residency_prochot;
+	uint32_t			throttle_residency_spl;
+	uint32_t			throttle_residency_fppt;
+	uint32_t			throttle_residency_sppt;
+	uint32_t			throttle_residency_thm_core;
+	uint32_t			throttle_residency_thm_gfx;
+	uint32_t			throttle_residency_thm_soc;
+
+	/* Metrics table alpha filter time constant [us] */
+	uint32_t			time_filter_alphavalue;
+};
+
+struct amdgpu_pmmetrics_header {
+	uint16_t structure_size;
+	uint16_t pad;
+	uint32_t mp1_ip_discovery_version;
+	uint32_t pmfw_version;
+	uint32_t pmmetrics_version;
+};
+
+struct amdgpu_pm_metrics {
+	struct amdgpu_pmmetrics_header common_header;
+
+	uint8_t data[];
+};
+
 #endif

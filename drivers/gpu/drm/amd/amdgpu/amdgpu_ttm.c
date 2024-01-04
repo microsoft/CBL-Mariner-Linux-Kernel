@@ -618,6 +618,12 @@ static int amdgpu_ttm_io_mem_reserve(struct ttm_device *bdev,
 		mem->bus.offset += adev->gmc.aper_base;
 		mem->bus.is_iomem = true;
 		break;
+	case AMDGPU_PL_DOORBELL:
+		mem->bus.offset = mem->start << PAGE_SHIFT;
+		mem->bus.offset += adev->doorbell.base;
+		mem->bus.is_iomem = true;
+		mem->bus.caching = ttm_uncached;
+		break;
 	case AMDGPU_PL_DGMA_IMPORT:
 	{
 		struct amdgpu_bo *abo;
@@ -629,12 +635,6 @@ static int amdgpu_ttm_io_mem_reserve(struct ttm_device *bdev,
 		mem->bus.caching = ttm_write_combined;
 		break;
 	}
-	case AMDGPU_PL_DOORBELL:
-		mem->bus.offset = mem->start << PAGE_SHIFT;
-		mem->bus.offset += adev->doorbell.base;
-		mem->bus.is_iomem = true;
-		mem->bus.caching = ttm_uncached;
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -1173,10 +1173,8 @@ int amdgpu_ttm_alloc_gart(struct ttm_buffer_object *bo)
 		return 0;
 
 	addr = amdgpu_gmc_agp_addr(bo);
-	if (addr != AMDGPU_BO_INVALID_OFFSET) {
-		bo->resource->start = addr >> PAGE_SHIFT;
+	if (addr != AMDGPU_BO_INVALID_OFFSET)
 		return 0;
-	}
 
 	/* allocate GART space */
 	placement.num_placement = 1;
@@ -2343,7 +2341,6 @@ int amdgpu_ttm_init(struct amdgpu_device *adev)
 		 (unsigned int)(gtt_size / (1024 * 1024)));
 
 	amdgpu_direct_gma_init(adev);
-
 	/* Initiailize doorbell pool on PCI BAR */
 	r = amdgpu_ttm_init_on_chip(adev, AMDGPU_PL_DOORBELL, adev->doorbell.size / PAGE_SIZE);
 	if (r) {

@@ -1632,7 +1632,7 @@ static void gmc_v9_0_vram_gtt_location(struct amdgpu_device *adev,
 	} else {
 		amdgpu_gmc_vram_location(adev, mc, base);
 		amdgpu_gmc_gart_location(adev, mc, AMDGPU_GART_PLACEMENT_BEST_FIT);
-		if (!amdgpu_sriov_vf(adev))
+		if (!amdgpu_sriov_vf(adev) && (amdgpu_agp == 1))
 			amdgpu_gmc_agp_location(adev, mc);
 	}
 	/* base offset of vram pages */
@@ -2042,11 +2042,8 @@ static int gmc_v9_0_sw_init(void *handle)
 		 * vm size is 256TB (48bit), maximum size of Vega10,
 		 * block size 512 (9bit)
 		 */
-		/* sriov restrict max_pfn below AMDGPU_GMC_HOLE */
-		if (amdgpu_sriov_vf(adev))
-			amdgpu_vm_adjust_size(adev, 256 * 1024, 9, 3, 47);
-		else
-			amdgpu_vm_adjust_size(adev, 256 * 1024, 9, 3, 48);
+
+		amdgpu_vm_adjust_size(adev, 256 * 1024, 9, 3, 48);
 		if (amdgpu_ip_version(adev, GC_HWIP, 0) == IP_VERSION(9, 4, 2))
 			adev->gmc.translate_further = adev->vm_manager.num_level > 1;
 		break;
@@ -2179,10 +2176,6 @@ static int gmc_v9_0_sw_fini(void *handle)
 
 	if (amdgpu_ip_version(adev, GC_HWIP, 0) == IP_VERSION(9, 4, 3))
 		amdgpu_gmc_sysfs_fini(adev);
-#ifdef HAVE_ACPI_DEV_GET_FIRST_MATCH_DEV
-	adev->gmc.num_mem_partitions = 0;
-	kfree(adev->gmc.mem_partitions);
-#endif
 
 	amdgpu_gmc_ras_fini(adev);
 	amdgpu_gem_force_release(adev);
@@ -2195,6 +2188,11 @@ static int gmc_v9_0_sw_fini(void *handle)
 	}
 	amdgpu_bo_free_kernel(&adev->gmc.pdb0_bo, NULL, &adev->gmc.ptr_pdb0);
 	amdgpu_bo_fini(adev);
+
+#ifdef HAVE_ACPI_DEV_GET_FIRST_MATCH_DEV
+	adev->gmc.num_mem_partitions = 0;
+	kfree(adev->gmc.mem_partitions);
+#endif
 
 	return 0;
 }

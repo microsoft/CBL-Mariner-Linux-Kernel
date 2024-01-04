@@ -253,6 +253,7 @@ struct smu_table {
 	uint64_t mc_address;
 	void *cpu_addr;
 	struct amdgpu_bo *bo;
+	uint32_t version;
 };
 
 enum smu_perf_level_designation {
@@ -1252,6 +1253,15 @@ struct pptable_funcs {
 	ssize_t (*get_gpu_metrics)(struct smu_context *smu, void **table);
 
 	/**
+	 * @get_pm_metrics: Get one snapshot of power management metrics from
+	 * PMFW.
+	 *
+	 * Return: Size of the metrics sample
+	 */
+	ssize_t (*get_pm_metrics)(struct smu_context *smu, void *pm_metrics,
+				  size_t size);
+
+	/**
 	 * @enable_mgpu_fan_boost: Enable multi-GPU fan boost.
 	 */
 	int (*enable_mgpu_fan_boost)(struct smu_context *smu);
@@ -1359,6 +1369,11 @@ struct pptable_funcs {
 	 *                       management.
 	 */
 	int (*dpm_set_umsch_mm_enable)(struct smu_context *smu, bool enable);
+
+	/**
+	 * @notify_rlc_state: Notify RLC power state to SMU.
+	 */
+	int (*notify_rlc_state)(struct smu_context *smu, bool en);
 };
 
 typedef enum {
@@ -1402,6 +1417,16 @@ typedef enum {
 	METRICS_PCIE_WIDTH,
 	METRICS_CURR_FANPWM,
 	METRICS_CURR_SOCKETPOWER,
+	METRICS_AVERAGE_VPECLK,
+	METRICS_AVERAGE_IPUCLK,
+	METRICS_AVERAGE_MPIPUCLK,
+	METRICS_THROTTLER_RESIDENCY_PROCHOT,
+	METRICS_THROTTLER_RESIDENCY_SPL,
+	METRICS_THROTTLER_RESIDENCY_FPPT,
+	METRICS_THROTTLER_RESIDENCY_SPPT,
+	METRICS_THROTTLER_RESIDENCY_THM_CORE,
+	METRICS_THROTTLER_RESIDENCY_THM_GFX,
+	METRICS_THROTTLER_RESIDENCY_THM_SOC,
 } MetricsMember_t;
 
 enum smu_cmn2asic_mapping_type {

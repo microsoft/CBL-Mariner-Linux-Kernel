@@ -99,6 +99,7 @@
 MODULE_FIRMWARE(FIRMWARE_IP_DISCOVERY);
 
 #define mmRCC_CONFIG_MEMSIZE	0xde3
+#define mmMP0_SMN_C2PMSG_33	0x16061
 #define mmMM_INDEX		0x0
 #define mmMM_INDEX_HI		0x6
 #define mmMM_DATA		0x1
@@ -241,8 +242,27 @@ static int amdgpu_discovery_read_binary_from_sysmem(struct amdgpu_device *adev, 
 static int amdgpu_discovery_read_binary_from_mem(struct amdgpu_device *adev,
 						 uint8_t *binary)
 {
-	uint64_t vram_size = (uint64_t)RREG32(mmRCC_CONFIG_MEMSIZE) << 20;
-	int ret = 0;
+	uint64_t vram_size;
+	u32 msg;
+	int i, ret = 0;
+
+	/* It can take up to a second for IFWI init to complete on some dGPUs,
+	 * but generally it should be in the 60-100ms range.  Normally this starts
+	 * as soon as the device gets power so by the time the OS loads this has long
+	 * completed.  However, when a card is hotplugged via e.g., USB4, we need to
+	 * wait for this to complete.  Once the C2PMSG is updated, we can
+	 * continue.
+	 */
+	if (dev_is_removable(&adev->pdev->dev)) {
+		for (i = 0; i < 1000; i++) {
+			msg = RREG32(mmMP0_SMN_C2PMSG_33);
+			if (msg & 0x80000000)
+				break;
+			msleep(1);
+		}
+	}
+	vram_size = (uint64_t)RREG32(mmRCC_CONFIG_MEMSIZE) << 20;
+
 #ifdef HAVE_ACPI_DEV_GET_FIRST_MATCH_DEV
 	if (vram_size) {
 #endif
@@ -1505,7 +1525,7 @@ static int amdgpu_discovery_get_gfx_info(struct amdgpu_device *adev)
 		adev->gfx.config.num_sc_per_sh = le32_to_cpu(gc_info->v2.gc_num_sc_per_se) /
 			le32_to_cpu(gc_info->v2.gc_num_sh_per_se);
 		adev->gfx.config.num_packer_per_sc = le32_to_cpu(gc_info->v2.gc_num_packer_per_sc);
-		if (le16_to_cpu(gc_info->v2.header.version_minor == 1)) {
+		if (le16_to_cpu(gc_info->v2.header.version_minor) == 1) {
 			adev->gfx.config.gc_num_tcp_per_sa = le32_to_cpu(gc_info->v2_1.gc_num_tcp_per_sh);
 			adev->gfx.config.gc_tcp_size_per_cu = le32_to_cpu(gc_info->v2_1.gc_tcp_size_per_cu);
 			adev->gfx.config.gc_num_sdp_interface = le32_to_cpu(gc_info->v2_1.gc_num_sdp_interface); /* per XCD */

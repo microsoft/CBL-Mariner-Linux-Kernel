@@ -25,6 +25,8 @@
 #include <linux/sched/task.h>
 #include <linux/dynamic_debug.h>
 #include <drm/ttm/ttm_tt.h>
+#include <drm/drm_exec.h>
+
 #include "amdgpu_sync.h"
 #include "amdgpu_object.h"
 #include "amdgpu_vm.h"
@@ -300,7 +302,7 @@ static void svm_range_free(struct svm_range *prange, bool do_unmap)
 	for (gpuidx = 0; gpuidx < MAX_GPU_INSTANCE; gpuidx++) {
 		if (prange->dma_addr[gpuidx]) {
 			kvfree(prange->dma_addr[gpuidx]);
-				prange->dma_addr[gpuidx] = NULL;
+			prange->dma_addr[gpuidx] = NULL;
 		}
 	}
 
@@ -1521,37 +1523,34 @@ struct svm_validate_context {
 	struct svm_range *prange;
 	bool intr;
 	DECLARE_BITMAP(bitmap, MAX_GPU_INSTANCE);
-	struct ttm_validate_buffer tv[MAX_GPU_INSTANCE];
-	struct list_head validate_list;
-	struct ww_acquire_ctx ticket;
+	struct drm_exec exec;
 };
 
-static int svm_range_reserve_bos(struct svm_validate_context *ctx)
+static int svm_range_reserve_bos(struct svm_validate_context *ctx, bool intr)
 {
 	struct kfd_process_device *pdd;
 	struct amdgpu_vm *vm;
 	uint32_t gpuidx;
 	int r;
 
-	INIT_LIST_HEAD(&ctx->validate_list);
-	for_each_set_bit(gpuidx, ctx->bitmap, MAX_GPU_INSTANCE) {
-		pdd = kfd_process_device_from_gpuidx(ctx->process, gpuidx);
-		if (!pdd) {
-			pr_debug("failed to find device idx %d\n", gpuidx);
-			return -EINVAL;
+	drm_exec_init(&ctx->exec, intr ? DRM_EXEC_INTERRUPTIBLE_WAIT: 0);
+	drm_exec_until_all_locked(&ctx->exec) {
+		for_each_set_bit(gpuidx, ctx->bitmap, MAX_GPU_INSTANCE) {
+			pdd = kfd_process_device_from_gpuidx(ctx->process, gpuidx);
+			if (!pdd) {
+				pr_debug("failed to find device idx %d\n", gpuidx);
+				r = -EINVAL;
+				goto unreserve_out;
+			}
+			vm = drm_priv_to_vm(pdd->drm_priv);
+
+			r = amdgpu_vm_lock_pd(vm, &ctx->exec, 2);
+			drm_exec_retry_on_contention(&ctx->exec);
+			if (unlikely(r)) {
+				pr_debug("failed %d to reserve bo\n", r);
+				goto unreserve_out;
+			}
 		}
-		vm = drm_priv_to_vm(pdd->drm_priv);
-
-		ctx->tv[gpuidx].bo = &vm->root.bo->tbo;
-		ctx->tv[gpuidx].num_shared = 4;
-		list_add(&ctx->tv[gpuidx].head, &ctx->validate_list);
-	}
-
-	r = ttm_eu_reserve_buffers(&ctx->ticket, &ctx->validate_list,
-				   ctx->intr, NULL);
-	if (r) {
-		pr_debug("failed %d to reserve bo\n", r);
-		return r;
 	}
 
 	for_each_set_bit(gpuidx, ctx->bitmap, MAX_GPU_INSTANCE) {
@@ -1574,13 +1573,13 @@ static int svm_range_reserve_bos(struct svm_validate_context *ctx)
 	return 0;
 
 unreserve_out:
-	ttm_eu_backoff_reservation(&ctx->ticket, &ctx->validate_list);
+	drm_exec_fini(&ctx->exec);
 	return r;
 }
 
 static void svm_range_unreserve_bos(struct svm_validate_context *ctx)
 {
-	ttm_eu_backoff_reservation(&ctx->ticket, &ctx->validate_list);
+	drm_exec_fini(&ctx->exec);
 }
 
 static void *kfd_svm_page_owner(struct kfd_process *p, int32_t gpuidx)
@@ -1681,7 +1680,7 @@ static int svm_range_validate_and_map(struct mm_struct *mm,
 		goto free_ctx;
 	}
 
-	svm_range_reserve_bos(ctx);
+	svm_range_reserve_bos(ctx, intr);
 
 	p = container_of(prange->svms, struct kfd_process, svms);
 	owner = kfd_svm_page_owner(p, find_first_bit(ctx->bitmap,
@@ -2071,6 +2070,7 @@ svm_range_split_new(struct svm_range_list *svms, uint64_t start, uint64_t last,
  * @update_list: output, the ranges need validate and update GPU mapping
  * @insert_list: output, the ranges need insert to svms
  * @remove_list: output, the ranges are replaced and need remove from svms
+ * @remap_list: output, remap unaligned svm ranges
  *
  * Check if the virtual address range has overlap with any existing ranges,
  * split partly overlapping ranges and add new ranges in the gaps. All changes

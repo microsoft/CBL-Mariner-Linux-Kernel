@@ -44,7 +44,7 @@
 #include "amdgpu_dm_debugfs.h"
 #endif
 
-#include "dc/dcn20/dcn20_resource.h"
+#include "dc/resource/dcn20/dcn20_resource.h"
 
 #define PEAK_FACTOR_X1000 1006
 
@@ -464,8 +464,7 @@ dm_mst_atomic_best_encoder(struct drm_connector *connector,
 			   struct drm_connector_state *connector_state)
 {
 #endif
-	struct drm_device *dev = connector->dev;
-	struct amdgpu_device *adev = drm_to_adev(dev);
+	struct amdgpu_device *adev = drm_to_adev(connector->dev);
 	struct amdgpu_crtc *acrtc = to_amdgpu_crtc(connector_state->crtc);
 
 	return &adev->dm.mst_encoders[acrtc->crtc_id].base;
@@ -693,54 +692,6 @@ dm_dp_add_mst_connector(struct drm_dp_mst_topology_mgr *mgr,
 	return connector;
 }
 
-#ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_DESTROY_CONNECTOR
-static void dm_dp_destroy_mst_connector(struct drm_dp_mst_topology_mgr *mgr,
-						    struct drm_connector *connector)
-{
-	struct amdgpu_dm_connector *master = container_of(mgr, struct amdgpu_dm_connector, mst_mgr);
-	struct drm_device *dev = master->base.dev;
-	struct amdgpu_device *adev = drm_to_adev(dev);
-	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
-
-	DRM_INFO("DM_MST: Disabling connector: %p [id: %d] [master: %p]\n",
-		 aconnector, connector->base.id, aconnector->mst_root);
-
-	if (aconnector->dc_sink) {
-		amdgpu_dm_update_freesync_caps(connector, NULL);
-		dc_link_remove_remote_sink(aconnector->dc_link,
-		aconnector->dc_sink);
-		dc_sink_release(aconnector->dc_sink);
-		aconnector->dc_sink = NULL;
-		mutex_lock(&mgr->lock);
-		if (!mgr->mst_state)
-			aconnector->dc_link->cur_link_settings.lane_count = 0;
-		mutex_unlock(&mgr->lock);
-	}
-	drm_connector_unregister(connector);
-	drm_connector_put(connector);
-}
-#endif
-
-#if defined(HAVE_DRM_DP_MST_TOPOLOGY_CBS_HOTPLUG)
-static void dm_dp_mst_hotplug(struct drm_dp_mst_topology_mgr *mgr)
-{
-	struct amdgpu_dm_connector *master = container_of(mgr, struct amdgpu_dm_connector, mst_mgr);
-	struct drm_device *dev = master->base.dev;
-
-	drm_kms_helper_hotplug_event(dev);
-}
-#endif
-
-#ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_REGISTER_CONNECTOR
-static void dm_dp_mst_register_connector(struct drm_connector *connector)
-{
-	struct drm_device *dev = connector->dev;
-	struct amdgpu_device *adev = drm_to_adev(dev);
-
-	drm_connector_register(connector);
-}
-#endif
-
 void dm_handle_mst_sideband_msg_ready_event(
 	struct drm_dp_mst_topology_mgr *mgr,
 	enum mst_msg_ready_type msg_rdy_type)
@@ -876,11 +827,56 @@ static void dm_handle_mst_down_rep_msg_ready(struct drm_dp_mst_topology_mgr *mgr
 }
 #endif
 
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_DESTROY_CONNECTOR
+static void dm_dp_destroy_mst_connector(struct drm_dp_mst_topology_mgr *mgr,
+						    struct drm_connector *connector)
+{
+	struct amdgpu_dm_connector *master = container_of(mgr, struct amdgpu_dm_connector, mst_mgr);
+	struct drm_device *dev = master->base.dev;
+	struct amdgpu_device *adev = drm_to_adev(dev);
+	struct amdgpu_dm_connector *aconnector = to_amdgpu_dm_connector(connector);
+
+	DRM_INFO("DM_MST: Disabling connector: %p [id: %d] [master: %p]\n",
+		 aconnector, connector->base.id, aconnector->mst_root);
+
+	if (aconnector->dc_sink) {
+		amdgpu_dm_update_freesync_caps(connector, NULL);
+		dc_link_remove_remote_sink(aconnector->dc_link,
+		aconnector->dc_sink);
+		dc_sink_release(aconnector->dc_sink);
+		aconnector->dc_sink = NULL;
+		mutex_lock(&mgr->lock);
+		if (!mgr->mst_state)
+			aconnector->dc_link->cur_link_settings.lane_count = 0;
+		mutex_unlock(&mgr->lock);
+	}
+	drm_connector_unregister(connector);
+	drm_connector_put(connector);
+}
+#endif
+
+#if defined(HAVE_DRM_DP_MST_TOPOLOGY_CBS_HOTPLUG)
+static void dm_dp_mst_hotplug(struct drm_dp_mst_topology_mgr *mgr)
+{
+	struct amdgpu_dm_connector *master = container_of(mgr, struct amdgpu_dm_connector, mst_mgr);
+	struct drm_device *dev = master->base.dev;
+
+	drm_kms_helper_hotplug_event(dev);
+}
+#endif
+
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_REGISTER_CONNECTOR
+static void dm_dp_mst_register_connector(struct drm_connector *connector)
+{
+	struct drm_device *dev = connector->dev;
+	struct amdgpu_device *adev = drm_to_adev(dev);
+
+	drm_connector_register(connector);
+}
+#endif
+
 static const struct drm_dp_mst_topology_cbs dm_mst_cbs = {
 	.add_connector = dm_dp_add_mst_connector,
-#ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_POLL_HPD_IRQ
-	.poll_hpd_irq = dm_handle_mst_down_rep_msg_ready,
-#endif
 #ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_DESTROY_CONNECTOR
 	.destroy_connector = dm_dp_destroy_mst_connector,
 #endif
@@ -889,6 +885,9 @@ static const struct drm_dp_mst_topology_cbs dm_mst_cbs = {
 #endif
 #ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_REGISTER_CONNECTOR
 	.register_connector = dm_dp_mst_register_connector
+#endif
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_CBS_POLL_HPD_IRQ
+	.poll_hpd_irq = dm_handle_mst_down_rep_msg_ready,
 #endif
 };
 
@@ -1825,46 +1824,54 @@ enum dc_status dm_dp_mst_is_port_support_mode(
 	struct dc_stream_state *stream)
 {
 	int bpp, pbn, branch_max_throughput_mps = 0;
-#ifdef HAVE_DRM_DP_MST_PORT_PASSTHROUGH_AUX
+#if defined(HAVE_DRM_DP_MST_PORT_PASSTHROUGH_AUX) && defined(HAVE_DRM_DISPLAY_INFO_MAX_DSC_BPP)
 	struct dc_link_settings cur_link_settings;
 	unsigned int end_to_end_bw_in_kbps = 0;
 	unsigned int upper_link_bw_in_kbps = 0, down_link_bw_in_kbps = 0;
-	unsigned int max_compressed_bw_in_kbps = 0;
 	struct dc_dsc_bw_range bw_range = {0};
-	struct drm_dp_mst_topology_mgr *mst_mgr;
+	struct dc_dsc_config_options dsc_options = {0};
 
 	/*
-	 * check if the mode could be supported if DSC pass-through is supported
-	 * AND check if there enough bandwidth available to support the mode
-	 * with DSC enabled.
+	 * Consider the case with the depth of the mst topology tree is equal or less than 2
+	 * A. When dsc bitstream can be transmitted along the entire path
+	 *    1. dsc is possible between source and branch/leaf device (common dsc params is possible), AND
+	 *    2. dsc passthrough supported at MST branch, or
+	 *    3. dsc decoding supported at leaf MST device
+	 *    Use maximum dsc compression as bw constraint
+	 * B. When dsc bitstream cannot be transmitted along the entire path
+	 *    Use native bw as bw constraint
 	 */
 	if (is_dsc_common_config_possible(stream, &bw_range) &&
-	    aconnector->mst_output_port->passthrough_aux) {
-		mst_mgr = aconnector->mst_output_port->mgr;
-		mutex_lock(&mst_mgr->lock);
-
+	   (aconnector->mst_output_port->passthrough_aux ||
+	    aconnector->dsc_aux == &aconnector->mst_output_port->aux)) {
 		cur_link_settings = stream->link->verified_link_cap;
-
-		upper_link_bw_in_kbps = dc_link_bandwidth_kbps(aconnector->dc_link,
-							       &cur_link_settings
-							       );
+		upper_link_bw_in_kbps = dc_link_bandwidth_kbps(aconnector->dc_link, &cur_link_settings);
 		down_link_bw_in_kbps = kbps_from_pbn(aconnector->mst_output_port->full_pbn);
 
-		/* pick the bottleneck */
-		end_to_end_bw_in_kbps = min(upper_link_bw_in_kbps,
-					    down_link_bw_in_kbps);
+		/* pick the end to end bw bottleneck */
+		end_to_end_bw_in_kbps = min(upper_link_bw_in_kbps, down_link_bw_in_kbps);
 
-		mutex_unlock(&mst_mgr->lock);
-
-		/*
-		 * use the maximum dsc compression bandwidth as the required
-		 * bandwidth for the mode
-		 */
-		max_compressed_bw_in_kbps = bw_range.min_kbps;
-
-		if (end_to_end_bw_in_kbps < max_compressed_bw_in_kbps) {
-			DRM_DEBUG_DRIVER("Mode does not fit into DSC pass-through bandwidth validation\n");
+		if (end_to_end_bw_in_kbps < bw_range.min_kbps) {
+			DRM_DEBUG_DRIVER("maximum dsc compression cannot fit into end-to-end bandwidth\n");
 			return DC_FAIL_BANDWIDTH_VALIDATE;
+		}
+
+		if (end_to_end_bw_in_kbps < bw_range.stream_kbps) {
+			dc_dsc_get_default_config_option(stream->link->dc, &dsc_options);
+			dsc_options.max_target_bpp_limit_override_x16 = aconnector->base.display_info.max_dsc_bpp * 16;
+			if (dc_dsc_compute_config(stream->sink->ctx->dc->res_pool->dscs[0],
+					&stream->sink->dsc_caps.dsc_dec_caps,
+					&dsc_options,
+					end_to_end_bw_in_kbps,
+					&stream->timing,
+					dc_link_get_highest_encoding_format(stream->link),
+					&stream->timing.dsc_cfg)) {
+				stream->timing.flags.DSC = 1;
+				DRM_DEBUG_DRIVER("end-to-end bandwidth require dsc and dsc config found\n");
+			} else {
+				DRM_DEBUG_DRIVER("end-to-end bandwidth require dsc but dsc config not found\n");
+				return DC_FAIL_BANDWIDTH_VALIDATE;
+			}
 		}
 	} else {
 #endif
@@ -1878,7 +1885,7 @@ enum dc_status dm_dp_mst_is_port_support_mode(
 		if (pbn > aconnector->mst_output_port->available_pbn)
 #endif
 			return DC_FAIL_BANDWIDTH_VALIDATE;
-#ifdef HAVE_DRM_DP_MST_PORT_PASSTHROUGH_AUX
+#if defined(HAVE_DRM_DP_MST_PORT_PASSTHROUGH_AUX) && defined(HAVE_DRM_DISPLAY_INFO_MAX_DSC_BPP)
 	}
 #endif
 

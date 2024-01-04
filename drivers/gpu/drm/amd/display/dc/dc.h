@@ -49,7 +49,7 @@ struct aux_payload;
 struct set_config_cmd_payload;
 struct dmub_notification;
 
-#define DC_VER "3.2.255"
+#define DC_VER "3.2.263"
 
 #define MAX_SURFACES 3
 #define MAX_PLANES 6
@@ -382,6 +382,7 @@ struct dc_cap_funcs {
 	bool (*get_dcc_compression_cap)(const struct dc *dc,
 			const struct dc_dcc_surface_param *input,
 			struct dc_surface_dcc_cap *output);
+	bool (*get_subvp_en)(struct dc *dc, struct dc_state *context);
 };
 
 struct link_training_settings;
@@ -873,6 +874,7 @@ struct dc_debug_options {
 	unsigned int seamless_boot_odm_combine;
 	unsigned int force_odm_combine_4to1; //bit vector based on otg inst
 	int minimum_z8_residency_time;
+	int minimum_z10_residency_time;
 	bool disable_z9_mpc;
 	unsigned int force_fclk_khz;
 	bool enable_tri_buf;
@@ -954,7 +956,6 @@ struct dc_debug_options {
 	unsigned int min_prefetch_in_strobe_ns;
 	bool disable_unbounded_requesting;
 	bool dig_fifo_off_in_blank;
-	bool temp_mst_deallocation_sequence;
 	bool override_dispclk_programming;
 	bool otg_crc_db;
 	bool disallow_dispclk_dppclk_ds;
@@ -977,6 +978,7 @@ struct dc_debug_options {
 	bool psp_disabled_wa;
 	unsigned int ips2_eval_delay_us;
 	unsigned int ips2_entry_delay_us;
+	bool disable_timeout;
 };
 
 struct gpu_info_soc_bounding_box_v1_0;
@@ -1539,7 +1541,13 @@ struct dc_link {
 	bool is_dig_mapping_flexible;
 	bool hpd_status; /* HPD status of link without physical HPD pin. */
 	bool is_hpd_pending; /* Indicates a new received hpd */
-	bool is_automated; /* Indicates automated testing */
+
+	/* USB4 DPIA links skip verifying link cap, instead performing the fallback method
+	 * for every link training. This is incompatible with DP LL compliance automation,
+	 * which expects the same link settings to be used every retry on a link loss.
+	 * This flag is used to skip the fallback when link loss occurs during automation.
+	 */
+	bool skip_fallback_on_link_loss;
 
 	bool edp_sink_present;
 
@@ -1607,7 +1615,6 @@ struct dc_link {
 	enum edp_revision edp_revision;
 	union dpcd_sink_ext_caps dpcd_sink_ext_caps;
 
-	struct backlight_settings backlight_settings;
 	struct psr_settings psr_settings;
 
 	struct replay_settings replay_settings;
@@ -2317,6 +2324,7 @@ bool dc_is_plane_eligible_for_idle_optimizations(struct dc *dc, struct dc_plane_
 				struct dc_cursor_attributes *cursor_attr);
 
 void dc_allow_idle_optimizations(struct dc *dc, bool allow);
+bool dc_dmub_is_ips_idle_state(struct dc *dc);
 
 /* set min and max memory clock to lowest and highest DPM level, respectively */
 void dc_unlock_memory_clock_frequency(struct dc *dc);

@@ -78,6 +78,7 @@ static int amdgpu_dm_patch_edid_caps(struct dc_edid_caps *edid_caps)
 	return ret;
 }
 #endif
+
 static u32 edid_extract_panel_id(struct edid *edid)
 {
 	return (u32)edid->mfg_id[0] << 24   |
@@ -96,6 +97,12 @@ static void apply_edid_quirks(struct edid *edid, struct dc_edid_caps *edid_caps)
 	case drm_edid_encode_panel_id('S', 'A', 'M', 0x71AC):
 		DRM_DEBUG_DRIVER("Disabling FAMS on monitor with panel id %X\n", panel_id);
 		edid_caps->panel_patch.disable_fams = true;
+		break;
+	/* Workaround for some monitors that do not clear DPCD 0x317 if FreeSync is unsupported */
+	case drm_edid_encode_panel_id('A', 'U', 'O', 0xA7AB):
+	case drm_edid_encode_panel_id('A', 'U', 'O', 0xE69B):
+		DRM_DEBUG_DRIVER("Clearing DPCD 0x317 on monitor with panel id %X\n", panel_id);
+		edid_caps->panel_patch.remove_sink_ext_caps = true;
 		break;
 	default:
 		return;
@@ -511,59 +518,44 @@ enum act_return_status dm_helpers_dp_mst_poll_for_allocation_change_trigger(
 	return ACT_SUCCESS;
 }
 
-bool dm_helpers_dp_mst_send_payload_allocation(
+void dm_helpers_dp_mst_send_payload_allocation(
 		struct dc_context *ctx,
-		const struct dc_stream_state *stream,
-		bool enable)
+		const struct dc_stream_state *stream)
 {
 	struct amdgpu_dm_connector *aconnector;
 #if defined(HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS)
 	struct drm_dp_mst_topology_state *mst_state;
-	struct drm_dp_mst_atomic_payload *new_payload, old_payload;
+	struct drm_dp_mst_atomic_payload *new_payload;
 #else
 	struct drm_dp_mst_port *mst_port;
 #endif
 	struct drm_dp_mst_topology_mgr *mst_mgr;
 	enum mst_progress_status set_flag = MST_ALLOCATE_NEW_PAYLOAD;
 	enum mst_progress_status clr_flag = MST_CLEAR_ALLOCATED_PAYLOAD;
-#if defined(HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS)
 	int ret = 0;
-#endif
 
 	aconnector = (struct amdgpu_dm_connector *)stream->dm_stream_context;
 
 	if (!aconnector || !aconnector->mst_root)
-		return false;
+		return;
+
 	mst_mgr = &aconnector->mst_root->mst_mgr;
 #if defined(HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS)
 	mst_state = to_drm_dp_mst_topology_state(mst_mgr->base.state);
-
 	new_payload = drm_atomic_get_mst_payload_state(mst_state, aconnector->mst_output_port);
 #else
 	mst_port = aconnector->mst_output_port;
 	if (!mst_mgr->mst_state)
-                return false;
+                return;
 #endif
-	if (!enable) {
-		set_flag = MST_CLEAR_ALLOCATED_PAYLOAD;
-		clr_flag = MST_ALLOCATE_NEW_PAYLOAD;
-	}
 
 #if defined(HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS)
-	if (enable) {
-		ret = drm_dp_add_payload_part2(mst_mgr, mst_state->base.state, new_payload);
-	} else {
-#ifdef HAVE_DRM_DP_REMOVE_RAYLOAD_PART
-		dm_helpers_construct_old_payload(mst_mgr, mst_state,
-						 new_payload, &old_payload);
-		drm_dp_remove_payload_part2(mst_mgr, mst_state, &old_payload, new_payload);
+	ret = drm_dp_add_payload_part2(mst_mgr, mst_state->base.state, new_payload);
+#else
+	ret = drm_dp_update_payload_part2(mst_mgr);
 #endif
-	}
 
 	if (ret) {
-#else
-	if (drm_dp_update_payload_part2(mst_mgr)) {
-#endif
 		amdgpu_dm_set_mst_status(&aconnector->mst_status,
 			set_flag, false);
 	} else {
@@ -572,13 +564,50 @@ bool dm_helpers_dp_mst_send_payload_allocation(
 		amdgpu_dm_set_mst_status(&aconnector->mst_status,
 			clr_flag, false);
 	}
-#ifndef HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS
-        if (!enable)
-                drm_dp_mst_deallocate_vcpi(mst_mgr, mst_port);
+}
+
+void dm_helpers_dp_mst_update_mst_mgr_for_deallocation(
+		struct dc_context *ctx,
+		const struct dc_stream_state *stream)
+{
+	struct amdgpu_dm_connector *aconnector;
+	struct drm_dp_mst_topology_mgr *mst_mgr;
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS
+	struct drm_dp_mst_topology_state *mst_state;
+	struct drm_dp_mst_atomic_payload *new_payload, old_payload;
+#else
+	struct drm_dp_mst_port *mst_port;
+#endif
+	enum mst_progress_status set_flag = MST_CLEAR_ALLOCATED_PAYLOAD;
+	enum mst_progress_status clr_flag = MST_ALLOCATE_NEW_PAYLOAD;
+
+	aconnector = (struct amdgpu_dm_connector *)stream->dm_stream_context;
+
+	if (!aconnector || !aconnector->mst_root)
+		return;
+
+	mst_mgr = &aconnector->mst_root->mst_mgr;
+#ifdef HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS
+	mst_state = to_drm_dp_mst_topology_state(mst_mgr->base.state);
+	new_payload = drm_atomic_get_mst_payload_state(mst_state, aconnector->mst_output_port);
+#ifdef HAVE_DRM_DP_REMOVE_RAYLOAD_PART
+	dm_helpers_construct_old_payload(mst_mgr, mst_state,
+					 new_payload, &old_payload);
+
+	drm_dp_remove_payload_part2(mst_mgr, mst_state, &old_payload, new_payload);
+#endif
+#else
+	mst_port = aconnector->mst_output_port;
+	if (!mst_mgr->mst_state)
+		return;
 #endif
 
-	return true;
-}
+	amdgpu_dm_set_mst_status(&aconnector->mst_status, set_flag, true);
+	amdgpu_dm_set_mst_status(&aconnector->mst_status, clr_flag, false);
+#ifndef HAVE_DRM_DP_MST_TOPOLOGY_STATE_PAYLOADS
+	drm_dp_mst_deallocate_vcpi(mst_mgr, mst_port);
+#endif
+ }
 
 void dm_dtn_log_begin(struct dc_context *ctx,
 	struct dc_log_buffer_ctx *log_ctx)
@@ -734,11 +763,8 @@ bool dm_helpers_dp_read_dpcd(
 
 	struct amdgpu_dm_connector *aconnector = link->priv;
 
-	if (!aconnector) {
-		drm_dbg_dp(aconnector->base.dev,
-			   "Failed to find connector for link!\n");
+	if (!aconnector)
 		return false;
-	}
 
 	return drm_dp_dpcd_read(&aconnector->dm_dp_aux.aux, address, data,
 				size) == size;
@@ -1437,6 +1463,9 @@ bool dm_helpers_dp_handle_test_pattern_request(
 			drm_err(dev, "timing storage failed\n");
 
 	}
+
+	pipe_ctx->stream->test_pattern.type = test_pattern;
+	pipe_ctx->stream->test_pattern.color_space = test_pattern_color_space;
 
 	dc_link_dp_set_test_pattern(
 		(struct dc_link *) link,

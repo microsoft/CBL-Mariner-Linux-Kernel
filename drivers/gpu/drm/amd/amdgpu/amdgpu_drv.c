@@ -211,6 +211,7 @@ int amdgpu_user_partt_mode = AMDGPU_AUTO_COMPUTE_PARTITION_MODE;
 int amdgpu_umsch_mm;
 int amdgpu_seamless = -1; /* auto */
 uint amdgpu_debug_mask;
+int amdgpu_agp = -1; /* auto */
 
 static void amdgpu_drv_delayed_reset_work_handler(struct work_struct *work);
 
@@ -982,6 +983,15 @@ module_param_named(seamless, amdgpu_seamless, int, 0444);
  */
 MODULE_PARM_DESC(debug_mask, "debug options for amdgpu, disabled by default");
 module_param_named(debug_mask, amdgpu_debug_mask, uint, 0444);
+
+/**
+ * DOC: agp (int)
+ * Enable the AGP aperture.  This provides an aperture in the GPU's internal
+ * address space for direct access to system memory.  Note that these accesses
+ * are non-snooped, so they are only used for access to uncached memory.
+ */
+MODULE_PARM_DESC(agp, "AGP (-1 = auto (default), 0 = disable, 1 = enable)");
+module_param_named(agp, amdgpu_agp, int, 0444);
 
 /* These devices are not supported by amdgpu.
  * They are supported by the mach64, r128, radeon drivers
@@ -2067,6 +2077,14 @@ static const struct pci_device_id pciidlist[] = {
 
 MODULE_DEVICE_TABLE(pci, pciidlist);
 
+static const struct amdgpu_asic_type_quirk asic_type_quirks[] = {
+	/* differentiate between P10 and P11 asics with the same DID */
+	{0x67FF, 0xE3, CHIP_POLARIS10},
+	{0x67FF, 0xE7, CHIP_POLARIS10},
+	{0x67FF, 0xF3, CHIP_POLARIS10},
+	{0x67FF, 0xF7, CHIP_POLARIS10},
+};
+
 static struct drm_driver amdgpu_kms_driver;
 
 static void amdgpu_get_secondary_funcs(struct amdgpu_device *adev)
@@ -2109,6 +2127,22 @@ static void amdgpu_init_debug_options(struct amdgpu_device *adev)
 	}
 }
 
+static unsigned long amdgpu_fix_asic_type(struct pci_dev *pdev, unsigned long flags)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(asic_type_quirks); i++) {
+		if (pdev->device == asic_type_quirks[i].device &&
+			pdev->revision == asic_type_quirks[i].revision) {
+				flags &= ~AMD_ASIC_MASK;
+				flags |= asic_type_quirks[i].type;
+				break;
+			}
+	}
+
+	return flags;
+}
+
 static int amdgpu_pci_probe(struct pci_dev *pdev,
 			    const struct pci_device_id *ent)
 {
@@ -2138,15 +2172,8 @@ static int amdgpu_pci_probe(struct pci_dev *pdev,
 			 "See modparam exp_hw_support\n");
 		return -ENODEV;
 	}
-	/* differentiate between P10 and P11 asics with the same DID */
-	if (pdev->device == 0x67FF &&
-	    (pdev->revision == 0xE3 ||
-	     pdev->revision == 0xE7 ||
-	     pdev->revision == 0xF3 ||
-	     pdev->revision == 0xF7)) {
-		flags &= ~AMD_ASIC_MASK;
-		flags |= CHIP_POLARIS10;
-	}
+
+	flags = amdgpu_fix_asic_type(pdev, flags);
 
 	/* Due to hardware bugs, S/G Display on raven requires a 1:1 IOMMU mapping,
 	 * however, SME requires an indirect IOMMU mapping because the encryption
@@ -2275,6 +2302,8 @@ retry_init:
 
 		pm_runtime_mark_last_busy(ddev->dev);
 		pm_runtime_put_autosuspend(ddev->dev);
+
+		pci_wake_from_d3(pdev, TRUE);
 
 		/*
 		 * For runpm implemented via BACO, PMFW will handle the
@@ -2862,7 +2891,7 @@ static const struct file_operations amdgpu_driver_kms_fops = {
 	.compat_ioctl = amdgpu_kms_compat_ioctl,
 #endif
 #ifdef CONFIG_PROC_FS
-	.show_fdinfo = amdgpu_show_fdinfo
+	.show_fdinfo = drm_show_fdinfo,
 #endif
 };
 
@@ -2950,12 +2979,21 @@ static struct drm_driver amdgpu_kms_driver = {
 	.dumb_map_offset = amdgpu_mode_dumb_mmap,
 	.fops = &amdgpu_driver_kms_fops,
 	.release = &amdgpu_driver_release_kms,
+#ifdef HAVE_DRM_DRIVER_SHOW_FDINFO
+#ifdef CONFIG_PROC_FS
+	.show_fdinfo = amdgpu_show_fdinfo,
+#endif
+#endif
 
+#ifdef HAVE_DRM_GEM_PRIME_HANDLE_TO_FD
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+#endif
+
 #ifdef HAVE_STRUCT_DRM_DRV_GEM_OPEN_OBJECT_CALLBACK
 	.gem_prime_export = amdgpu_gem_prime_export,
 #endif
+
 #if defined(AMDKCL_AMDGPU_DMABUF_OPS)
 	.gem_prime_import = amdgpu_gem_prime_import,
 #else
@@ -2976,7 +3014,9 @@ static struct drm_driver amdgpu_kms_driver = {
 	.gem_prime_vunmap = amdgpu_gem_prime_vunmap,
 #endif
 
+#ifdef HAVE_DRM_DRIVER_GEM_PRIME_MMAP
 	.gem_prime_mmap = amdkcl_drm_gem_prime_mmap,
+#endif
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
@@ -3003,10 +3043,14 @@ const struct drm_driver amdgpu_partition_driver = {
 	.fops = &amdgpu_driver_kms_fops,
 	.release = &amdgpu_driver_release_kms,
 
+#ifdef HAVE_DRM_GEM_PRIME_HANDLE_TO_FD
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+#endif
 	.gem_prime_import = amdgpu_gem_prime_import,
+#ifdef HAVE_DRM_DRIVER_GEM_PRIME_MMAP
 	.gem_prime_mmap = drm_gem_prime_mmap,
+#endif
 
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,

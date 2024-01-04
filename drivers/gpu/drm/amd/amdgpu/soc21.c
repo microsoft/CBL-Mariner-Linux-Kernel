@@ -381,6 +381,7 @@ soc21_asic_reset_method(struct amdgpu_device *adev)
 		return AMD_RESET_METHOD_MODE1;
 	case IP_VERSION(13, 0, 4):
 	case IP_VERSION(13, 0, 11):
+	case IP_VERSION(14, 0, 0):
 		return AMD_RESET_METHOD_MODE2;
 	default:
 		if (amdgpu_dpm_is_baco_supported(adev))
@@ -433,8 +434,7 @@ static void soc21_program_aspm(struct amdgpu_device *adev)
 	if (!amdgpu_device_should_use_aspm(adev))
 		return;
 
-	if (!(adev->flags & AMD_IS_APU) &&
-	    (adev->nbio.funcs->program_aspm))
+	if (adev->nbio.funcs->program_aspm)
 		adev->nbio.funcs->program_aspm(adev);
 }
 
@@ -863,6 +863,8 @@ static int soc21_common_set_clockgating_state(void *handle,
 	case IP_VERSION(4, 3, 0):
 	case IP_VERSION(4, 3, 1):
 	case IP_VERSION(7, 7, 0):
+	case IP_VERSION(7, 7, 1):
+	case IP_VERSION(7, 11, 0):
 		adev->nbio.funcs->update_medium_grain_clock_gating(adev,
 				state == AMD_CG_STATE_GATE);
 		adev->nbio.funcs->update_medium_grain_light_sleep(adev,
@@ -901,8 +903,6 @@ static void soc21_common_get_clockgating_state(void *handle, u64 *flags)
 	adev->nbio.funcs->get_clockgating_state(adev, flags);
 
 	adev->hdp.funcs->get_clock_gating_state(adev, flags);
-
-	return;
 }
 
 static const struct amd_ip_funcs soc21_common_ip_funcs = {

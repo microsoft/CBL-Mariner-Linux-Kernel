@@ -34,6 +34,7 @@
 #include <drm/amdgpu_drm.h>
 #include <drm/drm_drv.h>
 #include <drm/ttm/ttm_tt.h>
+#include <drm/drm_exec.h>
 #include "amdgpu.h"
 #include "amdgpu_trace.h"
 #include "amdgpu_amdkfd.h"
@@ -354,25 +355,20 @@ void amdgpu_vm_bo_base_init(struct amdgpu_vm_bo_base *base,
 }
 
 /**
- * amdgpu_vm_get_pd_bo - add the VM PD to a validation list
+ * amdgpu_vm_lock_pd - lock PD in drm_exec
  *
  * @vm: vm providing the BOs
- * @validated: head of validation list
- * @entry: entry to add
+ * @exec: drm execution context
+ * @num_fences: number of extra fences to reserve
  *
- * Add the page directory to the list of BOs to
- * validate for command submission.
+ * Lock the VM root PD in the DRM execution context.
  */
-void amdgpu_vm_get_pd_bo(struct amdgpu_vm *vm,
-			 struct list_head *validated,
-			 struct amdgpu_bo_list_entry *entry)
+int amdgpu_vm_lock_pd(struct amdgpu_vm *vm, struct drm_exec *exec,
+		      unsigned int num_fences)
 {
-	entry->priority = 0;
-	entry->tv.bo = &vm->root.bo->tbo;
-	/* Two for VM updates, one for TTM and one for the CS job */
-	entry->tv.num_shared = 4;
-	entry->user_pages = NULL;
-	list_add(&entry->tv.head, validated);
+	/* We need at least two fences for the VM PD/PT updates */
+	return drm_exec_prepare_obj(exec, &vm->root.bo->tbo.base,
+				    2 + num_fences);
 }
 
 /**
@@ -1127,12 +1123,13 @@ int amdgpu_vm_bo_update(struct amdgpu_device *adev, struct amdgpu_bo_va *bo_va,
 			struct drm_gem_object *gobj = dma_buf->priv;
 			struct amdgpu_bo *abo = gem_to_amdgpu_bo(gobj);
 
-			if (abo->tbo.resource->mem_type == TTM_PL_VRAM)
+			if (abo->tbo.resource &&
+			    abo->tbo.resource->mem_type == TTM_PL_VRAM)
 				bo = gem_to_amdgpu_bo(gobj);
 		}
 		mem = bo->tbo.resource;
-		if (mem->mem_type == TTM_PL_TT ||
-		    mem->mem_type == AMDGPU_PL_PREEMPT)
+		if (mem && (mem->mem_type == TTM_PL_TT ||
+			    mem->mem_type == AMDGPU_PL_PREEMPT))
 			pages_addr = bo->tbo.ttm->dma_address;
 		else if (mem->mem_type == AMDGPU_PL_DGMA_IMPORT)
 			pages_addr = (dma_addr_t *)bo->dgma_addr;
@@ -1418,6 +1415,7 @@ int amdgpu_vm_clear_freed(struct amdgpu_device *adev,
  *
  * @adev: amdgpu_device pointer
  * @vm: requested vm
+ * @ticket: optional reservation ticket used to reserve the VM
  *
  * Make sure all BOs which are moved are updated in the PTs.
  *
@@ -1427,11 +1425,12 @@ int amdgpu_vm_clear_freed(struct amdgpu_device *adev,
  * PTs have to be reserved!
  */
 int amdgpu_vm_handle_moved(struct amdgpu_device *adev,
-			   struct amdgpu_vm *vm)
+			   struct amdgpu_vm *vm,
+			   struct ww_acquire_ctx *ticket)
 {
 	struct amdgpu_bo_va *bo_va;
 	struct dma_resv *resv;
-	bool clear;
+	bool clear, unlock;
 	int r;
 
 	spin_lock(&vm->status_lock);
@@ -1454,23 +1453,75 @@ int amdgpu_vm_handle_moved(struct amdgpu_device *adev,
 		spin_unlock(&vm->status_lock);
 
 		/* Try to reserve the BO to avoid clearing its ptes */
-		if (!adev->debug_vm && dma_resv_trylock(resv))
+		if (!adev->debug_vm && dma_resv_trylock(resv)) {
 			clear = false;
+			unlock = true;
+		/* The caller is already holding the reservation lock */
+		} else if (ticket && dma_resv_locking_ctx(resv) == ticket) {
+			clear = false;
+			unlock = false;
 		/* Somebody else is using the BO right now */
-		else
+		} else {
 			clear = true;
+			unlock = false;
+		}
 
 		r = amdgpu_vm_bo_update(adev, bo_va, clear);
 		if (r)
 			return r;
 
-		if (!clear)
+		if (unlock)
 			dma_resv_unlock(resv);
 		spin_lock(&vm->status_lock);
 	}
 	spin_unlock(&vm->status_lock);
 
 	return 0;
+}
+
+/**
+ * amdgpu_vm_flush_compute_tlb - Flush TLB on compute VM
+ *
+ * @adev: amdgpu_device pointer
+ * @vm: requested vm
+ * @flush_type: flush type
+ * @xcc_mask: mask of XCCs that belong to the compute partition in need of a TLB flush.
+ *
+ * Flush TLB if needed for a compute VM.
+ *
+ * Returns:
+ * 0 for success.
+ */
+int amdgpu_vm_flush_compute_tlb(struct amdgpu_device *adev,
+				struct amdgpu_vm *vm,
+				uint32_t flush_type,
+				uint32_t xcc_mask)
+{
+	uint64_t tlb_seq = amdgpu_vm_tlb_seq(vm);
+	bool all_hub = false;
+	int xcc = 0, r = 0;
+
+	WARN_ON_ONCE(!vm->is_compute_context);
+
+	/*
+	 * It can be that we race and lose here, but that is extremely unlikely
+	 * and the worst thing which could happen is that we flush the changes
+	 * into the TLB once more which is harmless.
+	 */
+	if (atomic64_xchg(&vm->kfd_last_flushed_seq, tlb_seq) == tlb_seq)
+		return 0;
+
+	if (adev->family == AMDGPU_FAMILY_AI ||
+	    adev->family == AMDGPU_FAMILY_RV)
+		all_hub = true;
+
+	for_each_inst(xcc, xcc_mask) {
+		r = amdgpu_gmc_flush_gpu_tlb_pasid(adev, vm->pasid, flush_type,
+						   all_hub, xcc);
+		if (r)
+			break;
+	}
+	return r;
 }
 
 /**
@@ -2175,7 +2226,8 @@ long amdgpu_vm_wait_idle(struct amdgpu_vm *vm, long timeout)
  * Returns:
  * 0 for success, error for failure.
  */
-int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm, int32_t xcp_id)
+int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm,
+		   int32_t xcp_id)
 {
 	struct amdgpu_bo *root_bo;
 	struct amdgpu_bo_vm *root;
@@ -2198,6 +2250,7 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm, int32_t xcp
 	INIT_LIST_HEAD(&vm->done);
 	INIT_LIST_HEAD(&vm->pt_freed);
 	INIT_WORK(&vm->pt_free_work, amdgpu_vm_pt_free_work);
+	INIT_KFIFO(vm->faults);
 
 	r = amdgpu_vm_init_entities(adev, vm);
 	if (r)
@@ -2232,34 +2285,33 @@ int amdgpu_vm_init(struct amdgpu_device *adev, struct amdgpu_vm *vm, int32_t xcp
 				false, &root, xcp_id);
 	if (r)
 		goto error_free_delayed;
-	root_bo = &root->bo;
+
+	root_bo = amdgpu_bo_ref(&root->bo);
 	r = amdgpu_bo_reserve(root_bo, true);
+	if (r) {
+		amdgpu_bo_unref(&root->shadow);
+		amdgpu_bo_unref(&root_bo);
+		goto error_free_delayed;
+	}
+
+	amdgpu_vm_bo_base_init(&vm->root, vm, root_bo);
+	r = dma_resv_reserve_fences(amdkcl_ttm_resvp(&root_bo->tbo), 1);
 	if (r)
 		goto error_free_root;
 
-	r = dma_resv_reserve_fences(amdkcl_ttm_resvp(&root_bo->tbo), 1);
-	if (r)
-		goto error_unreserve;
-
-	amdgpu_vm_bo_base_init(&vm->root, vm, root_bo);
-
 	r = amdgpu_vm_pt_clear(adev, vm, root, false);
 	if (r)
-		goto error_unreserve;
+		goto error_free_root;
 
 	amdgpu_bo_unreserve(vm->root.bo);
-
-	INIT_KFIFO(vm->faults);
+	amdgpu_bo_unref(&root_bo);
 
 	return 0;
 
-error_unreserve:
-	amdgpu_bo_unreserve(vm->root.bo);
-
 error_free_root:
-	amdgpu_bo_unref(&root->shadow);
+	amdgpu_vm_pt_free_root(adev, vm);
+	amdgpu_bo_unreserve(vm->root.bo);
 	amdgpu_bo_unref(&root_bo);
-	vm->root.bo = NULL;
 
 error_free_delayed:
 	dma_fence_put(vm->last_tlb_flush);

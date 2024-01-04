@@ -20,6 +20,8 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
+ * Authors: AMD
+ *
  */
  
 #ifndef __DML2_INTERNAL_TYPES_H__
@@ -73,6 +75,8 @@ struct dml2_dml_to_dc_pipe_mapping {
 	bool dml_pipe_idx_to_stream_id_valid[__DML2_WRAPPER_MAX_STREAMS_PLANES__];
 	unsigned int dml_pipe_idx_to_plane_id[__DML2_WRAPPER_MAX_STREAMS_PLANES__];
 	bool dml_pipe_idx_to_plane_id_valid[__DML2_WRAPPER_MAX_STREAMS_PLANES__];
+	unsigned int dml_pipe_idx_to_plane_index[__DML2_WRAPPER_MAX_STREAMS_PLANES__];
+	bool dml_pipe_idx_to_plane_index_valid[__DML2_WRAPPER_MAX_STREAMS_PLANES__];
 };
 
 struct dml2_wrapper_scratch {
@@ -94,6 +98,7 @@ struct dml2_wrapper_scratch {
 
 	struct dml2_dml_to_dc_pipe_mapping dml_to_dc_pipe_mapping;
 	bool enable_flexible_pipe_mapping;
+	bool plane_duplicate_exists;
 };
 
 struct dml2_helper_det_policy_scratch {
@@ -102,7 +107,6 @@ struct dml2_helper_det_policy_scratch {
 
 enum dml2_architecture {
 	dml2_architecture_20,
-	dml2_architecture_21
 };
 
 struct dml2_context {

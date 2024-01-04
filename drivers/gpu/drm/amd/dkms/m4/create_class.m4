@@ -11,6 +11,6 @@ AC_DEFUN([AC_AMDGPU_LINUX_DEVICE_CLASS], [
                 ], [
                         AC_DEFINE(HAVE_ONE_ARGUMENT_OF_CLASS_CREATE, 1,
                                 [class_create has one argument])
-                ])
+                ]) 
         ])
 ])

@@ -20,6 +20,8 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
+ * Authors: AMD
+ *
  */
 
 #include "display_mode_core.h"
@@ -229,6 +231,7 @@ void dml2_init_socbb_params(struct dml2_context *dml2, const struct dc *in_dc, s
 		out->num_chans = 4;
 		out->round_trip_ping_latency_dcfclk_cycles = 106;
 		out->smn_latency_us = 2;
+		out->dispclk_dppclk_vco_speed_mhz = 3600;
 		break;
 
 	case dml_project_dcn351:
@@ -338,25 +341,45 @@ void dml2_init_soc_states(struct dml2_context *dml2, const struct dc *in_dc,
 		break;
 	}
 
-	/* Override from passed values, mainly for debugging purposes, if available */
-	if (dml2->config.bbox_overrides.sr_exit_latency_us) {
-		p->in_states->state_array[0].sr_exit_time_us = dml2->config.bbox_overrides.sr_exit_latency_us;
-	}
+	if (dml2->config.bbox_overrides.clks_table.num_states)
+			p->in_states->num_states = dml2->config.bbox_overrides.clks_table.num_states;
 
-	if (dml2->config.bbox_overrides.sr_enter_plus_exit_latency_us) {
-		p->in_states->state_array[0].sr_enter_plus_exit_time_us = dml2->config.bbox_overrides.sr_enter_plus_exit_latency_us;
-	}
+	/* Override from passed values, if available */
+	for (i = 0; i < p->in_states->num_states; i++) {
+		if (dml2->config.bbox_overrides.sr_exit_latency_us) {
+			p->in_states->state_array[i].sr_exit_time_us =
+				dml2->config.bbox_overrides.sr_exit_latency_us;
+		}
 
-	if (dml2->config.bbox_overrides.urgent_latency_us) {
-		p->in_states->state_array[0].urgent_latency_pixel_data_only_us = dml2->config.bbox_overrides.urgent_latency_us;
-	}
+		if (dml2->config.bbox_overrides.sr_enter_plus_exit_latency_us) {
+			p->in_states->state_array[i].sr_enter_plus_exit_time_us =
+				dml2->config.bbox_overrides.sr_enter_plus_exit_latency_us;
+		}
 
-	if (dml2->config.bbox_overrides.dram_clock_change_latency_us) {
-		p->in_states->state_array[0].dram_clock_change_latency_us = dml2->config.bbox_overrides.dram_clock_change_latency_us;
-	}
+		if (dml2->config.bbox_overrides.sr_exit_z8_time_us) {
+			p->in_states->state_array[i].sr_exit_z8_time_us =
+				dml2->config.bbox_overrides.sr_exit_z8_time_us;
+		}
 
-	if (dml2->config.bbox_overrides.fclk_change_latency_us) {
-		p->in_states->state_array[0].fclk_change_latency_us = dml2->config.bbox_overrides.fclk_change_latency_us;
+		if (dml2->config.bbox_overrides.sr_enter_plus_exit_z8_time_us) {
+			p->in_states->state_array[i].sr_enter_plus_exit_z8_time_us =
+				dml2->config.bbox_overrides.sr_enter_plus_exit_z8_time_us;
+		}
+
+		if (dml2->config.bbox_overrides.urgent_latency_us) {
+			p->in_states->state_array[i].urgent_latency_pixel_data_only_us =
+				dml2->config.bbox_overrides.urgent_latency_us;
+		}
+
+		if (dml2->config.bbox_overrides.dram_clock_change_latency_us) {
+			p->in_states->state_array[i].dram_clock_change_latency_us =
+				dml2->config.bbox_overrides.dram_clock_change_latency_us;
+		}
+
+		if (dml2->config.bbox_overrides.fclk_change_latency_us) {
+			p->in_states->state_array[i].fclk_change_latency_us =
+				dml2->config.bbox_overrides.fclk_change_latency_us;
+		}
 	}
 
 	/* DCFCLK stas values are project specific */
@@ -377,7 +400,6 @@ void dml2_init_soc_states(struct dml2_context *dml2, const struct dc *in_dc,
 	}
 	/* Copy clocks tables entries, if available */
 	if (dml2->config.bbox_overrides.clks_table.num_states) {
-		p->in_states->num_states = dml2->config.bbox_overrides.clks_table.num_states;
 
 		for (i = 0; i < dml2->config.bbox_overrides.clks_table.num_entries_per_clk.num_dcfclk_levels; i++) {
 			p->in_states->state_array[i].dcfclk_mhz = dml2->config.bbox_overrides.clks_table.clk_entries[i].dcfclk_mhz;
@@ -495,8 +517,8 @@ void dml2_translate_socbb_params(const struct dc *in, struct soc_bounding_box_st
 	out->do_urgent_latency_adjustment = in_soc_params->do_urgent_latency_adjustment;
 	out->dram_channel_width_bytes = (dml_uint_t)in_soc_params->dram_channel_width_bytes;
 	out->fabric_datapath_to_dcn_data_return_bytes = (dml_uint_t)in_soc_params->fabric_datapath_to_dcn_data_return_bytes;
-	out->gpuvm_min_page_size_kbytes = in_soc_params->gpuvm_min_page_size_bytes * 1024;
-	out->hostvm_min_page_size_kbytes = in_soc_params->hostvm_min_page_size_bytes * 1024;
+	out->gpuvm_min_page_size_kbytes = in_soc_params->gpuvm_min_page_size_bytes / 1024;
+	out->hostvm_min_page_size_kbytes = in_soc_params->hostvm_min_page_size_bytes / 1024;
 	out->mall_allocated_for_dcn_mbytes = (dml_uint_t)in_soc_params->mall_allocated_for_dcn_mbytes;
 	out->max_avg_dram_bw_use_normal_percent = in_soc_params->max_avg_dram_bw_use_normal_percent;
 	out->max_avg_fabric_bw_use_normal_percent = in_soc_params->max_avg_fabric_bw_use_normal_percent;
@@ -569,6 +591,8 @@ static void populate_dml_timing_cfg_from_stream_state(struct dml_timing_cfg_st *
 	out->RefreshRate[location] = ((in->timing.pix_clk_100hz * 100) / in->timing.h_total) / in->timing.v_total;
 	out->VFrontPorch[location] = in->timing.v_front_porch;
 	out->PixelClock[location] = in->timing.pix_clk_100hz / 10000.00;
+	if (in->timing.timing_3d_format == TIMING_3D_FORMAT_HW_FRAME_PACKING)
+		out->PixelClock[location] *= 2;
 	out->HTotal[location] = in->timing.h_total;
 	out->VTotal[location] = in->timing.v_total;
 	out->Interlace[location] = in->timing.flags.INTERLACE;
@@ -926,10 +950,11 @@ static unsigned int map_stream_to_dml_display_cfg(const struct dml2_context *dml
 	return location;
 }
 
-static bool get_plane_id(const struct dc_state *context, const struct dc_plane_state *plane,
-		unsigned int stream_id, unsigned int *plane_id)
+static bool get_plane_id(struct dml2_context *dml2, const struct dc_state *context, const struct dc_plane_state *plane,
+		unsigned int stream_id, unsigned int plane_index, unsigned int *plane_id)
 {
 	int i, j;
+	bool is_plane_duplicate = dml2->v20.scratch.plane_duplicate_exists;
 
 	if (!plane_id)
 		return false;
@@ -937,7 +962,8 @@ static bool get_plane_id(const struct dc_state *context, const struct dc_plane_s
 	for (i = 0; i < context->stream_count; i++) {
 		if (context->streams[i]->stream_id == stream_id) {
 			for (j = 0; j < context->stream_status[i].plane_count; j++) {
-				if (context->stream_status[i].plane_states[j] == plane) {
+				if (context->stream_status[i].plane_states[j] == plane &&
+					(!is_plane_duplicate || (is_plane_duplicate && (j == plane_index)))) {
 					*plane_id = (i << 16) | j;
 					return true;
 				}
@@ -949,13 +975,13 @@ static bool get_plane_id(const struct dc_state *context, const struct dc_plane_s
 }
 
 static unsigned int map_plane_to_dml_display_cfg(const struct dml2_context *dml2, const struct dc_plane_state *plane,
-		const struct dc_state *context, const struct dml_display_cfg_st *dml_dispcfg, unsigned int stream_id)
+		const struct dc_state *context, const struct dml_display_cfg_st *dml_dispcfg, unsigned int stream_id, int plane_index)
 {
 	unsigned int plane_id;
 	int i = 0;
 	int location = -1;
 
-	if (!get_plane_id(context, plane, stream_id, &plane_id)) {
+	if (!get_plane_id(context->bw_ctx.dml2, context, plane, stream_id, plane_index, &plane_id)) {
 		ASSERT(false);
 		return -1;
 	}
@@ -986,7 +1012,41 @@ static void apply_legacy_svp_drr_settings(struct dml2_context *dml2, const struc
 	}
 }
 
-void map_dc_state_into_dml_display_cfg(struct dml2_context *dml2, const struct dc_state *context, struct dml_display_cfg_st *dml_dispcfg)
+static void dml2_populate_pipe_to_plane_index_mapping(struct dml2_context *dml2, struct dc_state *state)
+{
+	unsigned int i;
+	unsigned int pipe_index = 0;
+	unsigned int plane_index = 0;
+	struct dml2_dml_to_dc_pipe_mapping *dml_to_dc_pipe_mapping = &dml2->v20.scratch.dml_to_dc_pipe_mapping;
+
+	for (i = 0; i < __DML2_WRAPPER_MAX_STREAMS_PLANES__; i++) {
+		dml_to_dc_pipe_mapping->dml_pipe_idx_to_plane_index_valid[i] = false;
+		dml_to_dc_pipe_mapping->dml_pipe_idx_to_plane_index[i] = 0;
+	}
+
+	for (i = 0; i < __DML2_WRAPPER_MAX_STREAMS_PLANES__; i++) {
+		struct pipe_ctx *pipe = &state->res_ctx.pipe_ctx[i];
+
+		if (!pipe || !pipe->stream || !pipe->plane_state)
+			continue;
+
+		while (pipe) {
+			pipe_index = pipe->pipe_idx;
+
+			if (pipe->stream && dml_to_dc_pipe_mapping->dml_pipe_idx_to_plane_index_valid[pipe_index] == false) {
+				dml_to_dc_pipe_mapping->dml_pipe_idx_to_plane_index[pipe_index] = plane_index;
+				plane_index++;
+				dml_to_dc_pipe_mapping->dml_pipe_idx_to_plane_index_valid[pipe_index] = true;
+			}
+
+			pipe = pipe->bottom_pipe;
+		}
+
+		plane_index = 0;
+	}
+}
+
+void map_dc_state_into_dml_display_cfg(struct dml2_context *dml2, struct dc_state *context, struct dml_display_cfg_st *dml_dispcfg)
 {
 	int i = 0, j = 0;
 	int disp_cfg_stream_location, disp_cfg_plane_location;
@@ -999,9 +1059,14 @@ void map_dc_state_into_dml_display_cfg(struct dml2_context *dml2, const struct d
 	}
 
 	//Generally these are set by referencing our latest BB/IP params in dcn32_resource.c file
-	dml_dispcfg->plane.GPUVMEnable = true;
-	dml_dispcfg->plane.GPUVMMaxPageTableLevels = 4;
-	dml_dispcfg->plane.HostVMEnable = false;
+	dml_dispcfg->plane.GPUVMEnable = dml2->v20.dml_core_ctx.ip.gpuvm_enable;
+	dml_dispcfg->plane.GPUVMMaxPageTableLevels = dml2->v20.dml_core_ctx.ip.gpuvm_max_page_table_levels;
+	dml_dispcfg->plane.HostVMEnable = dml2->v20.dml_core_ctx.ip.hostvm_enable;
+	dml_dispcfg->plane.HostVMMaxPageTableLevels = dml2->v20.dml_core_ctx.ip.hostvm_max_page_table_levels;
+	if (dml2->v20.dml_core_ctx.ip.hostvm_enable)
+		dml2->v20.dml_core_ctx.policy.AllowForPStateChangeOrStutterInVBlankFinal = dml_prefetch_support_uclk_fclk_and_stutter;
+
+	dml2_populate_pipe_to_plane_index_mapping(dml2, context);
 
 	for (i = 0; i < context->stream_count; i++) {
 		disp_cfg_stream_location = map_stream_to_dml_display_cfg(dml2, context->streams[i], dml_dispcfg);
@@ -1039,7 +1104,7 @@ void map_dc_state_into_dml_display_cfg(struct dml2_context *dml2, const struct d
 		} else {
 			for (j = 0; j < context->stream_status[i].plane_count; j++) {
 				disp_cfg_plane_location = map_plane_to_dml_display_cfg(dml2,
-					context->stream_status[i].plane_states[j], context, dml_dispcfg, context->streams[i]->stream_id);
+					context->stream_status[i].plane_states[j], context, dml_dispcfg, context->streams[i]->stream_id, j);
 
 				if (disp_cfg_plane_location < 0)
 					disp_cfg_plane_location = dml_dispcfg->num_surfaces++;
@@ -1063,7 +1128,7 @@ void map_dc_state_into_dml_display_cfg(struct dml2_context *dml2, const struct d
 
 				dml_dispcfg->plane.BlendingAndTiming[disp_cfg_plane_location] = disp_cfg_stream_location;
 
-				if (get_plane_id(context, context->stream_status[i].plane_states[j], context->streams[i]->stream_id,
+				if (get_plane_id(dml2, context, context->stream_status[i].plane_states[j], context->streams[i]->stream_id, j,
 					&dml2->v20.scratch.dml_to_dc_pipe_mapping.disp_cfg_to_plane_id[disp_cfg_plane_location]))
 					dml2->v20.scratch.dml_to_dc_pipe_mapping.disp_cfg_to_plane_id_valid[disp_cfg_plane_location] = true;
 

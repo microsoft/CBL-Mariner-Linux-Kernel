@@ -354,12 +354,12 @@ static int smu_v13_0_0_check_powerplay_table(struct smu_context *smu)
 	if (powerplay_table->platform_caps & SMU_13_0_0_PP_PLATFORM_CAP_HARDWAREDC)
 		smu->dc_controlled_by_gpio = true;
 
-	if (powerplay_table->platform_caps & SMU_13_0_0_PP_PLATFORM_CAP_BACO ||
-	    powerplay_table->platform_caps & SMU_13_0_0_PP_PLATFORM_CAP_MACO)
+	if (powerplay_table->platform_caps & SMU_13_0_0_PP_PLATFORM_CAP_BACO) {
 		smu_baco->platform_support = true;
 
-	if (powerplay_table->platform_caps & SMU_13_0_0_PP_PLATFORM_CAP_MACO)
-		smu_baco->maco_support = true;
+		if (powerplay_table->platform_caps & SMU_13_0_0_PP_PLATFORM_CAP_MACO)
+			smu_baco->maco_support = true;
+	}
 
 	if (!overdrive_lowerlimits->FeatureCtrlMask ||
 	    !overdrive_upperlimits->FeatureCtrlMask)
@@ -1531,6 +1531,30 @@ static int smu_v13_0_0_od_restore_table_single(struct smu_context *smu, long inp
 		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
 		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
 		break;
+	case PP_OD_EDIT_ACOUSTIC_LIMIT:
+		od_table->OverDriveTable.AcousticLimitRpmThreshold =
+					boot_overdrive_table->OverDriveTable.AcousticLimitRpmThreshold;
+		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
+		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		break;
+	case PP_OD_EDIT_ACOUSTIC_TARGET:
+		od_table->OverDriveTable.AcousticTargetRpmThreshold =
+					boot_overdrive_table->OverDriveTable.AcousticTargetRpmThreshold;
+		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
+		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		break;
+	case PP_OD_EDIT_FAN_TARGET_TEMPERATURE:
+		od_table->OverDriveTable.FanTargetTemperature =
+					boot_overdrive_table->OverDriveTable.FanTargetTemperature;
+		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
+		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		break;
+	case PP_OD_EDIT_FAN_MINIMUM_PWM:
+		od_table->OverDriveTable.FanMinimumPwm =
+					boot_overdrive_table->OverDriveTable.FanMinimumPwm;
+		od_table->OverDriveTable.FanMode = FAN_MODE_AUTO;
+		od_table->OverDriveTable.FeatureCtrlMask |= BIT(PP_OD_FEATURE_FAN_CURVE_BIT);
+		break;
 	default:
 		dev_info(adev->dev, "Invalid table index: %ld\n", input);
 		return -EINVAL;
@@ -2520,7 +2544,7 @@ static int smu_v13_0_0_set_power_profile_mode(struct smu_context *smu,
 	if (smu->power_profile_mode == PP_SMC_POWER_PROFILE_COMPUTE &&
 	    (amdgpu_ip_version(smu->adev, MP1_HWIP, 0) == IP_VERSION(13, 0, 0)) &&
 	    ((smu->adev->pm.fw_version == 0x004e6601) ||
-	     (smu->adev->pm.fw_version >= 0x004e7300))) {
+	     (smu->adev->pm.fw_version >= 0x004e7400))) {
 		workload_type = smu_cmn_to_asic_specific_index(smu,
 							       CMN2ASIC_MAPPING_WORKLOAD,
 							       PP_SMC_POWER_PROFILE_POWERSAVING);

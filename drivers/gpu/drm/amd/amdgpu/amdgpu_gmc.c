@@ -181,6 +181,9 @@ uint64_t amdgpu_gmc_agp_addr(struct ttm_buffer_object *bo)
 {
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->bdev);
 
+	if (!bo->ttm)
+		return AMDGPU_BO_INVALID_OFFSET;
+
 	if (bo->ttm->num_pages != 1 || bo->ttm->caching == ttm_cached)
 		return AMDGPU_BO_INVALID_OFFSET;
 
@@ -778,6 +781,7 @@ void amdgpu_gmc_tmz_set(struct amdgpu_device *adev)
 	/* YELLOW_CARP*/
 	case IP_VERSION(10, 3, 3):
 	case IP_VERSION(11, 0, 4):
+	case IP_VERSION(11, 5, 0):
 		/* Don't enable it by default yet.
 		 */
 		if (amdgpu_tmz < 1) {
@@ -817,7 +821,10 @@ void amdgpu_gmc_noretry_set(struct amdgpu_device *adev)
 				gc_ver == IP_VERSION(9, 4, 3) ||
 				gc_ver >= IP_VERSION(10, 3, 0));
 
-	gmc->noretry = (amdgpu_noretry == -1) ? noretry_default : amdgpu_noretry;
+	if (!amdgpu_sriov_xnack_support(adev))
+		gmc->noretry = 1;
+	else
+		gmc->noretry = (amdgpu_noretry == -1) ? noretry_default : amdgpu_noretry;
 
 	/* keep this for kfd test fail */
 	switch (adev->asic_type) {

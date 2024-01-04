@@ -28,7 +28,6 @@
 #define __KCL_BACKPORT_KCL_DRM_DRV_H__
 
 #include <linux/console.h>
-
 /*
  * v5.1-rc5-1150-gbd53280ef042 drm/drv: Fix incorrect resolution of merge conflict
  * v5.1-rc2-5-g3f04e0a6cfeb drm: Fix drm_release() and device unplug

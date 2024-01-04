@@ -23,6 +23,7 @@
  */
 
 #include <linux/firmware.h>
+#include <drm/drm_exec.h>
 
 #include "amdgpu.h"
 #include "amdgpu_umsch_mm.h"
@@ -79,64 +80,64 @@ static int map_ring_data(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			  struct amdgpu_bo *bo, struct amdgpu_bo_va **bo_va,
 			  uint64_t addr, uint32_t size)
 {
-	struct ww_acquire_ctx ticket;
-	struct list_head list;
-	struct amdgpu_bo_list_entry pd;
-	struct ttm_validate_buffer csa_tv;
 	struct amdgpu_sync sync;
+	struct drm_exec exec;
 	int r;
-
-	INIT_LIST_HEAD(&list);
-	INIT_LIST_HEAD(&csa_tv.head);
-	csa_tv.bo = &bo->tbo;
-	csa_tv.num_shared = 1;
-
-	list_add(&csa_tv.head, &list);
-	amdgpu_vm_get_pd_bo(vm, &list, &pd);
 
 	amdgpu_sync_create(&sync);
 
-	r = ttm_eu_reserve_buffers(&ticket, &list, true, NULL);
-	if (r)
-		return r;
+	drm_exec_init(&exec, 0);
+	drm_exec_until_all_locked(&exec) {
+		r = drm_exec_lock_obj(&exec, &bo->tbo.base);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(r))
+			goto error_fini_exec;
+
+		r = amdgpu_vm_lock_pd(vm, &exec, 0);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(r))
+			goto error_fini_exec;
+	}
 
 	*bo_va = amdgpu_vm_bo_add(adev, vm, bo);
 	if (!*bo_va) {
-		ttm_eu_backoff_reservation(&ticket, &list);
-		return -ENOMEM;
+		r = -ENOMEM;
+		goto error_fini_exec;
 	}
 
 	r = amdgpu_vm_bo_map(adev, *bo_va, addr, 0, size,
 			     AMDGPU_PTE_READABLE | AMDGPU_PTE_WRITEABLE |
 			     AMDGPU_PTE_EXECUTABLE);
 
-	if (r) {
-		amdgpu_vm_bo_del(adev, *bo_va);
-		ttm_eu_backoff_reservation(&ticket, &list);
-		return r;
-	}
+	if (r)
+		goto error_del_bo_va;
 
 
 	r = amdgpu_vm_bo_update(adev, *bo_va, false);
 	if (r)
-		goto error;
+		goto error_del_bo_va;
 
 	amdgpu_sync_fence(&sync, (*bo_va)->last_pt_update);
 
 	r = amdgpu_vm_update_pdes(adev, vm, false);
 	if (r)
-		goto error;
+		goto error_del_bo_va;
 
 	amdgpu_sync_fence(&sync, vm->last_update);
 
 	amdgpu_sync_wait(&sync, false);
+	drm_exec_fini(&exec);
 
-	ttm_eu_backoff_reservation(&ticket, &list);
 	amdgpu_sync_free(&sync);
 
 	return 0;
-error:
-	ttm_eu_backoff_reservation(&ticket, &list);
+
+error_del_bo_va:
+	amdgpu_vm_bo_del(adev, *bo_va);
+	amdgpu_sync_free(&sync);
+
+error_fini_exec:
+	drm_exec_fini(&exec);
 	amdgpu_sync_free(&sync);
 	return r;
 }
@@ -145,35 +146,33 @@ static int unmap_ring_data(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 			    struct amdgpu_bo *bo, struct amdgpu_bo_va *bo_va,
 			    uint64_t addr)
 {
-	struct ww_acquire_ctx ticket;
-	struct list_head list;
-	struct amdgpu_bo_list_entry pd;
-	struct ttm_validate_buffer csa_tv;
-	int r;
+	struct drm_exec exec;
+	long r;
 
-	INIT_LIST_HEAD(&list);
-	INIT_LIST_HEAD(&csa_tv.head);
-	csa_tv.bo = &bo->tbo;
-	csa_tv.num_shared = 1;
+	drm_exec_init(&exec, 0);
+	drm_exec_until_all_locked(&exec) {
+		r = drm_exec_lock_obj(&exec, &bo->tbo.base);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(r))
+			goto out_unlock;
 
-	list_add(&csa_tv.head, &list);
-	amdgpu_vm_get_pd_bo(vm, &list, &pd);
+		r = amdgpu_vm_lock_pd(vm, &exec, 0);
+		drm_exec_retry_on_contention(&exec);
+		if (unlikely(r))
+			goto out_unlock;
+	}
 
-	r = ttm_eu_reserve_buffers(&ticket, &list, true, NULL);
-	if (r)
-		return r;
 
 	r = amdgpu_vm_bo_unmap(adev, bo_va, addr);
-	if (r) {
-		ttm_eu_backoff_reservation(&ticket, &list);
-		return r;
-	}
+	if (r)
+		goto out_unlock;
 
 	amdgpu_vm_bo_del(adev, bo_va);
 
-	ttm_eu_backoff_reservation(&ticket, &list);
+out_unlock:
+	drm_exec_fini(&exec);
 
-	return 0;
+	return r;
 }
 
 static void setup_vpe_queue(struct amdgpu_device *adev,
@@ -844,6 +843,20 @@ static int umsch_mm_hw_fini(void *handle)
 	return 0;
 }
 
+static int umsch_mm_suspend(void *handle)
+{
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+
+	return umsch_mm_hw_fini(adev);
+}
+
+static int umsch_mm_resume(void *handle)
+{
+	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+
+	return umsch_mm_hw_init(adev);
+}
+
 static const struct amd_ip_funcs umsch_mm_v4_0_ip_funcs = {
 	.name = "umsch_mm_v4_0",
 	.early_init = umsch_mm_early_init,
@@ -852,6 +865,8 @@ static const struct amd_ip_funcs umsch_mm_v4_0_ip_funcs = {
 	.sw_fini = umsch_mm_sw_fini,
 	.hw_init = umsch_mm_hw_init,
 	.hw_fini = umsch_mm_hw_fini,
+	.suspend = umsch_mm_suspend,
+	.resume = umsch_mm_resume,
 };
 
 const struct amdgpu_ip_block_version umsch_mm_v4_0_ip_block = {

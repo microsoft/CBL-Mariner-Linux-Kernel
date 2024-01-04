@@ -42,6 +42,7 @@
 #include <linux/dma-fence-array.h>
 #include <linux/pci-p2pdma.h>
 #include <linux/pm_runtime.h>
+#include "amdgpu_trace.h"
 
 #ifdef HAVE_STRUCT_DRM_DRV_GEM_OPEN_OBJECT_CALLBACK
 /**
@@ -243,6 +244,7 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
 #endif
 
 	r = pm_runtime_get_sync(adev_to_drm(adev)->dev);
+	trace_amdgpu_runpm_reference_dumps(1, __func__);
 	if (r < 0)
 		goto out;
 
@@ -250,6 +252,7 @@ static int amdgpu_dma_buf_attach(struct dma_buf *dmabuf,
 
 out:
 	pm_runtime_put_autosuspend(adev_to_drm(adev)->dev);
+	trace_amdgpu_runpm_reference_dumps(0, __func__);
 	return r;
 }
 
@@ -270,6 +273,7 @@ static void amdgpu_dma_buf_detach(struct dma_buf *dmabuf,
 
 	pm_runtime_mark_last_busy(adev_to_drm(adev)->dev);
 	pm_runtime_put_autosuspend(adev_to_drm(adev)->dev);
+	trace_amdgpu_runpm_reference_dumps(0, __func__);
 }
 
 #ifdef HAVE_STRUCT_DMA_BUF_OPS_PIN
@@ -751,9 +755,12 @@ amdgpu_dma_buf_move_notify(struct dma_buf_attachment *attach)
 				continue;
 		}
 
-		r = amdgpu_vm_clear_freed(adev, vm, NULL);
+		/* Reserve fences for two SDMA page table updates */
+		r = dma_resv_reserve_fences(resv, 2);
 		if (!r)
-			r = amdgpu_vm_handle_moved(adev, vm);
+			r = amdgpu_vm_clear_freed(adev, vm, NULL);
+		if (!r)
+			r = amdgpu_vm_handle_moved(adev, vm, ticket);
 
 		if (r && r != -EBUSY)
 			DRM_ERROR("Failed to invalidate VM page tables (%d))\n",

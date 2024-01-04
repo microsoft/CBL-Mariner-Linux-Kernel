@@ -20,6 +20,8 @@
  * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  *
+ * Authors: AMD
+ *
  */
 
 #include "dm_services.h"
@@ -136,16 +138,44 @@ void dcn35_init_hw(struct dc *dc)
 	if (dc->clk_mgr && dc->clk_mgr->funcs->init_clocks)
 		dc->clk_mgr->funcs->init_clocks(dc->clk_mgr);
 
-	REG_WRITE(DCCG_GATE_DISABLE_CNTL, 0);
-	REG_WRITE(DCCG_GATE_DISABLE_CNTL2, 0x3F000000);
-	REG_WRITE(DCCG_GATE_DISABLE_CNTL5, 0x1f7c3fcf);
-
 	//dcn35_set_dmu_fgcg(hws, dc->debug.enable_fine_grain_clock_gating.bits.dmu);
 
 	if (!dcb->funcs->is_accelerated_mode(dcb)) {
 		/*this calls into dmubfw to do the init*/
 		hws->funcs.bios_golden_init(dc);
 	}
+
+	if (!dc->debug.disable_clock_gate) {
+		REG_WRITE(DCCG_GATE_DISABLE_CNTL, 0);
+		REG_WRITE(DCCG_GATE_DISABLE_CNTL2,  0);
+
+		/* Disable gating for PHYASYMCLK. This will be enabled in dccg if needed */
+		REG_UPDATE_5(DCCG_GATE_DISABLE_CNTL2, PHYASYMCLK_ROOT_GATE_DISABLE, 1,
+				PHYBSYMCLK_ROOT_GATE_DISABLE, 1,
+				PHYCSYMCLK_ROOT_GATE_DISABLE, 1,
+				PHYDSYMCLK_ROOT_GATE_DISABLE, 1,
+				PHYESYMCLK_ROOT_GATE_DISABLE, 1);
+
+		REG_UPDATE_4(DCCG_GATE_DISABLE_CNTL4,
+				DPIASYMCLK0_GATE_DISABLE, 0,
+				DPIASYMCLK1_GATE_DISABLE, 0,
+				DPIASYMCLK2_GATE_DISABLE, 0,
+				DPIASYMCLK3_GATE_DISABLE, 0);
+
+		REG_WRITE(DCCG_GATE_DISABLE_CNTL5, 0xFFFFFFFF);
+		REG_UPDATE_4(DCCG_GATE_DISABLE_CNTL5,
+				DTBCLK_P0_GATE_DISABLE, 0,
+				DTBCLK_P1_GATE_DISABLE, 0,
+				DTBCLK_P2_GATE_DISABLE, 0,
+				DTBCLK_P3_GATE_DISABLE, 0);
+		REG_UPDATE_4(DCCG_GATE_DISABLE_CNTL5,
+				DPSTREAMCLK0_GATE_DISABLE, 0,
+				DPSTREAMCLK1_GATE_DISABLE, 0,
+				DPSTREAMCLK2_GATE_DISABLE, 0,
+				DPSTREAMCLK3_GATE_DISABLE, 0);
+
+	}
+
 	// Initialize the dccg
 	if (res_pool->dccg->funcs->dccg_init)
 		res_pool->dccg->funcs->dccg_init(res_pool->dccg);
@@ -272,7 +302,19 @@ void dcn35_init_hw(struct dc *dc)
 	if (!dc->debug.disable_clock_gate) {
 		/* enable all DCN clock gating */
 		REG_WRITE(DCCG_GATE_DISABLE_CNTL, 0);
-		REG_WRITE(DCCG_GATE_DISABLE_CNTL2, 0);
+
+		REG_UPDATE_5(DCCG_GATE_DISABLE_CNTL2, SYMCLKA_FE_GATE_DISABLE, 0,
+				SYMCLKB_FE_GATE_DISABLE, 0,
+				SYMCLKC_FE_GATE_DISABLE, 0,
+				SYMCLKD_FE_GATE_DISABLE, 0,
+				SYMCLKE_FE_GATE_DISABLE, 0);
+		REG_UPDATE(DCCG_GATE_DISABLE_CNTL2, HDMICHARCLK0_GATE_DISABLE, 0);
+		REG_UPDATE_5(DCCG_GATE_DISABLE_CNTL2, SYMCLKA_GATE_DISABLE, 0,
+				SYMCLKB_GATE_DISABLE, 0,
+				SYMCLKC_GATE_DISABLE, 0,
+				SYMCLKD_GATE_DISABLE, 0,
+				SYMCLKE_GATE_DISABLE, 0);
+
 		REG_UPDATE(DCFCLK_CNTL, DCFCLK_GATE_DIS, 0);
 	}
 
@@ -627,12 +669,8 @@ void dcn35_power_down_on_boot(struct dc *dc)
 	if (dc->clk_mgr->funcs->set_low_power_state)
 		dc->clk_mgr->funcs->set_low_power_state(dc->clk_mgr);
 
-	if (dc->clk_mgr->clks.pwr_state == DCN_PWR_STATE_LOW_POWER) {
-		if (!dc->idle_optimizations_allowed) {
-			dc_dmub_srv_notify_idle(dc, true);
-			dc->idle_optimizations_allowed = true;
-		}
-	}
+	if (dc->clk_mgr->clks.pwr_state == DCN_PWR_STATE_LOW_POWER)
+		dc_allow_idle_optimizations(dc, true);
 }
 
 bool dcn35_apply_idle_power_optimizations(struct dc *dc, bool enable)
@@ -941,6 +979,8 @@ void dcn35_calc_blocks_to_gate(struct dc *dc, struct dc_state *context,
 	bool hpo_frl_stream_enc_acquired = false;
 	bool hpo_dp_stream_enc_acquired = false;
 	int i = 0, j = 0;
+	int edp_num = 0;
+	struct dc_link *edp_links[MAX_NUM_EDP] = { NULL };
 
 	memset(update_state, 0, sizeof(struct pg_block_update));
 
@@ -981,10 +1021,24 @@ void dcn35_calc_blocks_to_gate(struct dc *dc, struct dc_state *context,
 
 		if (pipe_ctx->stream_res.opp)
 			update_state->pg_pipe_res_update[PG_OPP][pipe_ctx->stream_res.opp->inst] = false;
-
-		if (pipe_ctx->stream_res.tg)
-			update_state->pg_pipe_res_update[PG_OPTC][pipe_ctx->stream_res.tg->inst] = false;
 	}
+	/*domain24 controls all the otg, mpc, opp, as long as one otg is still up, avoid enabling OTG PG*/
+	for (i = 0; i < dc->res_pool->timing_generator_count; i++) {
+		struct timing_generator *tg = dc->res_pool->timing_generators[i];
+		if (tg && tg->funcs->is_tg_enabled(tg)) {
+			update_state->pg_pipe_res_update[PG_OPTC][i] = false;
+			break;
+		}
+	}
+
+	dc_get_edp_links(dc, edp_links, &edp_num);
+	if (edp_num == 0 ||
+		((!edp_links[0] || !edp_links[0]->edp_sink_present) &&
+			(!edp_links[1] || !edp_links[1]->edp_sink_present))) {
+		/*eDP not exist on this config, keep Domain24 power on, for S0i3, this will be handled in dmubfw*/
+		update_state->pg_pipe_res_update[PG_OPTC][0] = false;
+	}
+
 }
 
 void dcn35_calc_blocks_to_ungate(struct dc *dc, struct dc_state *context,
@@ -1118,8 +1172,10 @@ void dcn35_block_power_control(struct dc *dc,
 			pg_cntl->funcs->dwb_pg_control(pg_cntl, power_on);
 	}
 
+	/*this will need all the clients to unregister optc interruts let dmubfw handle this*/
 	if (pg_cntl->funcs->plane_otg_pg_control)
 		pg_cntl->funcs->plane_otg_pg_control(pg_cntl, power_on);
+
 }
 
 void dcn35_root_clock_control(struct dc *dc,
