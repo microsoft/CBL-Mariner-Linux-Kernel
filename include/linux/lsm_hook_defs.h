@@ -189,6 +189,8 @@ LSM_HOOK(int, 0, file_send_sigiotask, struct task_struct *tsk,
 LSM_HOOK(int, 0, file_receive, struct file *file)
 LSM_HOOK(int, 0, file_open, struct file *file)
 LSM_HOOK(int, 0, file_truncate, struct file *file)
+LSM_HOOK(int, 0, file_set_userspace_pathname, struct file *file,
+	 const struct filename *name)
 LSM_HOOK(int, 0, task_alloc, struct task_struct *task,
 	 unsigned long clone_flags)
 LSM_HOOK(void, LSM_RET_VOID, task_free, struct task_struct *task)
