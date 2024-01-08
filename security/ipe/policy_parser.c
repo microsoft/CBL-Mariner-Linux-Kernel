@@ -349,6 +349,7 @@ static const match_table_t operation_tokens = {
 	{IPE_OP_KEXEC_INITRAMFS,	"op=KEXEC_INITRAMFS"},
 	{IPE_OP_POLICY,			"op=POLICY"},
 	{IPE_OP_X509,			"op=X509_CERT"},
+	{IPE_OP_READ,			"op=READ"},
 	{IPE_OP_KERNEL_READ,		"op=KERNEL_READ"},
 	{IPE_OP_INVALID,		NULL}
 };

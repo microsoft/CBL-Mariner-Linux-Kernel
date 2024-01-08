@@ -187,8 +187,26 @@ int ipe_kernel_load_data(enum kernel_load_data_id id, bool contents)
 }
 
 /**
- * ipe_unpack_initramfs() - Mark the current rootfs as initramfs.
+ * ipe_file_open: LSM hook called on file_open.
+ * @f: file struct created during open
+ *
+ * For more information, see the LSM hook, security_file_open.
+ *
+ * Return:
+ * 0 - OK
  */
+int ipe_file_open(struct file *f)
+{
+	struct ipe_eval_ctx ctx = IPE_EVAL_CTX_INIT;
+
+	if ((f->f_mode & FMODE_READ) && !(f->f_mode & FMODE_EXEC)) {
+		ipe_build_eval_ctx(&ctx, f, IPE_OP_READ, IPE_HOOK_OPEN);
+		return ipe_evaluate_event(&ctx);
+	}
+
+	return 0;
+}
+
 void ipe_unpack_initramfs(void)
 {
 	ipe_sb(current->fs->root.mnt->mnt_sb)->initramfs = true;
