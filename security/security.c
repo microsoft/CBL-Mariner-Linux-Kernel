@@ -2899,6 +2899,25 @@ int security_file_truncate(struct file *file)
 }
 
 /**
+ * security_file_set_userspace_pathname() - Save file userspace pathname
+ * @file: the file
+ * @name: the filename structure to copy
+ *
+ * Save the filename structure, which contains the pathname of the file
+ * from the userspace, during the call of path_openat function into
+ * file->f_security for later use by the file_open hook. Note that the
+ * name should not be trusted as it can contains arbitrary data from
+ * the userspace.
+ *
+ * Return: Returns a zero on success, negative values on failure.
+ */
+int security_file_set_userspace_pathname(struct file *file,
+					 const struct filename *name)
+{
+	return call_int_hook(file_set_userspace_pathname, 0, file, name);
+}
+
+/**
  * security_task_alloc() - Allocate a task's LSM blob
  * @task: the task
  * @clone_flags: flags indicating what is being shared
