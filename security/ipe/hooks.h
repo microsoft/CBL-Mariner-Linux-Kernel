@@ -17,6 +17,7 @@ enum ipe_hook_type {
 	IPE_HOOK_MPROTECT,
 	IPE_HOOK_KERNEL_READ,
 	IPE_HOOK_KERNEL_LOAD,
+	IPE_HOOK_OPEN,
 	__IPE_HOOK_MAX
 };
 
@@ -34,6 +35,8 @@ int ipe_kernel_read_file(struct file *file, enum kernel_read_file_id id,
 			 bool contents);
 
 int ipe_kernel_load_data(enum kernel_load_data_id id, bool contents);
+
+int ipe_file_open(struct file *f);
 
 #ifdef CONFIG_BLK_DEV_INITRD
 void ipe_unpack_initramfs(void);

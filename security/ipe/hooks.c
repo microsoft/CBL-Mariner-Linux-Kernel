@@ -187,6 +187,27 @@ int ipe_kernel_load_data(enum kernel_load_data_id id, bool contents)
 	return ipe_evaluate_event(&ctx);
 }
 
+/**
+ * ipe_file_open: LSM hook called on file_open.
+ * @f: file struct created during open
+ *
+ * For more information, see the LSM hook, security_file_open.
+ *
+ * Return:
+ * 0 - OK
+ */
+int ipe_file_open(struct file *f)
+{
+	struct ipe_eval_ctx ctx = IPE_EVAL_CTX_INIT;
+
+	if ((f->f_mode & FMODE_READ) && !(f->f_mode & FMODE_EXEC)) {
+		build_eval_ctx(&ctx, f, IPE_OP_READ, IPE_HOOK_OPEN);
+		return ipe_evaluate_event(&ctx);
+	}
+
+	return 0;
+}
+
 #ifdef CONFIG_BLK_DEV_INITRD
 void ipe_unpack_initramfs(void)
 {
