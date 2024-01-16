@@ -39,6 +39,7 @@ struct panel_cntl_backlight_registers {
 	unsigned int BL_PWM_CNTL2;
 	unsigned int BL_PWM_PERIOD_CNTL;
 	unsigned int LVTMA_PWRSEQ_REF_DIV_BL_PWM_REF_DIV;
+	unsigned int PANEL_PWRSEQ_REF_DIV2;
 };
 
 struct panel_cntl_funcs {
@@ -55,12 +56,14 @@ struct panel_cntl_funcs {
 struct panel_cntl_init_data {
 	struct dc_context *ctx;
 	uint32_t inst;
+	uint32_t pwrseq_inst;
 };
 
 struct panel_cntl {
 	const struct panel_cntl_funcs *funcs;
 	struct dc_context *ctx;
 	uint32_t inst;
+	uint32_t pwrseq_inst;
 	/* registers setting needs to be saved and restored at InitBacklight */
 	struct panel_cntl_backlight_registers stored_backlight_registers;
 };
