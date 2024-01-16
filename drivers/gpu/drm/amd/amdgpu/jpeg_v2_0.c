@@ -32,26 +32,6 @@
 #include "vcn/vcn_2_0_0_sh_mask.h"
 #include "ivsrcid/vcn/irqsrcs_vcn_2_0.h"
 
-#define mmUVD_JRBC_EXTERNAL_REG_INTERNAL_OFFSET				0x1bfff
-#define mmUVD_JPEG_GPCOM_CMD_INTERNAL_OFFSET				0x4029
-#define mmUVD_JPEG_GPCOM_DATA0_INTERNAL_OFFSET				0x402a
-#define mmUVD_JPEG_GPCOM_DATA1_INTERNAL_OFFSET				0x402b
-#define mmUVD_LMI_JRBC_RB_MEM_WR_64BIT_BAR_LOW_INTERNAL_OFFSET		0x40ea
-#define mmUVD_LMI_JRBC_RB_MEM_WR_64BIT_BAR_HIGH_INTERNAL_OFFSET		0x40eb
-#define mmUVD_LMI_JRBC_IB_VMID_INTERNAL_OFFSET				0x40cf
-#define mmUVD_LMI_JPEG_VMID_INTERNAL_OFFSET				0x40d1
-#define mmUVD_LMI_JRBC_IB_64BIT_BAR_LOW_INTERNAL_OFFSET			0x40e8
-#define mmUVD_LMI_JRBC_IB_64BIT_BAR_HIGH_INTERNAL_OFFSET		0x40e9
-#define mmUVD_JRBC_IB_SIZE_INTERNAL_OFFSET				0x4082
-#define mmUVD_LMI_JRBC_RB_MEM_RD_64BIT_BAR_LOW_INTERNAL_OFFSET		0x40ec
-#define mmUVD_LMI_JRBC_RB_MEM_RD_64BIT_BAR_HIGH_INTERNAL_OFFSET		0x40ed
-#define mmUVD_JRBC_RB_COND_RD_TIMER_INTERNAL_OFFSET			0x4085
-#define mmUVD_JRBC_RB_REF_DATA_INTERNAL_OFFSET				0x4084
-#define mmUVD_JRBC_STATUS_INTERNAL_OFFSET				0x4089
-#define mmUVD_JPEG_PITCH_INTERNAL_OFFSET				0x401f
-
-#define JRBC_DEC_EXTERNAL_REG_WRITE_ADDR				0x18000
-
 static void jpeg_v2_0_set_dec_ring_funcs(struct amdgpu_device *adev);
 static void jpeg_v2_0_set_irq_funcs(struct amdgpu_device *adev);
 static int jpeg_v2_0_set_powergating_state(void *handle,
@@ -69,6 +49,7 @@ static int jpeg_v2_0_early_init(void *handle)
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	adev->jpeg.num_jpeg_inst = 1;
+	adev->jpeg.num_jpeg_rings = 1;
 
 	jpeg_v2_0_set_dec_ring_funcs(adev);
 	jpeg_v2_0_set_irq_funcs(adev);
@@ -103,17 +84,18 @@ static int jpeg_v2_0_sw_init(void *handle)
 	if (r)
 		return r;
 
-	ring = &adev->jpeg.inst->ring_dec;
+	ring = adev->jpeg.inst->ring_dec;
 	ring->use_doorbell = true;
 	ring->doorbell_index = (adev->doorbell_index.vcn.vcn_ring0_1 << 1) + 1;
+	ring->vm_hub = AMDGPU_MMHUB0(0);
 	sprintf(ring->name, "jpeg_dec");
 	r = amdgpu_ring_init(adev, ring, 512, &adev->jpeg.inst->irq,
 			     0, AMDGPU_RING_PRIO_DEFAULT, NULL);
 	if (r)
 		return r;
 
-	adev->jpeg.internal.jpeg_pitch = mmUVD_JPEG_PITCH_INTERNAL_OFFSET;
-	adev->jpeg.inst->external.jpeg_pitch = SOC15_REG_OFFSET(JPEG, 0, mmUVD_JPEG_PITCH);
+	adev->jpeg.internal.jpeg_pitch[0] = mmUVD_JPEG_PITCH_INTERNAL_OFFSET;
+	adev->jpeg.inst->external.jpeg_pitch[0] = SOC15_REG_OFFSET(JPEG, 0, mmUVD_JPEG_PITCH);
 
 	return 0;
 }
@@ -148,7 +130,7 @@ static int jpeg_v2_0_sw_fini(void *handle)
 static int jpeg_v2_0_hw_init(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
-	struct amdgpu_ring *ring = &adev->jpeg.inst->ring_dec;
+	struct amdgpu_ring *ring = adev->jpeg.inst->ring_dec;
 	int r;
 
 	adev->nbio.funcs->vcn_doorbell_range(adev, ring->use_doorbell,
@@ -331,7 +313,7 @@ static void jpeg_v2_0_enable_clock_gating(struct amdgpu_device *adev)
  */
 static int jpeg_v2_0_start(struct amdgpu_device *adev)
 {
-	struct amdgpu_ring *ring = &adev->jpeg.inst->ring_dec;
+	struct amdgpu_ring *ring = adev->jpeg.inst->ring_dec;
 	int r;
 
 	if (adev->pm.dpm_enabled)
@@ -427,7 +409,7 @@ static uint64_t jpeg_v2_0_dec_ring_get_wptr(struct amdgpu_ring *ring)
 	struct amdgpu_device *adev = ring->adev;
 
 	if (ring->use_doorbell)
-		return adev->wb.wb[ring->wptr_offs];
+		return *ring->wptr_cpu_addr;
 	else
 		return RREG32_SOC15(JPEG, 0, mmUVD_JRBC_RB_WPTR);
 }
@@ -444,7 +426,7 @@ static void jpeg_v2_0_dec_ring_set_wptr(struct amdgpu_ring *ring)
 	struct amdgpu_device *adev = ring->adev;
 
 	if (ring->use_doorbell) {
-		adev->wb.wb[ring->wptr_offs] = lower_32_bits(ring->wptr);
+		*ring->wptr_cpu_addr = lower_32_bits(ring->wptr);
 		WDOORBELL32(ring->doorbell_index, lower_32_bits(ring->wptr));
 	} else {
 		WREG32_SOC15(JPEG, 0, mmUVD_JRBC_RB_WPTR, lower_32_bits(ring->wptr));
@@ -555,6 +537,10 @@ void jpeg_v2_0_dec_ring_emit_ib(struct amdgpu_ring *ring,
 {
 	unsigned vmid = AMDGPU_JOB_GET_VMID(job);
 
+	amdgpu_ring_write(ring,	PACKETJ(mmUVD_JPEG_IH_CTRL_INTERNAL_OFFSET,
+		0, 0, PACKETJ_TYPE0));
+	amdgpu_ring_write(ring, (vmid << JPEG_IH_CTRL__IH_VMID__SHIFT));
+
 	amdgpu_ring_write(ring, PACKETJ(mmUVD_LMI_JRBC_IB_VMID_INTERNAL_OFFSET,
 		0, 0, PACKETJ_TYPE0));
 	amdgpu_ring_write(ring, (vmid | (vmid << 4)));
@@ -629,7 +615,7 @@ void jpeg_v2_0_dec_ring_emit_reg_wait(struct amdgpu_ring *ring, uint32_t reg,
 void jpeg_v2_0_dec_ring_emit_vm_flush(struct amdgpu_ring *ring,
 				unsigned vmid, uint64_t pd_addr)
 {
-	struct amdgpu_vmhub *hub = &ring->adev->vmhub[ring->funcs->vmhub];
+	struct amdgpu_vmhub *hub = &ring->adev->vmhub[ring->vm_hub];
 	uint32_t data0, data1, mask;
 
 	pd_addr = amdgpu_gmc_emit_flush_gpu_tlb(ring, vmid, pd_addr);
@@ -744,7 +730,7 @@ static int jpeg_v2_0_process_interrupt(struct amdgpu_device *adev,
 
 	switch (entry->src_id) {
 	case VCN_2_0__SRCID__JPEG_DECODE:
-		amdgpu_fence_process(&adev->jpeg.inst->ring_dec);
+		amdgpu_fence_process(adev->jpeg.inst->ring_dec);
 		break;
 	default:
 		DRM_ERROR("Unhandled interrupt: %d %d\n",
@@ -778,7 +764,6 @@ static const struct amd_ip_funcs jpeg_v2_0_ip_funcs = {
 static const struct amdgpu_ring_funcs jpeg_v2_0_dec_ring_vm_funcs = {
 	.type = AMDGPU_RING_TYPE_VCN_JPEG,
 	.align_mask = 0xf,
-	.vmhub = AMDGPU_MMHUB_0,
 	.get_rptr = jpeg_v2_0_dec_ring_get_rptr,
 	.get_wptr = jpeg_v2_0_dec_ring_get_wptr,
 	.set_wptr = jpeg_v2_0_dec_ring_set_wptr,
@@ -788,7 +773,7 @@ static const struct amdgpu_ring_funcs jpeg_v2_0_dec_ring_vm_funcs = {
 		8 + /* jpeg_v2_0_dec_ring_emit_vm_flush */
 		18 + 18 + /* jpeg_v2_0_dec_ring_emit_fence x2 vm fence */
 		8 + 16,
-	.emit_ib_size = 22, /* jpeg_v2_0_dec_ring_emit_ib */
+	.emit_ib_size = 24, /* jpeg_v2_0_dec_ring_emit_ib */
 	.emit_ib = jpeg_v2_0_dec_ring_emit_ib,
 	.emit_fence = jpeg_v2_0_dec_ring_emit_fence,
 	.emit_vm_flush = jpeg_v2_0_dec_ring_emit_vm_flush,
@@ -807,7 +792,7 @@ static const struct amdgpu_ring_funcs jpeg_v2_0_dec_ring_vm_funcs = {
 
 static void jpeg_v2_0_set_dec_ring_funcs(struct amdgpu_device *adev)
 {
-	adev->jpeg.inst->ring_dec.funcs = &jpeg_v2_0_dec_ring_vm_funcs;
+	adev->jpeg.inst->ring_dec->funcs = &jpeg_v2_0_dec_ring_vm_funcs;
 	DRM_INFO("JPEG decode is enabled in VM mode\n");
 }
 
@@ -822,8 +807,7 @@ static void jpeg_v2_0_set_irq_funcs(struct amdgpu_device *adev)
 	adev->jpeg.inst->irq.funcs = &jpeg_v2_0_irq_funcs;
 }
 
-const struct amdgpu_ip_block_version jpeg_v2_0_ip_block =
-{
+const struct amdgpu_ip_block_version jpeg_v2_0_ip_block = {
 		.type = AMD_IP_BLOCK_TYPE_JPEG,
 		.major = 2,
 		.minor = 0,
