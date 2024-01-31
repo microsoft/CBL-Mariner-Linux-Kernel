@@ -26,11 +26,13 @@
 #ifndef __AMDGPU_DM_H__
 #define __AMDGPU_DM_H__
 
+#include <drm/display/drm_dp_mst_helper.h>
 #include <drm/drm_atomic.h>
 #include <drm/drm_connector.h>
 #include <drm/drm_crtc.h>
-#include <drm/drm_dp_mst_helper.h>
 #include <drm/drm_plane.h>
+#include "link_service_types.h"
+#include <drm/drm_writeback.h>
 
 /*
  * This file contains the definition for amdgpu_display_manager
@@ -49,6 +51,13 @@
 #define AMDGPU_DM_MAX_NUM_EDP 2
 
 #define AMDGPU_DMUB_NOTIFICATION_MAX 5
+
+#define HDMI_AMD_VENDOR_SPECIFIC_DATA_BLOCK_IEEE_REGISTRATION_ID 0x00001A
+#define AMD_VSDB_VERSION_3_FEATURECAP_REPLAYMODE 0x40
+#define HDMI_AMD_VENDOR_SPECIFIC_DATA_BLOCK_VERSION_3 0x3
+
+#define AMDGPU_HDR_MULT_DEFAULT (0x100000000LL)
+
 /*
 #include "include/amdgpu_dal_power_if.h"
 #include "amdgpu_dm_irq.h"
@@ -57,8 +66,11 @@
 #include "irq_types.h"
 #include "signal_types.h"
 #include "amdgpu_dm_crc.h"
+#include "mod_info_packet.h"
 struct aux_payload;
+struct set_config_cmd_payload;
 enum aux_return_code_type;
+enum set_config_status;
 
 /* Forward declarations */
 struct amdgpu_device;
@@ -69,6 +81,12 @@ struct amdgpu_bo;
 struct dmub_srv;
 struct dc_plane_state;
 struct dmub_notification;
+
+struct amd_vsdb_block {
+	unsigned char ieee_id[3];
+	unsigned char version;
+	unsigned char feature_caps;
+};
 
 struct common_irq_params {
 	struct amdgpu_device *adev;
@@ -125,6 +143,7 @@ struct vblank_control_work {
  * Describe the backlight support for ACPI or eDP AUX.
  */
 struct amdgpu_dm_backlight_caps {
+#ifdef HAVE_HDR_SINK_METADATA
 	/**
 	 * @ext_caps: Keep the data struct with all the information about the
 	 * display support for HDR.
@@ -139,6 +158,7 @@ struct amdgpu_dm_backlight_caps {
 	 * in nits.
 	 */
 	u32 aux_max_input_signal;
+#endif
 	/**
 	 * @min_input_signal: minimum possible input in range 0-255.
 	 */
@@ -154,7 +174,9 @@ struct amdgpu_dm_backlight_caps {
 	/**
 	 * @aux_support: Describes if the display supports AUX backlight.
 	 */
+#ifdef HAVE_HDR_SINK_METADATA
 	bool aux_support;
+#endif
 };
 
 /**
@@ -189,6 +211,11 @@ struct hpd_rx_irq_offload_work_queue {
 	 * we're handling link loss
 	 */
 	bool is_handling_link_loss;
+	/**
+	 * @is_handling_mst_msg_rdy_event: Used to prevent inserting mst message
+	 * ready event when we're already handling mst message ready event
+	 */
+	bool is_handling_mst_msg_rdy_event;
 	/**
 	 * @aconnector: The aconnector that this work queue is attached to
 	 */
@@ -235,6 +262,13 @@ struct hpd_rx_irq_offload_work {
  * @force_timing_sync: set via debugfs. When set, indicates that all connected
  *		       displays will be forced to synchronize.
  * @dmcub_trace_event_en: enable dmcub trace events
+ * @dmub_outbox_params: DMUB Outbox parameters
+ * @num_of_edps: number of backlight eDPs
+ * @disable_hpd_irq: disables all HPD and HPD RX interrupt handling in the
+ *		     driver when true
+ * @dmub_aux_transfer_done: struct completion used to indicate when DMUB
+ * 			    transfers are done
+ * @delayed_hpd_wq: work queue used to delay DMUB HPD work
  */
 struct amdgpu_display_manager {
 
@@ -351,15 +385,6 @@ struct amdgpu_display_manager {
 	 */
 	struct mutex audio_lock;
 
-#if defined(CONFIG_DRM_AMD_DC_DCN)
-	/**
-	 * @vblank_lock:
-	 *
-	 * Guards access to deferred vblank work state.
-	 */
-	spinlock_t vblank_lock;
-#endif
-
 	/**
 	 * @audio_component:
 	 *
@@ -374,6 +399,13 @@ struct amdgpu_display_manager {
 	 * successfully, false otherwise.
 	 */
 	bool audio_registered;
+
+	/**
+	 * @vblank_lock:
+	 *
+	 * Guards access to deferred vblank work state.
+	 */
+	spinlock_t vblank_lock;
 
 	/**
 	 * @irq_handler_list_low_tab:
@@ -458,18 +490,14 @@ struct amdgpu_display_manager {
 	struct amdgpu_dm_backlight_caps backlight_caps[AMDGPU_DM_MAX_NUM_EDP];
 
 	struct mod_freesync *freesync_module;
-#ifdef CONFIG_DRM_AMD_DC_HDCP
 	struct hdcp_workqueue *hdcp_workqueue;
-#endif
 
-#if defined(CONFIG_DRM_AMD_DC_DCN)
 	/**
 	 * @vblank_control_workqueue:
 	 *
 	 * Deferred work for vblank control events.
 	 */
 	struct workqueue_struct *vblank_control_workqueue;
-#endif
 
 	struct drm_atomic_state *cached_state;
 	struct dc_state *cached_dc_state;
@@ -486,22 +514,21 @@ struct amdgpu_display_manager {
 	 */
 	const struct gpu_info_soc_bounding_box_v1_0 *soc_bounding_box;
 
-#if defined(CONFIG_DRM_AMD_DC_DCN)
 	/**
 	 * @active_vblank_irq_count:
 	 *
 	 * number of currently active vblank irqs
 	 */
 	uint32_t active_vblank_irq_count;
-#endif
 
 #if defined(CONFIG_DRM_AMD_SECURE_DISPLAY)
 	/**
-	 * @crc_rd_wrk:
+	 * @secure_display_ctxs:
 	 *
-	 * Work to be executed in a separate thread to communicate with PSP.
+	 * Store the ROI information and the work_struct to command dmub and psp for
+	 * all crtcs.
 	 */
-	struct crc_rd_work *crc_rd_wrk;
+	struct secure_display_context *secure_display_ctxs;
 #endif
 	/**
 	 * @hpd_rx_offload_wq:
@@ -547,6 +574,13 @@ struct amdgpu_display_manager {
 	 * occurred on certain intel platform
 	 */
 	bool aux_hpd_discon_quirk;
+
+	/**
+	 * @dpia_aux_lock:
+	 *
+	 * Guards access to DPIA AUX
+	 */
+	struct mutex dpia_aux_lock;
 };
 
 enum dsc_clock_force_state {
@@ -563,10 +597,54 @@ struct dsc_preferred_settings {
 	bool dsc_force_disable_passthrough;
 };
 
+enum mst_progress_status {
+	MST_STATUS_DEFAULT = 0,
+	MST_PROBE = BIT(0),
+	MST_REMOTE_EDID = BIT(1),
+	MST_ALLOCATE_NEW_PAYLOAD = BIT(2),
+	MST_CLEAR_ALLOCATED_PAYLOAD = BIT(3),
+};
+
+/**
+ * struct amdgpu_hdmi_vsdb_info - Keep track of the VSDB info
+ *
+ * AMDGPU supports FreeSync over HDMI by using the VSDB section, and this
+ * struct is useful to keep track of the display-specific information about
+ * FreeSync.
+ */
+struct amdgpu_hdmi_vsdb_info {
+	/**
+	 * @amd_vsdb_version: Vendor Specific Data Block Version, should be
+	 * used to determine which Vendor Specific InfoFrame (VSIF) to send.
+	 */
+	unsigned int amd_vsdb_version;
+
+	/**
+	 * @freesync_supported: FreeSync Supported.
+	 */
+	bool freesync_supported;
+
+	/**
+	 * @min_refresh_rate_hz: FreeSync Minimum Refresh Rate in Hz.
+	 */
+	unsigned int min_refresh_rate_hz;
+
+	/**
+	 * @max_refresh_rate_hz: FreeSync Maximum Refresh Rate in Hz
+	 */
+	unsigned int max_refresh_rate_hz;
+
+	/**
+	 * @replay_mode: Replay supported
+	 */
+	bool replay_mode;
+};
+
 struct amdgpu_dm_connector {
 
 	struct drm_connector base;
 	uint32_t connector_id;
+	int bl_idx;
 
 	/* we need to mind the EDID between detect
 	   and get modes due to analog/digital/tvencoder */
@@ -582,20 +660,34 @@ struct amdgpu_dm_connector {
 	 * The 'current' sink is in dc_link->sink. */
 	struct dc_sink *dc_sink;
 	struct dc_link *dc_link;
+
+	/**
+	 * @dc_em_sink: Reference to the emulated (virtual) sink.
+	 */
 	struct dc_sink *dc_em_sink;
 
 	/* DM only */
 	struct drm_dp_mst_topology_mgr mst_mgr;
 	struct amdgpu_dm_dp_aux dm_dp_aux;
-	struct drm_dp_mst_port *port;
-	struct amdgpu_dm_connector *mst_port;
+	struct drm_dp_mst_port *mst_output_port;
+	struct amdgpu_dm_connector *mst_root;
 	struct drm_dp_aux *dsc_aux;
+	struct mutex handle_mst_msg_ready;
 
 	/* TODO see if we can merge with ddc_bus or make a dm_connector */
 	struct amdgpu_i2c_adapter *i2c;
 
 	/* Monitor range limits */
-	int min_vfreq ;
+	/**
+	 * @min_vfreq: Minimal frequency supported by the display in Hz. This
+	 * value is set to zero when there is no FreeSync support.
+	 */
+	int min_vfreq;
+
+	/**
+	 * @max_vfreq: Maximum frequency supported by the display in Hz. This
+	 * value is set to zero when there is no FreeSync support.
+	 */
 	int max_vfreq ;
 	int pixel_clock_mhz;
 
@@ -605,25 +697,139 @@ struct amdgpu_dm_connector {
 	struct mutex hpd_lock;
 
 	bool fake_enable;
-#ifdef CONFIG_DEBUG_FS
-	uint32_t debugfs_dpcd_address;
-	uint32_t debugfs_dpcd_size;
-#endif
 	bool force_yuv420_output;
 	struct dsc_preferred_settings dsc_settings;
+	union dp_downstream_port_present mst_downstream_port_present;
 	/* Cached display modes */
 	struct drm_display_mode freesync_vid_base;
 
 	int psr_skip_count;
+
+	/* Record progress status of mst*/
+	uint8_t mst_status;
+
+	/* Automated testing */
+	bool timing_changed;
+	struct dc_crtc_timing *timing_requested;
+
+	/* Adaptive Sync */
+	bool pack_sdp_v1_3;
+	enum adaptive_sync_type as_type;
+	struct amdgpu_hdmi_vsdb_info vsdb_info;
 };
+
+static inline void amdgpu_dm_set_mst_status(uint8_t *status,
+		uint8_t flags, bool set)
+{
+	if (set)
+		*status |= flags;
+	else
+		*status &= ~flags;
+}
 
 #define to_amdgpu_dm_connector(x) container_of(x, struct amdgpu_dm_connector, base)
 
+struct amdgpu_dm_wb_connector {
+	struct drm_writeback_connector base;
+	struct dc_link *link;
+};
+
+#define to_amdgpu_dm_wb_connector(x) container_of(x, struct amdgpu_dm_wb_connector, base)
+
 extern const struct amdgpu_ip_block_version dm_ip_block;
+
+/* enum amdgpu_transfer_function: pre-defined transfer function supported by AMD.
+ *
+ * It includes standardized transfer functions and pure power functions. The
+ * transfer function coefficients are available at modules/color/color_gamma.c
+ */
+enum amdgpu_transfer_function {
+	AMDGPU_TRANSFER_FUNCTION_DEFAULT,
+	AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_BT709_INV_OETF,
+	AMDGPU_TRANSFER_FUNCTION_PQ_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_IDENTITY,
+	AMDGPU_TRANSFER_FUNCTION_GAMMA22_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_GAMMA24_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_GAMMA26_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_SRGB_INV_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_BT709_OETF,
+	AMDGPU_TRANSFER_FUNCTION_PQ_INV_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_GAMMA22_INV_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_GAMMA24_INV_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_GAMMA26_INV_EOTF,
+	AMDGPU_TRANSFER_FUNCTION_COUNT
+};
 
 struct dm_plane_state {
 	struct drm_plane_state base;
 	struct dc_plane_state *dc_state;
+
+	/* Plane color mgmt */
+	/**
+	 * @degamma_lut:
+	 *
+	 * 1D LUT for mapping framebuffer/plane pixel data before sampling or
+	 * blending operations. It's usually applied to linearize input space.
+	 * The blob (if not NULL) is an array of &struct drm_color_lut.
+	 */
+	struct drm_property_blob *degamma_lut;
+	/**
+	 * @degamma_tf:
+	 *
+	 * Predefined transfer function to tell DC driver the input space to
+	 * linearize.
+	 */
+	enum amdgpu_transfer_function degamma_tf;
+	/**
+	 * @hdr_mult:
+	 *
+	 * Multiplier to 'gain' the plane.  When PQ is decoded using the fixed
+	 * func transfer function to the internal FP16 fb, 1.0 -> 80 nits (on
+	 * AMD at least). When sRGB is decoded, 1.0 -> 1.0, obviously.
+	 * Therefore, 1.0 multiplier = 80 nits for SDR content.  So if you
+	 * want, 203 nits for SDR content, pass in (203.0 / 80.0).  Format is
+	 * S31.32 sign-magnitude.
+	 *
+	 * HDR multiplier can wide range beyond [0.0, 1.0]. This means that PQ
+	 * TF is needed for any subsequent linear-to-non-linear transforms.
+	 */
+	__u64 hdr_mult;
+	/**
+	 * @ctm:
+	 *
+	 * Color transformation matrix. The blob (if not NULL) is a &struct
+	 * drm_color_ctm_3x4.
+	 */
+	struct drm_property_blob *ctm;
+	/**
+	 * @shaper_lut: shaper lookup table blob. The blob (if not NULL) is an
+	 * array of &struct drm_color_lut.
+	 */
+	struct drm_property_blob *shaper_lut;
+	/**
+	 * @shaper_tf:
+	 *
+	 * Predefined transfer function to delinearize color space.
+	 */
+	enum amdgpu_transfer_function shaper_tf;
+	/**
+	 * @lut3d: 3D lookup table blob. The blob (if not NULL) is an array of
+	 * &struct drm_color_lut.
+	 */
+	struct drm_property_blob *lut3d;
+	/**
+	 * @blend_lut: blend lut lookup table blob. The blob (if not NULL) is an
+	 * array of &struct drm_color_lut.
+	 */
+	struct drm_property_blob *blend_lut;
+	/**
+	 * @blend_tf:
+	 *
+	 * Pre-defined transfer function for converting plane pixel data before
+	 * applying blend LUT.
+	 */
+	enum amdgpu_transfer_function blend_tf;
 };
 
 struct dm_crtc_state {
@@ -633,12 +839,13 @@ struct dm_crtc_state {
 	bool cm_has_degamma;
 	bool cm_is_degamma_srgb;
 
+	bool mpo_requested;
+
 	int update_type;
 	int active_planes;
 
 	int crc_skip_count;
 
-	bool freesync_timing_changed;
 	bool freesync_vrr_info_changed;
 
 	bool dsc_force_changed;
@@ -647,6 +854,14 @@ struct dm_crtc_state {
 	struct dc_info_packet vrr_infopacket;
 
 	int abm_level;
+
+	/**
+	 * @regamma_tf:
+	 *
+	 * Pre-defined transfer function for converting internal FB -> wire
+	 * encoding.
+	 */
+	enum amdgpu_transfer_function regamma_tf;
 };
 
 #define to_dm_crtc_state(x) container_of(x, struct dm_crtc_state, base)
@@ -666,22 +881,15 @@ struct dm_connector_state {
 	uint8_t underscan_vborder;
 	uint8_t underscan_hborder;
 	bool underscan_enable;
+	bool freesync_enable;
 	bool freesync_capable;
-#ifdef CONFIG_DRM_AMD_DC_HDCP
 	bool update_hdcp;
-#endif
 	uint8_t abm_level;
+#if defined(HAVE_DRM_CONNECTOR_HELPER_FUNCS_ATOMIC_CHECK_ARG_DRM_ATOMIC_STATE)
 	int vcpi_slots;
 	uint64_t pbn;
+#endif
 };
-
-struct amdgpu_hdmi_vsdb_info {
-	unsigned int amd_vsdb_version;		/* VSDB version, should be used to determine which VSIF to send */
-	bool freesync_supported;		/* FreeSync Supported */
-	unsigned int min_refresh_rate_hz;	/* FreeSync Minimum Refresh Rate in Hz */
-	unsigned int max_refresh_rate_hz;	/* FreeSync Maximum Refresh Rate in Hz */
-};
-
 
 #define to_dm_connector_state(x)\
 	container_of((x), struct dm_connector_state, base)
@@ -718,14 +926,22 @@ void amdgpu_dm_update_freesync_caps(struct drm_connector *connector,
 
 void amdgpu_dm_trigger_timing_sync(struct drm_device *dev);
 
+/* 3D LUT max size is 17x17x17 (4913 entries) */
+#define MAX_COLOR_3DLUT_SIZE 17
+#define MAX_COLOR_3DLUT_BITDEPTH 12
+int amdgpu_dm_verify_lut3d_size(struct amdgpu_device *adev,
+				struct drm_plane_state *plane_state);
+/* 1D LUT size */
 #define MAX_COLOR_LUT_ENTRIES 4096
 /* Legacy gamm LUT users such as X doesn't like large LUT sizes */
 #define MAX_COLOR_LEGACY_LUT_ENTRIES 256
 
 void amdgpu_dm_init_color_mod(void);
+int amdgpu_dm_create_color_properties(struct amdgpu_device *adev);
 int amdgpu_dm_verify_lut_sizes(const struct drm_crtc_state *crtc_state);
 int amdgpu_dm_update_crtc_color_mgmt(struct dm_crtc_state *crtc);
 int amdgpu_dm_update_plane_color_mgmt(struct dm_crtc_state *crtc,
+				      struct drm_plane_state *plane_state,
 				      struct dc_plane_state *dc_plane_state);
 
 void amdgpu_dm_update_connector_after_detect(
@@ -733,6 +949,24 @@ void amdgpu_dm_update_connector_after_detect(
 
 extern const struct drm_encoder_helper_funcs amdgpu_dm_encoder_helper_funcs;
 
-int amdgpu_dm_process_dmub_aux_transfer_sync(struct dc_context *ctx, unsigned int linkIndex,
+int amdgpu_dm_process_dmub_aux_transfer_sync(struct dc_context *ctx, unsigned int link_index,
 					struct aux_payload *payload, enum aux_return_code_type *operation_result);
+
+int amdgpu_dm_process_dmub_set_config_sync(struct dc_context *ctx, unsigned int link_index,
+					struct set_config_cmd_payload *payload, enum set_config_status *operation_result);
+
+struct dc_stream_state *
+	create_validate_stream_for_sink(struct amdgpu_dm_connector *aconnector,
+					const struct drm_display_mode *drm_mode,
+					const struct dm_connector_state *dm_state,
+					const struct dc_stream_state *old_stream);
+
+int dm_atomic_get_state(struct drm_atomic_state *state,
+			struct dm_atomic_state **dm_state);
+
+struct drm_connector *
+amdgpu_dm_find_first_crtc_matching_connector(struct drm_atomic_state *state,
+					     struct drm_crtc *crtc);
+
+int convert_dc_color_depth_into_bpc(enum dc_color_depth display_color_depth);
 #endif /* __AMDGPU_DM_H__ */
