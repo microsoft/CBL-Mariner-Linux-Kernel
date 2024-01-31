@@ -41,7 +41,6 @@
 
 /* BO flag to indicate a KFD userptr BO */
 #define AMDGPU_AMDKFD_CREATE_USERPTR_BO	(1ULL << 63)
-#define AMDGPU_AMDKFD_CREATE_SVM_BO	(1ULL << 62)
 
 #define to_amdgpu_bo_user(abo) container_of((abo), struct amdgpu_bo_user, bo)
 #define to_amdgpu_bo_vm(abo) container_of((abo), struct amdgpu_bo_vm, bo)
@@ -57,6 +56,8 @@ struct amdgpu_bo_param {
 	bool				no_wait_gpu;
 	struct dma_resv			*resv;
 	void				(*destroy)(struct ttm_buffer_object *bo);
+	/* xcp partition number plus 1, 0 means any partition */
+	int8_t				xcp_id_plus1;
 };
 
 /* bo virtual addresses in a vm */
@@ -105,10 +106,30 @@ struct amdgpu_bo {
 	/* Constant after initialization */
 	struct amdgpu_bo		*parent;
 
+#ifndef HAVE_AMDKCL_HMM_MIRROR_ENABLED
+	struct amdgpu_mn                *mn;
+#endif
+
+#ifdef HAVE_AMDKCL_HMM_MIRROR_ENABLED
 #ifdef CONFIG_MMU_NOTIFIER
 	struct mmu_interval_notifier	notifier;
 #endif
+#else
+	struct list_head		mn_list;
+#endif
+
 	struct kgd_mem                  *kfd_bo;
+
+	/* DGMA imported buffer info */
+	void				*dgma_addr;
+	phys_addr_t			dgma_import_base;
+
+	/*
+	 * For GPUs with spatial partitioning, xcp partition number, -1 means
+	 * any partition. For other ASICs without spatial partition, always 0
+	 * for memory accounting.
+	 */
+	int8_t				xcp_id;
 };
 
 struct amdgpu_bo_user {
@@ -117,7 +138,6 @@ struct amdgpu_bo_user {
 	u64				metadata_flags;
 	void				*metadata;
 	u32				metadata_size;
-
 };
 
 struct amdgpu_bo_vm {
@@ -125,6 +145,27 @@ struct amdgpu_bo_vm {
 	struct amdgpu_bo		*shadow;
 	struct list_head		shadow_list;
 	struct amdgpu_vm_bo_base        entries[];
+};
+
+struct amdgpu_mem_stats {
+	/* current VRAM usage, includes visible VRAM */
+	uint64_t vram;
+	/* current visible VRAM usage */
+	uint64_t visible_vram;
+	/* current GTT usage */
+	uint64_t gtt;
+	/* current system memory usage */
+	uint64_t cpu;
+	/* sum of evicted buffers, includes visible VRAM */
+	uint64_t evicted_vram;
+	/* sum of evicted buffers due to CPU access */
+	uint64_t evicted_visible_vram;
+	/* how much userspace asked for, includes vis.VRAM */
+	uint64_t requested_vram;
+	/* how much userspace asked for */
+	uint64_t requested_visible_vram;
+	/* how much userspace asked for */
+	uint64_t requested_gtt;
 };
 
 static inline struct amdgpu_bo *ttm_to_amdgpu_bo(struct ttm_buffer_object *tbo)
@@ -153,6 +194,12 @@ static inline unsigned amdgpu_mem_type_to_domain(u32 mem_type)
 		return AMDGPU_GEM_DOMAIN_GWS;
 	case AMDGPU_PL_OA:
 		return AMDGPU_GEM_DOMAIN_OA;
+	case AMDGPU_PL_DOORBELL:
+		return AMDGPU_GEM_DOMAIN_DOORBELL;
+	case AMDGPU_PL_DGMA:
+		return AMDGPU_GEM_DOMAIN_DGMA;
+	case AMDGPU_PL_DGMA_IMPORT:
+		return AMDGPU_GEM_DOMAIN_DGMA_IMPORT;
 	default:
 		break;
 	}
@@ -285,7 +332,7 @@ int amdgpu_bo_create_kernel(struct amdgpu_device *adev,
 			    u32 domain, struct amdgpu_bo **bo_ptr,
 			    u64 *gpu_addr, void **cpu_addr);
 int amdgpu_bo_create_kernel_at(struct amdgpu_device *adev,
-			       uint64_t offset, uint64_t size, uint32_t domain,
+			       uint64_t offset, uint64_t size,
 			       struct amdgpu_bo **bo_ptr, void **cpu_addr);
 int amdgpu_bo_create_user(struct amdgpu_device *adev,
 			  struct amdgpu_bo_param *bp,
@@ -313,9 +360,7 @@ int amdgpu_bo_set_metadata (struct amdgpu_bo *bo, void *metadata,
 int amdgpu_bo_get_metadata(struct amdgpu_bo *bo, void *buffer,
 			   size_t buffer_size, uint32_t *metadata_size,
 			   uint64_t *flags);
-void amdgpu_bo_move_notify(struct ttm_buffer_object *bo,
-			   bool evict,
-			   struct ttm_resource *new_mem);
+void amdgpu_bo_move_notify(struct ttm_buffer_object *bo, bool evict);
 void amdgpu_bo_release_notify(struct ttm_buffer_object *bo);
 vm_fault_t amdgpu_bo_fault_reserve_notify(struct ttm_buffer_object *bo);
 void amdgpu_bo_fence(struct amdgpu_bo *bo, struct dma_fence *fence,
@@ -326,9 +371,8 @@ int amdgpu_bo_sync_wait_resv(struct amdgpu_device *adev, struct dma_resv *resv,
 int amdgpu_bo_sync_wait(struct amdgpu_bo *bo, void *owner, bool intr);
 u64 amdgpu_bo_gpu_offset(struct amdgpu_bo *bo);
 u64 amdgpu_bo_gpu_offset_no_check(struct amdgpu_bo *bo);
-int amdgpu_bo_validate(struct amdgpu_bo *bo);
-void amdgpu_bo_get_memory(struct amdgpu_bo *bo, uint64_t *vram_mem,
-				uint64_t *gtt_mem, uint64_t *cpu_mem);
+void amdgpu_bo_get_memory(struct amdgpu_bo *bo,
+			  struct amdgpu_mem_stats *stats);
 void amdgpu_bo_add_to_shadow_list(struct amdgpu_bo_vm *vmbo);
 int amdgpu_bo_restore_shadow(struct amdgpu_bo *shadow,
 			     struct dma_fence **fence);
@@ -338,15 +382,22 @@ uint32_t amdgpu_bo_get_preferred_domain(struct amdgpu_device *adev,
 /*
  * sub allocation
  */
-
-static inline uint64_t amdgpu_sa_bo_gpu_addr(struct amdgpu_sa_bo *sa_bo)
+static inline struct amdgpu_sa_manager *
+to_amdgpu_sa_manager(struct drm_suballoc_manager *manager)
 {
-	return sa_bo->manager->gpu_addr + sa_bo->soffset;
+	return container_of(manager, struct amdgpu_sa_manager, base);
 }
 
-static inline void * amdgpu_sa_bo_cpu_addr(struct amdgpu_sa_bo *sa_bo)
+static inline uint64_t amdgpu_sa_bo_gpu_addr(struct drm_suballoc *sa_bo)
 {
-	return sa_bo->manager->cpu_ptr + sa_bo->soffset;
+	return to_amdgpu_sa_manager(sa_bo->manager)->gpu_addr +
+		drm_suballoc_soffset(sa_bo);
+}
+
+static inline void *amdgpu_sa_bo_cpu_addr(struct drm_suballoc *sa_bo)
+{
+	return to_amdgpu_sa_manager(sa_bo->manager)->cpu_ptr +
+		drm_suballoc_soffset(sa_bo);
 }
 
 int amdgpu_sa_bo_manager_init(struct amdgpu_device *adev,
@@ -357,11 +408,11 @@ void amdgpu_sa_bo_manager_fini(struct amdgpu_device *adev,
 int amdgpu_sa_bo_manager_start(struct amdgpu_device *adev,
 				      struct amdgpu_sa_manager *sa_manager);
 int amdgpu_sa_bo_new(struct amdgpu_sa_manager *sa_manager,
-		     struct amdgpu_sa_bo **sa_bo,
-		     unsigned size, unsigned align);
+		     struct drm_suballoc **sa_bo,
+		     unsigned int size);
 void amdgpu_sa_bo_free(struct amdgpu_device *adev,
-			      struct amdgpu_sa_bo **sa_bo,
-			      struct dma_fence *fence);
+		       struct drm_suballoc **sa_bo,
+		       struct dma_fence *fence);
 #if defined(CONFIG_DEBUG_FS)
 void amdgpu_sa_bo_dump_debug_info(struct amdgpu_sa_manager *sa_manager,
 					 struct seq_file *m);

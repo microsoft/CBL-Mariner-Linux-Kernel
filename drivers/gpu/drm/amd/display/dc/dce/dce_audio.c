@@ -23,8 +23,6 @@
  *
  */
 
-#include <linux/slab.h>
-
 #include "reg_helper.h"
 #include "dce_audio.h"
 #include "dce/dce_11_0_d.h"
@@ -67,9 +65,6 @@ static void write_indirect_azalia_reg(struct audio *audio,
 	/* AZALIA_F0_CODEC_ENDPOINT_DATA  endpoint data  */
 	REG_SET(AZALIA_F0_CODEC_ENDPOINT_DATA, 0,
 			AZALIA_ENDPOINT_REG_DATA, reg_data);
-
-	DC_LOG_HW_AUDIO("AUDIO:write_indirect_azalia_reg: index: %u  data: %u\n",
-		reg_index, reg_data);
 }
 
 static uint32_t read_indirect_azalia_reg(struct audio *audio, uint32_t reg_index)
@@ -84,9 +79,6 @@ static uint32_t read_indirect_azalia_reg(struct audio *audio, uint32_t reg_index
 
 	/* AZALIA_F0_CODEC_ENDPOINT_DATA  endpoint data  */
 	value = REG_READ(AZALIA_F0_CODEC_ENDPOINT_DATA);
-
-	DC_LOG_HW_AUDIO("AUDIO:read_indirect_azalia_reg: index: %u  data: %u\n",
-		reg_index, value);
 
 	return value;
 }
@@ -308,7 +300,7 @@ static void set_high_bit_rate_capable(
 	AZ_REG_WRITE(AZALIA_F0_CODEC_PIN_CONTROL_RESPONSE_HBR, value);
 }
 
-/* set video latency in in ms/2+1 */
+/* set video latency in ms/2+1 */
 static void set_video_latency(
 	struct audio *audio,
 	int latency_in_ms)
@@ -328,7 +320,7 @@ static void set_video_latency(
 		value);
 }
 
-/* set audio latency in in ms/2+1 */
+/* set audio latency in ms/2+1 */
 static void set_audio_latency(
 	struct audio *audio,
 	int latency_in_ms)
@@ -415,6 +407,10 @@ void dce_aud_az_configure(
 	bool is_ac3_supported = false;
 	union audio_sample_rates sample_rate;
 	uint32_t strlen = 0;
+
+	if (signal == SIGNAL_TYPE_VIRTUAL)
+		return;
+
 	value = AZ_REG_READ(AZALIA_F0_CODEC_PIN_CONTROL_HOT_PLUG_CONTROL);
 	set_reg_field_value(value, 1,
 			AZALIA_F0_CODEC_PIN_CONTROL_HOT_PLUG_CONTROL,
@@ -492,6 +488,17 @@ void dce_aud_az_configure(
 
 	AZ_REG_WRITE(AZALIA_F0_CODEC_PIN_CONTROL_CHANNEL_SPEAKER, value);
 
+	/*  ACP Data - Supports AI  */
+	value = AZ_REG_READ(AZALIA_F0_CODEC_PIN_CONTROL_ACP_DATA);
+
+	set_reg_field_value(
+		value,
+		audio_info->flags.info.SUPPORT_AI,
+		AZALIA_F0_CODEC_PIN_CONTROL_ACP_DATA,
+		SUPPORTS_AI);
+
+	AZ_REG_WRITE(AZALIA_F0_CODEC_PIN_CONTROL_ACP_DATA, value);
+
 	/*  Audio Descriptors   */
 	/* pass through all formats */
 	for (format_index = 0; format_index < AUDIO_FORMAT_CODE_COUNT;
@@ -514,13 +521,15 @@ void dce_aud_az_configure(
 			union audio_sample_rates sample_rates =
 					audio_mode->sample_rates;
 			uint8_t byte2 = audio_mode->max_bit_rate;
+			uint8_t channel_count = audio_mode->channel_count;
 
 			/* adjust specific properties */
 			switch (audio_format_code) {
 			case AUDIO_FORMAT_CODE_LINEARPCM: {
+
 				check_audio_bandwidth(
 					crtc_info,
-					audio_mode->channel_count,
+					channel_count,
 					signal,
 					&sample_rates);
 
@@ -548,7 +557,7 @@ void dce_aud_az_configure(
 
 			/* fill audio format data */
 			set_reg_field_value(value,
-					audio_mode->channel_count - 1,
+					channel_count - 1,
 					AZALIA_F0_CODEC_PIN_CONTROL_AUDIO_DESCRIPTOR0,
 					MAX_CHANNELS);
 
@@ -773,7 +782,7 @@ static void get_azalia_clock_info_dp(
 	/*audio_dto_module = dpDtoSourceClockInkhz * 10,000;
 	 *  [khz] ->[100Hz] */
 	azalia_clock_info->audio_dto_module =
-		pll_info->dp_dto_source_clock_in_khz * 10;
+		pll_info->audio_dto_source_clock_in_khz * 10;
 }
 
 void dce_aud_wall_dto_setup(

@@ -29,7 +29,6 @@
 #include "link_encoder.h"
 #include "dcn20_link_encoder.h"
 #include "stream_encoder.h"
-#include "i2caux_interface.h"
 #include "dc_bios_types.h"
 
 #include "gpio_service_interface.h"
@@ -195,7 +194,7 @@ bool enc2_fec_is_active(struct link_encoder *enc)
 
 	return (active != 0);
 }
-
+ 
 /* this function reads dsc related register fields to be logged later in dcn10_log_hw_state
  * into a dcn_dsc_state struct.
  */
