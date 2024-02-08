@@ -233,6 +233,10 @@ static void amdgpu_perf_start(struct perf_event *event, int flags)
 	if (WARN_ON_ONCE(!(hwc->state & PERF_HES_STOPPED)))
 		return;
 
+	if ((!pe->adev->df.funcs) ||
+	    (!pe->adev->df.funcs->pmc_start))
+		return;
+
 	WARN_ON_ONCE(!(hwc->state & PERF_HES_UPTODATE));
 	hwc->state = 0;
 
@@ -268,9 +272,16 @@ static void amdgpu_perf_read(struct perf_event *event)
 						  pmu);
 	u64 count, prev;
 
+	if ((!pe->adev->df.funcs) ||
+	    (!pe->adev->df.funcs->pmc_get_count))
+		return;
+#ifdef HAVE_LINUX_ATOMIC_LONG_TRY_CMPXCHG
+	prev = local64_read(&hwc->prev_count);
+#endif
 	do {
+#ifndef HAVE_LINUX_ATOMIC_LONG_TRY_CMPXCHG
 		prev = local64_read(&hwc->prev_count);
-
+#endif
 		switch (hwc->config_base) {
 		case AMDGPU_PMU_EVENT_CONFIG_TYPE_DF:
 		case AMDGPU_PMU_EVENT_CONFIG_TYPE_XGMI:
@@ -281,8 +292,11 @@ static void amdgpu_perf_read(struct perf_event *event)
 			count = 0;
 			break;
 		}
+#ifdef HAVE_LINUX_ATOMIC_LONG_TRY_CMPXCHG
+	} while (!local64_try_cmpxchg(&hwc->prev_count, &prev, count));
+#else
 	} while (local64_cmpxchg(&hwc->prev_count, prev, count) != prev);
-
+#endif
 	local64_add(count - prev, &event->count);
 }
 
@@ -295,6 +309,10 @@ static void amdgpu_perf_stop(struct perf_event *event, int flags)
 						  pmu);
 
 	if (hwc->state & PERF_HES_UPTODATE)
+		return;
+
+	if ((!pe->adev->df.funcs) ||
+	    (!pe->adev->df.funcs->pmc_stop))
 		return;
 
 	switch (hwc->config_base) {
@@ -325,6 +343,10 @@ static int amdgpu_perf_add(struct perf_event *event, int flags)
 	struct amdgpu_pmu_entry *pe = container_of(event->pmu,
 						  struct amdgpu_pmu_entry,
 						  pmu);
+
+	if ((!pe->adev->df.funcs) ||
+	    (!pe->adev->df.funcs->pmc_start))
+		return -EINVAL;
 
 	switch (pe->pmu_perf_type) {
 	case AMDGPU_PMU_PERF_TYPE_DF:
@@ -371,6 +393,9 @@ static void amdgpu_perf_del(struct perf_event *event, int flags)
 	struct amdgpu_pmu_entry *pe = container_of(event->pmu,
 						  struct amdgpu_pmu_entry,
 						  pmu);
+	if ((!pe->adev->df.funcs) ||
+	    (!pe->adev->df.funcs->pmc_stop))
+		return;
 
 	amdgpu_perf_stop(event, PERF_EF_UPDATE);
 

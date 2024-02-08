@@ -33,11 +33,19 @@
 #include "mp/mp_12_0_0_offset.h"
 #include "mp/mp_12_0_0_sh_mask.h"
 
+#include "rn_clk_mgr_vbios_smu.h"
+
 #define REG(reg_name) \
 	(MP0_BASE.instance[0].segment[mm ## reg_name ## _BASE_IDX] + mm ## reg_name)
 
 #define FN(reg_name, field) \
 	FD(reg_name##__##field)
+
+#include "logger_types.h"
+#undef DC_LOGGER
+#define DC_LOGGER \
+	CTX->logger
+#define smu_print(str, ...) {DC_LOG_SMU(str, ##__VA_ARGS__); }
 
 #define VBIOSSMC_MSG_TestMessage                  0x1
 #define VBIOSSMC_MSG_GetSmuVersion                0x2
@@ -86,9 +94,20 @@ static uint32_t rn_smu_wait_for_response(struct clk_mgr_internal *clk_mgr, unsig
 }
 
 
-int rn_vbios_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr, unsigned int msg_id, unsigned int param)
+static int rn_vbios_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr,
+					    unsigned int msg_id,
+					    unsigned int param)
 {
 	uint32_t result;
+
+	result = rn_smu_wait_for_response(clk_mgr, 10, 200000);
+
+	if (result != VBIOSSMC_Result_OK)
+		smu_print("SMU Response was not OK. SMU response after wait received is: %d\n", result);
+
+	if (result == VBIOSSMC_Status_BUSY) {
+		return -1;
+	}
 
 	/* First clear response register */
 	REG_WRITE(MP1_SMN_C2PMSG_91, VBIOSSMC_Status_BUSY);
@@ -128,17 +147,14 @@ int rn_vbios_smu_set_dispclk(struct clk_mgr_internal *clk_mgr, int requested_dis
 			VBIOSSMC_MSG_SetDispclkFreq,
 			khz_to_mhz_ceil(requested_dispclk_khz));
 
-	if (!IS_FPGA_MAXIMUS_DC(dc->ctx->dce_environment)) {
-		if (dmcu && dmcu->funcs->is_dmcu_initialized(dmcu)) {
-			if (clk_mgr->dfs_bypass_disp_clk != actual_dispclk_set_mhz)
-				dmcu->funcs->set_psr_wait_loop(dmcu,
-						actual_dispclk_set_mhz / 7);
-		}
+	if (dmcu && dmcu->funcs->is_dmcu_initialized(dmcu)) {
+		if (clk_mgr->dfs_bypass_disp_clk != actual_dispclk_set_mhz)
+			dmcu->funcs->set_psr_wait_loop(dmcu,
+					actual_dispclk_set_mhz / 7);
 	}
 
 	// pmfw always set clock more than or equal requested clock
-	if (!IS_DIAG_DC(dc->ctx->dce_environment))
-		ASSERT(actual_dispclk_set_mhz >= khz_to_mhz_ceil(requested_dispclk_khz));
+	ASSERT(actual_dispclk_set_mhz >= khz_to_mhz_ceil(requested_dispclk_khz));
 
 	return actual_dispclk_set_mhz * 1000;
 }
@@ -169,6 +185,10 @@ int rn_vbios_smu_set_hard_min_dcfclk(struct clk_mgr_internal *clk_mgr, int reque
 			VBIOSSMC_MSG_SetHardMinDcfclkByFreq,
 			khz_to_mhz_ceil(requested_dcfclk_khz));
 
+#ifdef DBG
+	smu_print("actual_dcfclk_set_mhz %d is set to : %d\n", actual_dcfclk_set_mhz, actual_dcfclk_set_mhz * 1000);
+#endif
+
 	return actual_dcfclk_set_mhz * 1000;
 }
 
@@ -198,15 +218,13 @@ void rn_vbios_smu_set_phyclk(struct clk_mgr_internal *clk_mgr, int requested_phy
 int rn_vbios_smu_set_dppclk(struct clk_mgr_internal *clk_mgr, int requested_dpp_khz)
 {
 	int actual_dppclk_set_mhz = -1;
-	struct dc *dc = clk_mgr->base.ctx->dc;
 
 	actual_dppclk_set_mhz = rn_vbios_smu_send_msg_with_param(
 			clk_mgr,
 			VBIOSSMC_MSG_SetDppclkFreq,
 			khz_to_mhz_ceil(requested_dpp_khz));
 
-	if (!IS_DIAG_DC(dc->ctx->dce_environment))
-		ASSERT(actual_dppclk_set_mhz >= khz_to_mhz_ceil(requested_dpp_khz));
+	ASSERT(actual_dppclk_set_mhz >= khz_to_mhz_ceil(requested_dpp_khz));
 
 	return actual_dppclk_set_mhz * 1000;
 }

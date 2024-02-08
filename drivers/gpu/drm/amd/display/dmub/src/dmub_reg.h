@@ -28,6 +28,14 @@
 
 #include "../inc/dmub_cmd.h"
 
+#ifdef REG_SET
+#undef REG_SET
+#endif
+
+#ifdef REG_GET
+#undef REG_GET
+#endif
+
 struct dmub_srv;
 
 /* Register offset and field lookup. */
@@ -42,7 +50,14 @@ struct dmub_srv;
 
 #define REG(reg) (REGS)->offset.reg
 
+/*
+ * v6.0-2372-g92ffdc98c5f7
+ * ("drm/amd/display: Enable Freesync over PCon")
+ * verify __DM_SERVICES_H__ to fix the redefine function declaration for backport.h.
+ */
+#ifndef __DM_SERVICES_H__
 #define FD(reg_field) (REGS)->shift.reg_field, (REGS)->mask.reg_field
+#endif
 
 #define FN(reg_name, field) FD(reg_name##__##field)
 

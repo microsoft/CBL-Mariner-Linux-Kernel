@@ -39,6 +39,7 @@
 #define BLACK_OFFSET_RGB_Y 0x0
 #define BLACK_OFFSET_CBCR  0x8000
 
+
 #define REG(reg)\
 	dpp->tf_regs->reg
 
@@ -84,51 +85,6 @@ enum dscl_mode_sel {
 	DSCL_MODE_SCALING_420_CHROMA_BYPASS = 5,
 	DSCL_MODE_DSCL_BYPASS = 6
 };
-
-static void dpp1_dscl_set_overscan(
-	struct dcn10_dpp *dpp,
-	const struct scaler_data *data)
-{
-	uint32_t left = data->recout.x;
-	uint32_t top = data->recout.y;
-
-	int right = data->h_active - data->recout.x - data->recout.width;
-	int bottom = data->v_active - data->recout.y - data->recout.height;
-
-	if (right < 0) {
-		BREAK_TO_DEBUGGER();
-		right = 0;
-	}
-	if (bottom < 0) {
-		BREAK_TO_DEBUGGER();
-		bottom = 0;
-	}
-
-	REG_SET_2(DSCL_EXT_OVERSCAN_LEFT_RIGHT, 0,
-		EXT_OVERSCAN_LEFT, left,
-		EXT_OVERSCAN_RIGHT, right);
-
-	REG_SET_2(DSCL_EXT_OVERSCAN_TOP_BOTTOM, 0,
-		EXT_OVERSCAN_BOTTOM, bottom,
-		EXT_OVERSCAN_TOP, top);
-}
-
-static void dpp1_dscl_set_otg_blank(
-		struct dcn10_dpp *dpp, const struct scaler_data *data)
-{
-	uint32_t h_blank_start = data->h_active;
-	uint32_t h_blank_end = 0;
-	uint32_t v_blank_start = data->v_active;
-	uint32_t v_blank_end = 0;
-
-	REG_SET_2(OTG_H_BLANK, 0,
-			OTG_H_BLANK_START, h_blank_start,
-			OTG_H_BLANK_END, h_blank_end);
-
-	REG_SET_2(OTG_V_BLANK, 0,
-			OTG_V_BLANK_START, v_blank_start,
-			OTG_V_BLANK_END, v_blank_end);
-}
 
 static int dpp1_dscl_get_pixel_depth_val(enum lb_pixel_depth depth)
 {
@@ -205,9 +161,17 @@ static void dpp1_power_on_dscl(
 	struct dcn10_dpp *dpp = TO_DCN10_DPP(dpp_base);
 
 	if (dpp->tf_regs->DSCL_MEM_PWR_CTRL) {
-		REG_UPDATE(DSCL_MEM_PWR_CTRL, LUT_MEM_PWR_FORCE, power_on ? 0 : 3);
-		if (power_on)
+		if (power_on) {
+			REG_UPDATE(DSCL_MEM_PWR_CTRL, LUT_MEM_PWR_FORCE, 0);
 			REG_WAIT(DSCL_MEM_PWR_STATUS, LUT_MEM_PWR_STATE, 0, 1, 5);
+		} else {
+			if (dpp->base.ctx->dc->debug.enable_mem_low_power.bits.dscl) {
+				dpp->base.ctx->dc->optimized_required = true;
+				dpp->base.deferred_reg_writes.bits.disable_dscl = true;
+			} else {
+				REG_UPDATE(DSCL_MEM_PWR_CTRL, LUT_MEM_PWR_FORCE, 3);
+			}
+		}
 	}
 }
 
@@ -233,8 +197,7 @@ static void dpp1_dscl_set_lb(
 			DITHER_EN, 0, /* Dithering enable: Disabled */
 			INTERLEAVE_EN, lb_params->interleave_en, /* Interleave source enable */
 			LB_DATA_FORMAT__ALPHA_EN, lb_params->alpha_en); /* Alpha enable */
-	}
-	else {
+	} else {
 		/* DSCL caps: pixel data processed in float format */
 		REG_SET_2(LB_DATA_FORMAT, 0,
 			INTERLEAVE_EN, lb_params->interleave_en, /* Interleave source enable */
@@ -543,58 +506,6 @@ static enum lb_memory_config dpp1_dscl_find_lb_memory_config(struct dcn10_dpp *d
 	return LB_MEMORY_CONFIG_0;
 }
 
-void dpp1_dscl_set_scaler_auto_scale(
-	struct dpp *dpp_base,
-	const struct scaler_data *scl_data)
-{
-	enum lb_memory_config lb_config;
-	struct dcn10_dpp *dpp = TO_DCN10_DPP(dpp_base);
-	enum dscl_mode_sel dscl_mode = dpp1_dscl_get_dscl_mode(
-			dpp_base, scl_data, dpp_base->ctx->dc->debug.always_scale);
-	bool ycbcr = scl_data->format >= PIXEL_FORMAT_VIDEO_BEGIN
-				&& scl_data->format <= PIXEL_FORMAT_VIDEO_END;
-
-	dpp1_dscl_set_overscan(dpp, scl_data);
-
-	dpp1_dscl_set_otg_blank(dpp, scl_data);
-
-	REG_UPDATE(SCL_MODE, DSCL_MODE, dscl_mode);
-
-	if (dscl_mode == DSCL_MODE_DSCL_BYPASS)
-		return;
-
-	lb_config =  dpp1_dscl_find_lb_memory_config(dpp, scl_data);
-	dpp1_dscl_set_lb(dpp, &scl_data->lb_params, lb_config);
-
-	if (dscl_mode == DSCL_MODE_SCALING_444_BYPASS)
-		return;
-
-	/* TODO: v_min */
-	REG_SET_3(DSCL_AUTOCAL, 0,
-		AUTOCAL_MODE, AUTOCAL_MODE_AUTOSCALE,
-		AUTOCAL_NUM_PIPE, 0,
-		AUTOCAL_PIPE_ID, 0);
-
-	/* Black offsets */
-	if (ycbcr)
-		REG_SET_2(SCL_BLACK_OFFSET, 0,
-				SCL_BLACK_OFFSET_RGB_Y, BLACK_OFFSET_RGB_Y,
-				SCL_BLACK_OFFSET_CBCR, BLACK_OFFSET_CBCR);
-	else
-
-		REG_SET_2(SCL_BLACK_OFFSET, 0,
-				SCL_BLACK_OFFSET_RGB_Y, BLACK_OFFSET_RGB_Y,
-				SCL_BLACK_OFFSET_CBCR, BLACK_OFFSET_RGB_Y);
-
-	REG_SET_4(SCL_TAP_CONTROL, 0,
-		SCL_V_NUM_TAPS, scl_data->taps.v_taps - 1,
-		SCL_H_NUM_TAPS, scl_data->taps.h_taps - 1,
-		SCL_V_NUM_TAPS_C, scl_data->taps.v_taps_c - 1,
-		SCL_H_NUM_TAPS_C, scl_data->taps.h_taps_c - 1);
-
-	dpp1_dscl_set_scl_filter(dpp, scl_data, ycbcr);
-}
-
 
 static void dpp1_dscl_set_manual_ratio_init(
 		struct dcn10_dpp *dpp, const struct scaler_data *data)
@@ -666,7 +577,7 @@ static void dpp1_dscl_set_manual_ratio_init(
  * dpp1_dscl_set_recout - Set the first pixel of RECOUT in the OTG active area
  *
  * @dpp: DPP data struct
- * @recount: Rectangle information
+ * @recout: Rectangle information
  *
  * This function sets the MPC RECOUT_START and RECOUT_SIZE registers based on
  * the values specified in the recount parameter.
@@ -676,10 +587,6 @@ static void dpp1_dscl_set_manual_ratio_init(
 static void dpp1_dscl_set_recout(struct dcn10_dpp *dpp,
 				 const struct rect *recout)
 {
-	int visual_confirm_on = 0;
-	if (dpp->base.ctx->dc->debug.visual_confirm != VISUAL_CONFIRM_DISABLE)
-		visual_confirm_on = 1;
-
 	REG_SET_2(RECOUT_START, 0,
 		  /* First pixel of RECOUT in the active OTG area */
 		  RECOUT_START_X, recout->x,
@@ -690,8 +597,7 @@ static void dpp1_dscl_set_recout(struct dcn10_dpp *dpp,
 		  /* Number of RECOUT horizontal pixels */
 		  RECOUT_WIDTH, recout->width,
 		  /* Number of RECOUT vertical lines */
-		  RECOUT_HEIGHT, recout->height
-			 - visual_confirm_on * 2 * (dpp->base.inst + 1));
+		  RECOUT_HEIGHT, recout->height);
 }
 
 /**
@@ -731,6 +637,10 @@ void dpp1_dscl_set_scaler_manual_scale(struct dpp *dpp_base,
 		AUTOCAL_MODE, AUTOCAL_MODE_OFF,
 		AUTOCAL_NUM_PIPE, 0,
 		AUTOCAL_PIPE_ID, 0);
+
+	/*clean scaler boundary mode when Autocal off*/
+	REG_SET(DSCL_CONTROL, 0,
+		SCL_BOUNDARY_MODE, 0);
 
 	/* Recout */
 	dpp1_dscl_set_recout(dpp, &scl_data->recout);

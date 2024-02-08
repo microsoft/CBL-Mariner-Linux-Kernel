@@ -28,6 +28,8 @@
 #include "reg_helper.h"
 #include <linux/delay.h>
 
+#include "rv1_clk_mgr_vbios_smu.h"
+
 #define MAX_INSTANCE	5
 #define MAX_SEGMENT		5
 
@@ -99,7 +101,8 @@ static uint32_t rv1_smu_wait_for_response(struct clk_mgr_internal *clk_mgr, unsi
 	return res_val;
 }
 
-int rv1_vbios_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr, unsigned int msg_id, unsigned int param)
+static int rv1_vbios_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr,
+		unsigned int msg_id, unsigned int param)
 {
 	uint32_t result;
 
@@ -132,12 +135,10 @@ int rv1_vbios_smu_set_dispclk(struct clk_mgr_internal *clk_mgr, int requested_di
 			VBIOSSMC_MSG_SetDispclkFreq,
 			khz_to_mhz_ceil(requested_dispclk_khz));
 
-	if (!IS_FPGA_MAXIMUS_DC(dc->ctx->dce_environment)) {
-		if (dmcu && dmcu->funcs->is_dmcu_initialized(dmcu)) {
-			if (clk_mgr->dfs_bypass_disp_clk != actual_dispclk_set_mhz)
-				dmcu->funcs->set_psr_wait_loop(dmcu,
-						actual_dispclk_set_mhz / 7);
-		}
+	if (dmcu && dmcu->funcs->is_dmcu_initialized(dmcu)) {
+		if (clk_mgr->dfs_bypass_disp_clk != actual_dispclk_set_mhz)
+			dmcu->funcs->set_psr_wait_loop(dmcu,
+					actual_dispclk_set_mhz / 7);
 	}
 
 	return actual_dispclk_set_mhz * 1000;

@@ -23,8 +23,6 @@
  *
  */
 
-#include <linux/mm.h>
-
 /* DC interface (public) */
 #include "dm_services.h"
 #include "dc.h"
@@ -34,10 +32,12 @@
 #include "transform.h"
 #include "dpp.h"
 
+#include "dc_plane_priv.h"
+
 /*******************************************************************************
  * Private functions
  ******************************************************************************/
-static void dc_plane_construct(struct dc_context *ctx, struct dc_plane_state *plane_state)
+void dc_plane_construct(struct dc_context *ctx, struct dc_plane_state *plane_state)
 {
 	plane_state->ctx = ctx;
 
@@ -61,9 +61,11 @@ static void dc_plane_construct(struct dc_context *ctx, struct dc_plane_state *pl
 		plane_state->blend_tf->type = TF_TYPE_BYPASS;
 	}
 
+	plane_state->pre_multiplied_alpha = true;
+
 }
 
-static void dc_plane_destruct(struct dc_plane_state *plane_state)
+void dc_plane_destruct(struct dc_plane_state *plane_state)
 {
 	if (plane_state->gamma_correction != NULL) {
 		dc_gamma_release(&plane_state->gamma_correction);

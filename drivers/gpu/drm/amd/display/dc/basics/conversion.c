@@ -24,7 +24,7 @@
  */
 
 #include "dm_services.h"
-#include "conversion.h"
+#include "basics/conversion.h"
 
 #define DIVIDER 10000
 
@@ -99,4 +99,26 @@ void convert_float_matrix(
 
 		matrix[i] = (uint16_t)reg_value;
 	}
+}
+
+static uint32_t find_gcd(uint32_t a, uint32_t b)
+{
+	uint32_t remainder;
+
+	while (b != 0) {
+		remainder = a % b;
+		a = b;
+		b = remainder;
+	}
+	return a;
+}
+
+void reduce_fraction(uint32_t num, uint32_t den,
+		uint32_t *out_num, uint32_t *out_den)
+{
+	uint32_t gcd = 0;
+
+	gcd = find_gcd(num, den);
+	*out_num = num / gcd;
+	*out_den = den / gcd;
 }

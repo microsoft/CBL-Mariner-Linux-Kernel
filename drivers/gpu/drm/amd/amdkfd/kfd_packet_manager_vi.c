@@ -1,5 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0 OR MIT
 /*
- * Copyright 2014 Advanced Micro Devices, Inc.
+ * Copyright 2014-2022 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -76,7 +77,7 @@ static int pm_runlist_vi(struct packet_manager *pm, uint32_t *buffer,
 {
 	struct pm4_mes_runlist *packet;
 	int concurrent_proc_cnt = 0;
-	struct kfd_dev *kfd = pm->dqm->dev;
+	struct kfd_node *kfd = pm->dqm->dev;
 
 	if (WARN_ON(!ib))
 		return -EFAULT;
@@ -110,8 +111,8 @@ static int pm_runlist_vi(struct packet_manager *pm, uint32_t *buffer,
 	return 0;
 }
 
-int pm_set_resources_vi(struct packet_manager *pm, uint32_t *buffer,
-				struct scheduling_resources *res)
+static int pm_set_resources_vi(struct packet_manager *pm, uint32_t *buffer,
+			       struct scheduling_resources *res)
 {
 	struct pm4_mes_set_resources *packet;
 
@@ -197,10 +198,8 @@ static int pm_map_queues_vi(struct packet_manager *pm, uint32_t *buffer,
 }
 
 static int pm_unmap_queues_vi(struct packet_manager *pm, uint32_t *buffer,
-			enum kfd_queue_type type,
 			enum kfd_unmap_queues_filter filter,
-			uint32_t filter_param, bool reset,
-			unsigned int sdma_engine)
+			uint32_t filter_param, bool reset)
 {
 	struct pm4_mes_unmap_queues *packet;
 
@@ -209,21 +208,9 @@ static int pm_unmap_queues_vi(struct packet_manager *pm, uint32_t *buffer,
 
 	packet->header.u32All = pm_build_pm4_header(IT_UNMAP_QUEUES,
 					sizeof(struct pm4_mes_unmap_queues));
-	switch (type) {
-	case KFD_QUEUE_TYPE_COMPUTE:
-	case KFD_QUEUE_TYPE_DIQ:
-		packet->bitfields2.engine_sel =
+
+	packet->bitfields2.engine_sel =
 			engine_sel__mes_unmap_queues__compute;
-		break;
-	case KFD_QUEUE_TYPE_SDMA:
-	case KFD_QUEUE_TYPE_SDMA_XGMI:
-		packet->bitfields2.engine_sel =
-			engine_sel__mes_unmap_queues__sdma0 + sdma_engine;
-		break;
-	default:
-		WARN(1, "queue type %d", type);
-		return -EINVAL;
-	}
 
 	if (reset)
 		packet->bitfields2.action =
@@ -233,12 +220,6 @@ static int pm_unmap_queues_vi(struct packet_manager *pm, uint32_t *buffer,
 			action__mes_unmap_queues__preempt_queues;
 
 	switch (filter) {
-	case KFD_UNMAP_QUEUES_FILTER_SINGLE_QUEUE:
-		packet->bitfields2.queue_sel =
-			queue_sel__mes_unmap_queues__perform_request_on_specified_queues;
-		packet->bitfields2.num_queues = 1;
-		packet->bitfields3b.doorbell_offset0 = filter_param;
-		break;
 	case KFD_UNMAP_QUEUES_FILTER_BY_PASID:
 		packet->bitfields2.queue_sel =
 			queue_sel__mes_unmap_queues__perform_request_on_pasid_queues;
@@ -322,6 +303,7 @@ const struct packet_manager_funcs kfd_vi_pm_funcs = {
 	.set_resources		= pm_set_resources_vi,
 	.map_queues		= pm_map_queues_vi,
 	.unmap_queues		= pm_unmap_queues_vi,
+	.set_grace_period	= NULL,
 	.query_status		= pm_query_status_vi,
 	.release_mem		= pm_release_mem_vi,
 	.map_process_size	= sizeof(struct pm4_mes_map_process),
@@ -329,6 +311,7 @@ const struct packet_manager_funcs kfd_vi_pm_funcs = {
 	.set_resources_size	= sizeof(struct pm4_mes_set_resources),
 	.map_queues_size	= sizeof(struct pm4_mes_map_queues),
 	.unmap_queues_size	= sizeof(struct pm4_mes_unmap_queues),
+	.set_grace_period_size	= 0,
 	.query_status_size	= sizeof(struct pm4_mes_query_status),
 	.release_mem_size	= sizeof(struct pm4_mec_release_mem)
 };

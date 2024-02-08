@@ -47,12 +47,8 @@ void hubp3_set_vm_system_aperture_settings(struct hubp *hubp,
 {
 	struct dcn20_hubp *hubp2 = TO_DCN20_HUBP(hubp);
 
-	PHYSICAL_ADDRESS_LOC mc_vm_apt_default;
 	PHYSICAL_ADDRESS_LOC mc_vm_apt_low;
 	PHYSICAL_ADDRESS_LOC mc_vm_apt_high;
-
-	// The format of default addr is 48:12 of the 48 bit addr
-	mc_vm_apt_default.quad_part = apt->sys_default.quad_part >> 12;
 
 	// The format of high/low are 48:18 of the 48 bit addr
 	mc_vm_apt_low.quad_part = apt->sys_low.quad_part >> 18;
@@ -320,7 +316,7 @@ bool hubp3_program_surface_flip_and_addr(
 	return true;
 }
 
-static void hubp3_program_tiling(
+void hubp3_program_tiling(
 	struct dcn20_hubp *hubp2,
 	const union dc_tiling_info *info,
 	const enum surface_pixel_format pixel_format)
@@ -355,12 +351,6 @@ void hubp3_dcc_control_sienna_cichlid(struct hubp *hubp,
 		struct dc_plane_dcc_param *dcc)
 {
 	struct dcn20_hubp *hubp2 = TO_DCN20_HUBP(hubp);
-
-	/*Workaround until UMD fix the new dcc_ind_blk interface */
-	if (dcc->independent_64b_blks && dcc->dcc_ind_blk == 0)
-		dcc->dcc_ind_blk = 1;
-	if (dcc->independent_64b_blks_c && dcc->dcc_ind_blk_c == 0)
-		dcc->dcc_ind_blk_c = 1;
 
 	REG_UPDATE_6(DCSURF_SURFACE_CONTROL,
 		PRIMARY_SURFACE_DCC_EN, dcc->enable,
@@ -459,6 +449,12 @@ void hubp3_read_state(struct hubp *hubp)
 		SWATH_HEIGHT_C, &rq_regs->rq_regs_c.swath_height,
 		PTE_ROW_HEIGHT_LINEAR_C, &rq_regs->rq_regs_c.pte_row_height_linear);
 
+	if (REG(UCLK_PSTATE_FORCE))
+		s->uclk_pstate_force = REG_READ(UCLK_PSTATE_FORCE);
+
+	if (REG(DCHUBP_CNTL))
+		s->hubp_cntl = REG_READ(DCHUBP_CNTL);
+
 }
 
 void hubp3_setup(
@@ -496,6 +492,7 @@ static struct hubp_funcs dcn30_hubp_funcs = {
 	.hubp_setup_interdependent = hubp2_setup_interdependent,
 	.hubp_set_vm_system_aperture_settings = hubp3_set_vm_system_aperture_settings,
 	.set_blank = hubp2_set_blank,
+	.set_blank_regs = hubp2_set_blank_regs,
 	.dcc_control = hubp3_dcc_control,
 	.mem_program_viewport = min_set_viewport,
 	.set_cursor_attributes	= hubp2_cursor_set_attributes,
