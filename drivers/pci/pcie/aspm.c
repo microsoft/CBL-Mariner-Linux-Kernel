@@ -21,6 +21,8 @@
 #include <linux/delay.h>
 #include "../pci.h"
 
+#ifdef CONFIG_PCIEASPM
+
 #ifdef MODULE_PARAM_PREFIX
 #undef MODULE_PARAM_PREFIX
 #endif
@@ -1444,3 +1446,5 @@ bool pcie_aspm_support_enabled(void)
 {
 	return aspm_support_enabled;
 }
+
+#endif /* CONFIG_PCIEASPM */
