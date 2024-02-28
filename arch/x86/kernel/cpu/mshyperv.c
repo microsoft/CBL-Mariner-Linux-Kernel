@@ -395,12 +395,12 @@ static int __init next_smallest_apicid(int apicids[], int curr)
 	return found;
 }
 
-/*  
- * On a 4 core, single node, with HT, linux numbers cpus as: 
+/*
+ * On a 4 core, single node, with HT, linux numbers cpus as:
  *     [0]c0 ht0   [1]c1 ht0   [2]c2 ht0   [3]c3 ht0
  *     [4]c0 ht1   [5]c1 ht1   [6]c2 ht1   [7]c3 ht1
  *
- * On a 4 core, two nodes, with HT, linux numbers cpus as: 
+ * On a 4 core, two nodes, with HT, linux numbers cpus as:
  *     [0]n0 c0 h0    [1]n1 c0 ht0  [2]n0 c3 ht0 ......
  *
  * MSHV wants vcpus/vpidxs: [0]c0 ht0, [1]c0 ht1, [2]c1 ht0, [3]c1 ht1 ....
@@ -410,7 +410,7 @@ static int __init next_smallest_apicid(int apicids[], int curr)
  *
  * Other requirements are:
  *  - LPs must be added in only lpindex order, with any lapic ids for any lp
- *  - VPs can be created in any vp index order as long as the HT siblings 
+ *  - VPs can be created in any vp index order as long as the HT siblings
  *    match.
  *
  * To achieve above, we add LPs in order of apic ids.
@@ -482,9 +482,17 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 		if (i == 0)
 			continue;
 
+		/*
+		 * hv_call_create_vp() uses the node number to construct
+		 * hv_proximity_domain_info which is an input to the create VP
+		 * hypercall. However, when creating root VPs, the hypervisor
+		 * ignores the proximity domain info and instead uses the LP
+		 * index to figure out NUMA node info. So, we can simply pass
+		 * NUMA_NO_NODE here.
+		 */
 		/* params: node num, domid, vp index, lp index */
-		ret = hv_call_create_vp(numa_cpu_node(i), 
-					hv_current_partition_id, lpidx, lpidx);
+		ret = hv_call_create_vp(NUMA_NO_NODE, hv_current_partition_id,
+				lpidx, lpidx);
 		BUG_ON(ret);
 		lpidx++;
 	}
