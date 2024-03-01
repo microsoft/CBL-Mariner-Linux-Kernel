@@ -25,10 +25,7 @@
 #include <linux/notifier.h>
 #include <linux/percpu_counter.h>
 #include <linux/page_reporting.h>
-
 #include <linux/hyperv.h>
-#include <asm/hyperv-tlfs.h>
-
 #include <asm/mshyperv.h>
 
 #define CREATE_TRACE_POINTS
@@ -1630,7 +1627,7 @@ static int hv_free_page_report(struct page_reporting_dev_info *pr_dev_info,
 		return -ENOSPC;
 	}
 
-	hint->type = HV_EXT_MEMORY_HEAT_HINT_TYPE_COLD_DISCARD;
+	hint->heat_type = HV_EXT_MEMORY_HEAT_HINT_TYPE_COLD_DISCARD;
 	hint->reserved = 0;
 	for_each_sg(sgl, sg, nents, i) {
 		union hv_gpa_page_range *range;

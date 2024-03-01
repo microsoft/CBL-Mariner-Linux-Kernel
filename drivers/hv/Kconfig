@@ -55,6 +55,14 @@ config HYPERV_BALLOON
 	help
 	  Select this option to enable Hyper-V Balloon driver.
 
+config HYPERV_NONTLFS_HEADERS
+	bool "Use hv*dk version of headers instead of hyperv-tlfs.h"
+	default n
+	depends on HYPERV
+	help
+	  This options specifies whether the kernel will be built
+	  with hyper-tlfs.h or not. If unsure, say N.
+
 config MSHV
 	tristate "Microsoft Hypervisor root partition interfaces: /dev/mshv"
 	depends on HYPERV

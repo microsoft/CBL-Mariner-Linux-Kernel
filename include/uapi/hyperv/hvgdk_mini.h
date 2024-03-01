@@ -43,7 +43,9 @@ struct hv_u128 {
 #define HV_STATUS_INVALID_LP_INDEX		    0x41
 #define HV_STATUS_INVALID_REGISTER_VALUE	    0x50
 #define HV_STATUS_OPERATION_FAILED		    0x71
+#define HV_STATUS_TIME_OUT			    0x78
 #define HV_STATUS_CALL_PENDING			    0x79
+#define HV_STATUS_VTL_ALREADY_ENABLED		    0x86
 
 /*
  * The Hyper-V TimeRefCount register and the TSC
@@ -88,6 +90,12 @@ struct hv_u128 {
 #define HV_X64_MSR_ICR				0x40000071
 #define HV_X64_MSR_TPR				0x40000072
 #define HV_X64_MSR_VP_ASSIST_PAGE		0x40000073
+
+/* Note: derived, not in hvgdk_mini.h */
+#define HV_X64_MSR_VP_ASSIST_PAGE_ENABLE	0x00000001
+#define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT) - 1))
 
 /* Define synthetic interrupt controller model specific registers. */
 #define HV_X64_MSR_SCONTROL			0x40000080
@@ -143,6 +151,9 @@ struct hv_u128 {
 #define HV_X64_MSR_CRASH_P3			0x40000103
 #define HV_X64_MSR_CRASH_P4			0x40000104
 #define HV_X64_MSR_CRASH_CTL			0x40000105
+/* NOTE: derived, not in hvgdk_mini.h */
+#define HV_X64_MSR_CRASH_PARAMS		\
+		(1 + (HV_X64_MSR_CRASH_P4 - HV_X64_MSR_CRASH_P0))
 
 #define HV_IPI_LOW_VECTOR	 0x10
 #define HV_IPI_HIGH_VECTOR	 0xff
@@ -170,6 +181,7 @@ struct hv_tsc_emulation_control {	 /* HV_TSC_INVARIANT_CONTROL */
 #define HV_X64_MSR_TSC_EMULATION_CONTROL	0x40000107
 #define HV_X64_MSR_TSC_EMULATION_STATUS		0x40000108
 #define HV_X64_MSR_TSC_INVARIANT_CONTROL	0x40000118
+#define HV_EXPOSE_INVARIANT_TSC		BIT_ULL(0)
 
 #endif /* __x86_64__ */
 
@@ -189,6 +201,11 @@ union hv_reference_tsc_msr {
 		__u64 pfn:52;
 	} __packed;
 };
+
+/* The maximum number of sparse vCPU banks which can be encoded by 'struct hv_vpset' */
+#define HV_MAX_SPARSE_VCPU_BANKS (64)
+/* The number of vCPUs in one sparse bank */
+#define HV_VCPUS_PER_SPARSE_BANK (64)
 
 /* Some of Hyper-V structs do not use hv_vpset where linux uses them */
 struct hv_vpset {	 /* HV_VP_SET */
@@ -309,6 +326,7 @@ union hv_hypervisor_version_info {
 #define HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED		BIT(11)
 #define HV_X64_HYPERV_NESTED				BIT(12)
 #define HV_X64_ENLIGHTENED_VMCS_RECOMMENDED		BIT(14)
+#define HV_X64_USE_MMIO_HYPERCALLS			BIT(21)
 
 
 /* HYPERV_CPUID_ISOLATION_CONFIG.EBX bits. */
@@ -323,6 +341,7 @@ enum hv_isolation_type {
 	HV_ISOLATION_TYPE_NONE	= 0,	/* HV_PARTITION_ISOLATION_TYPE_NONE */
 	HV_ISOLATION_TYPE_VBS	= 1,
 	HV_ISOLATION_TYPE_SNP	= 2,
+	HV_ISOLATION_TYPE_TDX	= 3
 };
 
 union hv_x64_msr_hypercall_contents {
@@ -450,6 +469,8 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_ISSUE_SNP_PSP_GUEST_REQUEST	0x00f2
 #define HVCALL_GET_VP_CPUID_VALUES		0x00f4
 #define HVCALL_LOG_HYPERVISOR_SYSTEM_CONFIG	0x00f8
+#define HVCALL_MMIO_READ			0x0106
+#define HVCALL_MMIO_WRITE			0x0107
 #define HVCALL_DISABLE_HYP_EX			0x010f
 
 /*
@@ -1801,6 +1822,26 @@ struct hv_input_install_intercept {
 	__u32 access_type;	/* mask */
 	__u32 intercept_type;	/* hv_intercept_type */
 	union hv_intercept_parameters intercept_parameter;
+} __packed;
+
+/* Data structures for HVCALL_MMIO_READ and HVCALL_MMIO_WRITE */
+#define HV_HYPERCALL_MMIO_MAX_DATA_LENGTH 64
+
+struct hv_mmio_read_input { /* HV_INPUT_MEMORY_MAPPED_IO_READ */
+	u64 gpa;
+	u32 size;
+	u32 reserved;
+} __packed;
+
+struct hv_mmio_read_output {
+	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
+} __packed;
+
+struct hv_mmio_write_input {
+	u64 gpa;
+	u32 size;
+	u32 reserved;
+	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
 } __packed;
 
 enum hv_eventlog_type { /* HV_EVENTLOG_TYPE */
