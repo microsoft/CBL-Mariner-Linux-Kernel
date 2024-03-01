@@ -1218,7 +1218,7 @@ static void vmbus_chan_sched(struct hv_per_cpu_context *hv_cpu)
 					 VMBUS_MESSAGE_SINT;
 
 	maxbits = HV_EVENT_FLAGS_COUNT;
-	recv_int_page = event->flags;
+	recv_int_page = event->ulflags;
 
 	if (unlikely(!recv_int_page))
 		return;

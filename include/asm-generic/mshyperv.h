@@ -25,7 +25,7 @@
 #include <linux/cpumask.h>
 #include <linux/nmi.h>
 #include <asm/ptrace.h>
-#include <asm/hyperv-tlfs.h>
+#include <asm-generic/hyperv-defs.h>
 
 #define VTPM_BASE_ADDRESS 0xfed40000
 

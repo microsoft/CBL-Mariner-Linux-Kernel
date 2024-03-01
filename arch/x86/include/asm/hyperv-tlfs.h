@@ -657,6 +657,7 @@ struct hv_enlightened_vmcs {
 /*
  * Hyper-V uses the software reserved 32 bytes in VMCB control area to expose
  * SVM enlightenments to guests.
+ * HV_VMX_ENLIGHTENED_VMCS or SVM_NESTED_ENLIGHTENED_VMCB_FIELDS
  */
 struct hv_vmcb_enlightenments {
 	struct __packed hv_enlightenments_control {
