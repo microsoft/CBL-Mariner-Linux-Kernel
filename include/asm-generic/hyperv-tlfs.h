@@ -375,11 +375,6 @@ struct hv_timer_message_payload {
 	__u64 delivery_time;	/* When the message was delivered */
 } __packed;
 
-
-/* Define synthetic interrupt controller flag constants. */
-#define HV_EVENT_FLAGS_COUNT		(256 * 8)
-#define HV_EVENT_FLAGS_LONG_COUNT	(256 / sizeof(unsigned long))
-
 /*
  * Synthetic timer configuration.
  */
@@ -398,10 +393,19 @@ union hv_stimer_config {
 	} __packed;
 };
 
+/* Define synthetic interrupt controller flag constants. */
+#define HV_EVENT_FLAGS_COUNT        (256 * 8)
+#define HV_EVENT_FLAGS_BYTE_COUNT   (256)
+#define HV_EVENT_FLAGS32_COUNT  (256 / sizeof(__u32))
+
+/* linux side we create long version of flags to use long bit ops on flags */
+#define HV_EVENT_FLAGS_UL_COUNT  (256 / sizeof(ulong))
 
 /* Define the synthetic interrupt controller event flags format. */
 union hv_synic_event_flags {
-	unsigned long flags[HV_EVENT_FLAGS_LONG_COUNT];
+	unsigned char flags8[HV_EVENT_FLAGS_BYTE_COUNT];
+	__u32 flags32[HV_EVENT_FLAGS32_COUNT];
+	ulong ulflags[HV_EVENT_FLAGS_UL_COUNT];  /* linux only */
 };
 
 /* Define SynIC control register. */
@@ -661,9 +665,9 @@ struct hv_retarget_device_interrupt {
  * These Hyper-V registers provide information equivalent to the CPUID
  * instruction on x86/x64.
  */
-#define HV_REGISTER_HYPERVISOR_VERSION		0x00000100 /*CPUID 0x40000002 */
-#define HV_REGISTER_FEATURES			0x00000200 /*CPUID 0x40000003 */
-#define HV_REGISTER_ENLIGHTENMENTS		0x00000201 /*CPUID 0x40000004 */
+#define HV_REGISTER_HYPERVISOR_VERSION		 0x00000100 /*CPUID 0x40000002 */
+#define HV_REGISTER_PRIVILEGES_AND_FEATURES_INFO 0x00000200 /*CPUID 0x40000003 */
+#define HV_REGISTER_FEATURES_INFO		 0x00000201 /*CPUID 0x40000004 */
 
 /*
  * Synthetic register definitions equivalent to MSRs on x86/x64
@@ -887,7 +891,7 @@ union hv_hypervisor_version_info {
 /* HvExtCallMemoryHeatHint hypercall */
 #define HV_EXT_MEMORY_HEAT_HINT_TYPE_COLD_DISCARD	2
 struct hv_memory_hint {
-	u64 type:2;
+	u64 heat_type:2;
 	u64 reserved:62;
 	union hv_gpa_page_range ranges[];
 } __packed;
@@ -895,7 +899,7 @@ struct hv_memory_hint {
 /* Data structures for HVCALL_MMIO_READ and HVCALL_MMIO_WRITE */
 #define HV_HYPERCALL_MMIO_MAX_DATA_LENGTH 64
 
-struct hv_mmio_read_input {
+struct hv_mmio_read_input { /* HV_INPUT_MEMORY_MAPPED_IO_READ */
 	u64 gpa;
 	u32 size;
 	u32 reserved;

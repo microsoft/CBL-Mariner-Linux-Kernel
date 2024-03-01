@@ -421,7 +421,7 @@ static bool hv_synic_event_pending(void)
 	struct hv_per_cpu_context *hv_cpu = this_cpu_ptr(hv_context.cpu_context);
 	union hv_synic_event_flags *event =
 		(union hv_synic_event_flags *)hv_cpu->synic_event_page + VMBUS_MESSAGE_SINT;
-	unsigned long *recv_int_page = event->flags; /* assumes VMBus version >= VERSION_WIN8 */
+	unsigned long *recv_int_page = event->ulflags; /* assumes VMBus version >= VERSION_WIN8 */
 	bool pending;
 	u32 relid;
 	int tries = 0;
