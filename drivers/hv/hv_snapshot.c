@@ -12,7 +12,6 @@
 #include <linux/connector.h>
 #include <linux/workqueue.h>
 #include <linux/hyperv.h>
-#include <asm/hyperv-tlfs.h>
 
 #include "hyperv_vmbus.h"
 #include "hv_utils_transport.h"
