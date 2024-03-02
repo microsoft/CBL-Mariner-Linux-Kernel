@@ -1,0 +1,7 @@
+Name                                               SHA1
+----                                               ----
+feature/dxgkrnl/5.15                               e8c50f197b62b147dbc3e3ee083dd1fbb66eaeaf
+feature/vpci/5.15                                  92c970cf37ef2b7d159905ca9df9e25f86618248
+feature/fs-idmapped-overlayfs/5.15                 c10c1fb4afb0cd0b78c8b74b774b0765709a7038
+feature/vmbus/5.15                                 81a4bd4e3bfc5c62d1f6c272185390b39b9d11ad
+feature/mana/5.15                                  8e164490df099c9f9d61d103850e63be8aa3ec57
