@@ -791,8 +791,8 @@ void __cpuidle arch_cpu_idle(void)
 }
 EXPORT_SYMBOL_GPL(arch_cpu_idle);
 
-#ifdef CONFIG_XEN
-bool xen_set_default_idle(void)
+#if defined(CONFIG_XEN) || defined(CONFIG_HYPERV)
+bool hyp_set_default_idle(void)
 {
 	bool ret = x86_idle_set();
 
