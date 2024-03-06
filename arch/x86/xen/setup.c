@@ -1047,7 +1047,7 @@ void __init xen_arch_setup(void)
 	/* Set up idle, making sure it calls safe_halt() pvop */
 	disable_cpuidle();
 	disable_cpufreq();
-	WARN_ON(xen_set_default_idle());
+	WARN_ON(hyp_set_default_idle());
 #ifdef CONFIG_NUMA
 	numa_off = 1;
 #endif
