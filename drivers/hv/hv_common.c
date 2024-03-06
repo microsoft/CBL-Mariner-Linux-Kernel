@@ -946,3 +946,32 @@ int hv_sleep_notifiers_register(void)
 
 	return ret;
 }
+
+int hv_retrieve_scheduler_type(enum hv_scheduler_type *out)
+{
+	struct hv_input_get_system_property *input;
+	struct hv_output_get_system_property *output;
+	unsigned long flags;
+	u64 status;
+
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	memset(input, 0, sizeof(*input));
+	memset(output, 0, sizeof(*output));
+	input->property_id = HV_SYSTEM_PROPERTY_SCHEDULER_TYPE;
+
+	status = hv_do_hypercall(HVCALL_GET_SYSTEM_PROPERTY, input, output);
+	if (!hv_result_success(status)) {
+		local_irq_restore(flags);
+		pr_err("%s: %s\n", __func__, hv_status_to_string(status));
+		return hv_status_to_errno(status);
+	}
+
+	*out = output->scheduler_type;
+	local_irq_restore(flags);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hv_retrieve_scheduler_type);

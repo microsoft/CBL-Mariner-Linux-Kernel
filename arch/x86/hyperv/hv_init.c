@@ -33,6 +33,7 @@
 #include <linux/syscore_ops.h>
 #include <clocksource/hyperv_timer.h>
 #include <linux/highmem.h>
+#include <linux/cpuidle.h>
 
 u64 hv_current_partition_id = ~0ull;
 EXPORT_SYMBOL_GPL(hv_current_partition_id);
@@ -542,6 +543,7 @@ void __init hyperv_init(void)
 	if (hv_root_partition) {
 		struct page *pg;
 		void *src;
+		enum hv_scheduler_type scheduler_type;
 
 		/*
 		 * For the root partition, the hypervisor will set up its
@@ -574,6 +576,20 @@ void __init hyperv_init(void)
 		 */
 		(void)hv_sleep_notifiers_register();
 		hv_root_crash_init();
+
+		/*
+		 * When using the core/classic scheduler, we need to use HLT to
+		 * idle instead of MWAIT. So set the idle function to
+		 * default_idle. Disable cpuidle to prevent an available cpuidle
+		 * driver from taking over the idle loop. While enabled, a
+		 * cpuidle driver will take precedence over the default_idle
+		 * function.
+		 */
+		if (hv_retrieve_scheduler_type(&scheduler_type) == 0
+			&& scheduler_type != HV_SCHEDULER_TYPE_ROOT) {
+			hyp_set_default_idle();
+			disable_cpuidle();
+		}
 	} else {
 		hypercall_msr.guest_physical_address = vmalloc_to_pfn(hv_hypercall_pg);
 		wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
