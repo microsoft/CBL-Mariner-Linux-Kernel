@@ -46,6 +46,9 @@ bool mshv_loader_new;
 bool hyperv_paravisor_present __ro_after_init;
 EXPORT_SYMBOL_GPL(hyperv_paravisor_present);
 
+static bool hv_minroot_nodes_defined __initdata;
+static nodemask_t hv_minroot_nodes __initdata;
+
 #if IS_ENABLED(CONFIG_HYPERV)
 static inline unsigned int hv_get_nested_msr(unsigned int reg)
 {
@@ -367,6 +370,40 @@ static unsigned long hv_get_tsc_khz(void)
 
 	return freq / 1000;
 }
+
+static int __init hv_parse_root_vp_nodes(char *arg)
+{
+	char *tok;
+	int node, ret;
+
+	if (strcmp(arg, "all") == 0) {
+		nodes_setall(hv_minroot_nodes);
+	} else {
+		while ((tok = strsep(&arg, ",")) != NULL) {
+			ret = kstrtoint(tok, 10, &node);
+			if (ret) {
+				pr_warn("Hyper-V: invalid format for hv_root_vp_numa_nodes: %s\n",
+						arg);
+				return 0;
+
+			}
+
+			if (!node_possible(node)) {
+				pr_warn("Hyper-V: ignoring invalid node %u specified in hv_root_vp_numa_nodes.\n",
+						node);
+				continue;
+			}
+
+			node_set(node, hv_minroot_nodes);
+		}
+	}
+
+	if (nodes_weight(hv_minroot_nodes) > 0)
+		hv_minroot_nodes_defined = true;
+
+	return 0;
+}
+early_param("hv_root_vp_nodes", hv_parse_root_vp_nodes);
 
 #if defined(CONFIG_SMP) && IS_ENABLED(CONFIG_HYPERV)
 static void __init hv_smp_prepare_boot_cpu(void)
