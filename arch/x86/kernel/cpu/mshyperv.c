@@ -49,6 +49,15 @@ EXPORT_SYMBOL_GPL(hyperv_paravisor_present);
 static bool hv_minroot_nodes_defined __initdata;
 static nodemask_t hv_minroot_nodes __initdata;
 
+static int hv_lp_to_cpu[NR_CPUS] __initdata;
+/* CPUs that don't have a root VP on them. */
+static struct cpumask root_vps_absent_mask __initdata;
+
+static struct {
+	bool is_valid;
+	int vps_per_node[MAX_NUMNODES];
+} minroot_cfg;
+
 #if IS_ENABLED(CONFIG_HYPERV)
 static inline unsigned int hv_get_nested_msr(unsigned int reg)
 {
@@ -382,14 +391,14 @@ static int __init hv_parse_root_vp_nodes(char *arg)
 		while ((tok = strsep(&arg, ",")) != NULL) {
 			ret = kstrtoint(tok, 10, &node);
 			if (ret) {
-				pr_warn("Hyper-V: invalid format for hv_root_vp_numa_nodes: %s\n",
+				pr_warn("Hyper-V: invalid format for hv_minroot_nodes: %s\n",
 						arg);
 				return 0;
 
 			}
 
 			if (!node_possible(node)) {
-				pr_warn("Hyper-V: ignoring invalid node %u specified in hv_root_vp_numa_nodes.\n",
+				pr_warn("Hyper-V: ignoring invalid node %u specified in hv_minroot_nodes.\n",
 						node);
 				continue;
 			}
@@ -403,7 +412,7 @@ static int __init hv_parse_root_vp_nodes(char *arg)
 
 	return 0;
 }
-early_param("hv_root_vp_nodes", hv_parse_root_vp_nodes);
+early_param("hv_minroot_nodes", hv_parse_root_vp_nodes);
 
 #if defined(CONFIG_SMP) && IS_ENABLED(CONFIG_HYPERV)
 static void __init hv_smp_prepare_boot_cpu(void)
@@ -417,7 +426,7 @@ static void __init hv_smp_prepare_boot_cpu(void)
 static int apicids[NR_CPUS] __initdata;
 
 /* find the next smallest apicid in the unsorted array of size NR_CPUS */
-static int __init next_smallest_apicid(int apicids[], int curr)
+static int __init next_smallest_apicid(int apicids[], int curr, int *cpu)
 {
 	int i, found = INT_MAX;
 
@@ -425,11 +434,169 @@ static int __init next_smallest_apicid(int apicids[], int curr)
 		if (apicids[i] <= curr)
 			continue;
 
-		if (apicids[i] < found)
+		if (apicids[i] < found) {
 			found = apicids[i];
+			*cpu = i;
+		}
 	}
 
 	return found;
+}
+
+static void __init prepare_minroot_cfg(unsigned int max_cpus)
+{
+	unsigned int node, num_nodes;
+	unsigned int present_cpus = num_present_cpus();
+
+	if (max_cpus >= present_cpus)
+		return;
+
+	if (max_cpus % smp_num_siblings != 0) {
+		pr_warn("Hyper-V: minroot: number of root VPs should be a multiple of threads per core\n");
+		goto invalid_config;
+	}
+
+	num_nodes = num_online_nodes();
+
+	/*
+	 * If the hv_root_vp_nodes option is specified, spread the root VPs
+	 * evenly across the specified nodes. Otherwise, fill up nodes in order
+	 * until we run out of root VPs.
+	 */
+	if (hv_minroot_nodes_defined) {
+		int vps_per_node;
+		int bsp_node = numa_cpu_node(raw_smp_processor_id());
+
+		if (bsp_node == NUMA_NO_NODE)
+			bsp_node = 0;
+
+		if (!node_isset(bsp_node, hv_minroot_nodes)) {
+			pr_warn("Hyper-V: minroot: hv_minroot_nodes must contain BSP's node\n");
+			goto invalid_config;
+		}
+
+		nodes_and(hv_minroot_nodes, hv_minroot_nodes, node_online_map);
+
+		num_nodes = nodes_weight(hv_minroot_nodes);
+		vps_per_node = max_cpus / num_nodes;
+		if (vps_per_node % smp_num_siblings != 0) {
+			pr_warn("Hyper-V: minroot: number of root VPs per node should be a multiple of threads per core\n");
+			goto invalid_config;
+		}
+
+		for_each_online_node(node) {
+			if (!node_isset(node, hv_minroot_nodes))
+				continue;
+
+			minroot_cfg.vps_per_node[node] = vps_per_node;
+		}
+	} else {
+		int remaining = max_cpus;
+		int cpus_per_node = present_cpus / num_nodes;
+
+		for_each_online_node(node) {
+			minroot_cfg.vps_per_node[node] =
+					min(remaining, cpus_per_node);
+
+			if (minroot_cfg.vps_per_node[node]
+					% smp_num_siblings != 0) {
+				pr_warn("Hyper-V: minroot: number of root VPs in a node should be a multiple of threads per core\n");
+				goto invalid_config;
+			}
+
+			remaining -= minroot_cfg.vps_per_node[node];
+
+			if (!remaining)
+				break;
+		}
+	}
+
+	minroot_cfg.is_valid = true;
+	return;
+
+invalid_config:
+	pr_warn("Hyper-V: invalid minroot configuration. Ignoring.\n");
+}
+
+static bool __init root_vp_allowed_on_node(int node)
+{
+	if (!hv_minroot_nodes_defined)
+		return true;
+
+	return node_isset(node, hv_minroot_nodes);
+}
+
+static bool __init can_create_root_vp(int cpu, int *vps_added)
+{
+	int node;
+
+	if (!minroot_cfg.is_valid)
+		return true;
+
+	node = numa_cpu_node(cpu);
+	if (node == NUMA_NO_NODE)
+		node = 0;
+
+	return root_vp_allowed_on_node(node)
+		&& vps_added[node] < minroot_cfg.vps_per_node[node];
+}
+
+static void __init hv_create_root_vps(unsigned int max_cpus, bool kexec)
+{
+	unsigned int present_cpus = num_present_cpus();
+	unsigned int lpidx, vpidx, node;
+	int *vps_added;
+	int ret;
+
+	prepare_minroot_cfg(max_cpus);
+
+	if (minroot_cfg.is_valid)
+		pr_info("Hyper-V: booting in minroot configuration");
+
+	vps_added = kcalloc(num_online_nodes(), sizeof(*vps_added), GFP_KERNEL);
+	BUG_ON(!vps_added);
+
+	vpidx = 1;
+	vps_added[0] = 1;
+	for (lpidx = 1; lpidx < present_cpus; ++lpidx) {
+		int cpu = hv_lp_to_cpu[lpidx];
+
+		node = numa_cpu_node(cpu);
+		if (node == NUMA_NO_NODE)
+			node = 0;
+
+		if (!can_create_root_vp(cpu, vps_added)) {
+			/*
+			 * As per the provided minroot config, we can't create a
+			 * root VP on this CPU. Mark it as not-present so that
+			 * the core boot code doesn't try to bring it online
+			 * (which will fail). Later in smp_cpus_done(), we will
+			 * set it as present so as to reflect the actual state
+			 * of the system: these CPUs exist but are offline.
+			 */
+			cpumask_set_cpu(cpu, &root_vps_absent_mask);
+			set_cpu_present(cpu, false);
+			continue;
+		}
+
+		if (!kexec) {
+			/*
+			 * hv_call_create_vp() uses the node number to construct
+			 * hv_proximity_domain_info which is an input to the
+			 * create VP hypercall. However, when creating root VPs,
+			 * the hypervisor ignores the proximity domain info and
+			 * instead uses the LP index to figure out NUMA node
+			 * info. So, we can simply pass NUMA_NO_NODE here.
+			 */
+			/* params: node num, domid, vp index, lp index */
+			ret = hv_call_create_vp(NUMA_NO_NODE,
+					hv_current_partition_id, vpidx, lpidx);
+			BUG_ON(ret);
+		}
+
+		++vpidx;
+		++vps_added[node];
+	}
 }
 
 /*
@@ -456,7 +623,8 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 {
 #ifdef CONFIG_X86_64
 	s16 node;
-	int i, lpidx, ret, ccpu = raw_smp_processor_id();
+	int i, lpidx, ret, cpu, ccpu = raw_smp_processor_id();
+	bool kexec = false;
 #endif
 	native_smp_prepare_cpus(max_cpus);
 
@@ -470,11 +638,15 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 	}
 
 	/* If AP LPs exist, we are in kexec kernel and VPs already exist */
-	if (num_present_cpus() == 1 || hv_lp_exists(1))
+	if (num_present_cpus() == 1)
 		return;
 
 #ifdef CONFIG_X86_64
 	BUG_ON(ccpu != 0);
+
+	/* If AP LPs exist, we are in kexec kernel and VPs already exist */
+	if (hv_lp_exists(1))
+		kexec = true;
 
 	for (i = 0; i < NR_CPUS; i++)
 		apicids[i] = INT_MAX;
@@ -487,18 +659,22 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 		apicids[i] = cpu_physical_id(i);
 	}
 
-	i = next_smallest_apicid(apicids, 0);
+	i = next_smallest_apicid(apicids, 0, &cpu);
 
 	for (lpidx = 1; i != INT_MAX; lpidx++) {
 		node = __apicid_to_node[i];
 		if (node == NUMA_NO_NODE)
 			node = 0;
 
-		/* params: node num, lp index, apic id */
-		ret = hv_call_add_logical_proc(node, lpidx, i);
-		BUG_ON(ret);
+		if (!kexec) {
+			/* params: node num, lp index, apic id */
+			ret = hv_call_add_logical_proc(node, lpidx, i);
+			BUG_ON(ret);
+		}
 
-		i = next_smallest_apicid(apicids, i);
+		hv_lp_to_cpu[lpidx] = cpu;
+
+		i = next_smallest_apicid(apicids, i, &cpu);
 	}
 
 	/*
@@ -511,30 +687,29 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 	 * We can also invoke this hypercall for non-CVM usecase as well. There
 	 * is no side effect because of this hypercall.
 	 */
-	ret = hv_call_notify_all_processors_started();
-	WARN_ON(ret);
-
-	lpidx = 1;	   /* skip BSP cpu 0 */
-	for_each_present_cpu(i) {
-		if (i == 0)
-			continue;
-
-		/*
-		 * hv_call_create_vp() uses the node number to construct
-		 * hv_proximity_domain_info which is an input to the create VP
-		 * hypercall. However, when creating root VPs, the hypervisor
-		 * ignores the proximity domain info and instead uses the LP
-		 * index to figure out NUMA node info. So, we can simply pass
-		 * NUMA_NO_NODE here.
-		 */
-		/* params: node num, domid, vp index, lp index */
-		ret = hv_call_create_vp(NUMA_NO_NODE, hv_current_partition_id,
-				lpidx, lpidx);
-		BUG_ON(ret);
-		lpidx++;
+	if (!kexec) {
+		ret = hv_call_notify_all_processors_started();
+		WARN_ON(ret);
 	}
 
+	hv_create_root_vps(max_cpus, kexec);
+
 #endif /* #ifdef CONFIG_X86_64 */
+}
+
+static void __init hv_smp_cpus_done(unsigned int max_cpus)
+{
+#ifdef CONFIG_X86_64
+	unsigned int cpu;
+
+	/* see the comment in hv_create_root_vps(). */
+	if (minroot_cfg.is_valid) {
+		for_each_cpu(cpu, &root_vps_absent_mask)
+			set_cpu_present(cpu, true);
+	}
+#endif
+
+	native_smp_cpus_done(max_cpus);
 }
 #endif /* #if defined(CONFIG_SMP) && IS_ENABLED(CONFIG_HYPERV) */
 
@@ -913,6 +1088,9 @@ static void __init ms_hyperv_init_platform(void)
 	if (hv_root_partition() ||
 	    (!ms_hyperv.paravisor_present && hv_isolation_type_snp()))
 		smp_ops.smp_prepare_cpus = hv_smp_prepare_cpus;
+
+	if (hv_root_partition())
+		smp_ops.smp_cpus_done = hv_smp_cpus_done;
 # endif
 
 	/*
