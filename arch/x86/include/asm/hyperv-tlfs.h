@@ -306,11 +306,25 @@ enum hv_isolation_type {
  * Registers are only accessible via HVCALL_GET_VP_REGISTERS hvcall and
  * there is not associated MSR address.
  */
+#define HV_X64_REGISTER_CR0			0x00040000
+#define	HV_X64_REGISTER_CR4			0x00040003
+#define HV_X64_REGISTER_EFER			0x00080001
+#define	HV_X64_REGISTER_APIC_BASE		0x00080003
+#define HV_X64_REGISTER_SYSENTER_CS		0x00080005
+#define	HV_X64_REGISTER_SYSENTER_EIP		0x00080006
+#define	HV_X64_REGISTER_SYSENTER_ESP		0x00080007
+#define	HV_X64_REGISTER_STAR			0x00080008
+#define	HV_X64_REGISTER_LSTAR			0x00080009
+#define	HV_X64_REGISTER_CSTAR			0x0008000A
+#define HV_X64_REGISTER_SFMASK			0x0008000B
 #define	HV_X64_REGISTER_VSM_VP_STATUS		0x000D0003
 #define HV_REGISTER_VSM_CODEPAGE_OFFSETS	0x000D0002
 #define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
 #define HV_REGISTER_VSM_PARTITION_CONFIG	0x000D0007
 #define HV_REGISTER_VSM_VP_SECURE_CONFIG_VTL0	0x000D0010
+#define	HV_REGISTER_CR_INTERCEPT_CONTROL	0x000E0000
+#define	HV_REGISTER_CR_INTERCEPT_CR0_MASK	0x000E0001
+#define	HV_REGISTER_CR_INTERCEPT_CR4_MASK	0x000E0002
 #define	HV_X64_VTL_MASK			GENMASK(3, 0)
 
 /* Hyper-V memory host visibility */
@@ -843,6 +857,39 @@ union hv_register_vsm_vp_status {
 		u64 reserved_z1 : 32;
 	};
 };
+
+/*  CR Intercept Control */
+union hv_cr_intercept_control {
+	u64 as_u64;
+	struct {
+		u64 cr0_write			: 1;
+		u64 cr4_write			: 1;
+		u64 xcr0_write			: 1;
+		u64 ia32miscenable_read		: 1;
+		u64 ia32miscenable_write	: 1;
+		u64 msr_lstar_read		: 1;
+		u64 msr_lstar_write		: 1;
+		u64 msr_star_read		: 1;
+		u64 msr_star_write		: 1;
+		u64 msr_cstar_read		: 1;
+		u64 msr_cstar_write		: 1;
+		u64 msr_apic_base_read		: 1;
+		u64 msr_apic_base_write		: 1;
+		u64 msr_efer_read		: 1;
+		u64 msr_efer_write		: 1;
+		u64 gdtr_write			: 1;
+		u64 idtr_write			: 1;
+		u64 ldtr_write			: 1;
+		u64 tr_write			: 1;
+		u64 msr_sysenter_cs_write	: 1;
+		u64 msr_sysenter_eip_write	: 1;
+		u64 msr_sysenter_esp_write	: 1;
+		u64 msr_sfmask_write		: 1;
+		u64 msr_tsc_aux_write		: 1;
+		u64 msr_sgx_launch_ctrl_write	: 1;
+		u64 reserved			: 39;
+	};
+} __packed;
 
 #include <asm-generic/hyperv-tlfs.h>
 
