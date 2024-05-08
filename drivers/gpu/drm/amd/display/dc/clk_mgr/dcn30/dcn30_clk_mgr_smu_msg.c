@@ -23,12 +23,14 @@
  *
  */
 
-#include <linux/delay.h>
 #include "dcn30_clk_mgr_smu_msg.h"
 
 #include "clk_mgr_internal.h"
 #include "reg_helper.h"
+#include "dm_helpers.h"
+
 #include "dalsmc.h"
+#include "dcn30_smu11_driver_if.h"
 
 #define mmDAL_MSG_REG  0x1628A
 #define mmDAL_ARG_REG  0x16273
@@ -51,6 +53,7 @@
  */
 static uint32_t dcn30_smu_wait_for_response(struct clk_mgr_internal *clk_mgr, unsigned int delay_us, unsigned int max_retries)
 {
+	const uint32_t initial_max_retries = max_retries;
 	uint32_t reg = 0;
 
 	do {
@@ -66,13 +69,14 @@ static uint32_t dcn30_smu_wait_for_response(struct clk_mgr_internal *clk_mgr, un
 
 	/* handle DALSMC_Result_CmdRejectedBusy? */
 
-	/* Log? */
+	TRACE_SMU_DELAY(delay_us * (initial_max_retries - max_retries), clk_mgr->base.ctx);
 
 	return reg;
 }
 
 static bool dcn30_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr, uint32_t msg_id, uint32_t param_in, uint32_t *param_out)
 {
+	uint32_t result;
 	/* Wait for response register to be ready */
 	dcn30_smu_wait_for_response(clk_mgr, 10, 200000);
 
@@ -85,8 +89,16 @@ static bool dcn30_smu_send_msg_with_param(struct clk_mgr_internal *clk_mgr, uint
 	/* Trigger the message transaction by writing the message ID */
 	REG_WRITE(DAL_MSG_REG, msg_id);
 
+	TRACE_SMU_MSG(msg_id, param_in, clk_mgr->base.ctx);
+
+	result = dcn30_smu_wait_for_response(clk_mgr, 10, 200000);
+
+	if (IS_SMU_TIMEOUT(result)) {
+		dm_helpers_smu_timeout(CTX, msg_id, param_in, 10 * 200000);
+	}
+
 	/* Wait for response */
-	if (dcn30_smu_wait_for_response(clk_mgr, 10, 200000) == DALSMC_Result_OK) {
+	if (result == DALSMC_Result_OK) {
 		if (param_out)
 			*param_out = REG_READ(DAL_ARG_REG);
 
@@ -197,7 +209,7 @@ void dcn30_smu_transfer_wm_table_dram_2_smu(struct clk_mgr_internal *clk_mgr)
 }
 
 /* Returns the actual frequency that was set in MHz, 0 on failure */
-unsigned int dcn30_smu_set_hard_min_by_freq(struct clk_mgr_internal *clk_mgr, PPCLK_e clk, uint16_t freq_mhz)
+unsigned int dcn30_smu_set_hard_min_by_freq(struct clk_mgr_internal *clk_mgr, uint32_t clk, uint16_t freq_mhz)
 {
 	uint32_t response = 0;
 
@@ -215,7 +227,7 @@ unsigned int dcn30_smu_set_hard_min_by_freq(struct clk_mgr_internal *clk_mgr, PP
 }
 
 /* Returns the actual frequency that was set in MHz, 0 on failure */
-unsigned int dcn30_smu_set_hard_max_by_freq(struct clk_mgr_internal *clk_mgr, PPCLK_e clk, uint16_t freq_mhz)
+unsigned int dcn30_smu_set_hard_max_by_freq(struct clk_mgr_internal *clk_mgr, uint32_t clk, uint16_t freq_mhz)
 {
 	uint32_t response = 0;
 
@@ -246,7 +258,7 @@ unsigned int dcn30_smu_set_hard_max_by_freq(struct clk_mgr_internal *clk_mgr, PP
  *
  * Returns 0 on failure
  */
-unsigned int dcn30_smu_get_dpm_freq_by_index(struct clk_mgr_internal *clk_mgr, PPCLK_e clk, uint8_t dpm_level)
+unsigned int dcn30_smu_get_dpm_freq_by_index(struct clk_mgr_internal *clk_mgr, uint32_t clk, uint8_t dpm_level)
 {
 	uint32_t response = 0;
 
@@ -264,7 +276,7 @@ unsigned int dcn30_smu_get_dpm_freq_by_index(struct clk_mgr_internal *clk_mgr, P
 }
 
 /* Returns the max DPM frequency in DC mode in MHz, 0 on failure */
-unsigned int dcn30_smu_get_dc_mode_max_dpm_freq(struct clk_mgr_internal *clk_mgr, PPCLK_e clk)
+unsigned int dcn30_smu_get_dc_mode_max_dpm_freq(struct clk_mgr_internal *clk_mgr, uint32_t clk)
 {
 	uint32_t response = 0;
 

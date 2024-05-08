@@ -73,6 +73,7 @@
 	SRI(HDMI_ACR_48_1, DIG, id),\
 	SRI(DP_DB_CNTL, DP, id), \
 	SRI(DP_MSA_MISC, DP, id), \
+	SRI(DP_MSA_VBID_MISC, DP, id), \
 	SRI(DP_MSA_COLORIMETRY, DP, id), \
 	SRI(DP_MSA_TIMING_PARAM1, DP, id), \
 	SRI(DP_MSA_TIMING_PARAM2, DP, id), \
@@ -92,6 +93,8 @@
 	SRI(DP_VID_STREAM_CNTL, DP, id), \
 	SRI(DP_VID_TIMING, DP, id), \
 	SRI(DP_SEC_AUD_N, DP, id), \
+	SRI(DP_SEC_AUD_N_READBACK, DP, id), \
+	SRI(DP_SEC_AUD_M_READBACK, DP, id), \
 	SRI(DP_SEC_TIMESTAMP, DP, id), \
 	SRI(DIG_CLOCK_PATTERN, DIG, id)
 
@@ -124,7 +127,6 @@ struct dcn10_stream_enc_registers {
 	uint32_t AFMT_60958_1;
 	uint32_t AFMT_60958_2;
 	uint32_t DIG_FE_CNTL;
-	uint32_t DIG_FE_CNTL2;
 	uint32_t DIG_FIFO_STATUS;
 	uint32_t DP_MSE_RATE_CNTL;
 	uint32_t DP_MSE_RATE_UPDATE;
@@ -140,6 +142,8 @@ struct dcn10_stream_enc_registers {
 	uint32_t DP_VID_STREAM_CNTL;
 	uint32_t DP_VID_TIMING;
 	uint32_t DP_SEC_AUD_N;
+	uint32_t DP_SEC_AUD_N_READBACK;
+	uint32_t DP_SEC_AUD_M_READBACK;
 	uint32_t DP_SEC_TIMESTAMP;
 	uint32_t HDMI_CONTROL;
 	uint32_t HDMI_GC;
@@ -182,13 +186,17 @@ struct dcn10_stream_enc_registers {
 	uint32_t HDMI_GENERIC_PACKET_CONTROL9;
 	uint32_t HDMI_GENERIC_PACKET_CONTROL10;
 	uint32_t DIG_CLOCK_PATTERN;
+	uint32_t DIG_FIFO_CTRL0;
+	uint32_t DIG_FE_CLK_CNTL;
+	uint32_t DIG_FE_EN_CNTL;
+	uint32_t STREAM_MAPPER_CONTROL;
 };
 
 
 #define SE_SF(reg_name, field_name, post_fix)\
 	.field_name = reg_name ## __ ## field_name ## post_fix
 
-#define SE_COMMON_MASK_SH_LIST_SOC_BASE(mask_sh)\
+#define SE_COMMON_MASK_SH_LIST_SOC(mask_sh)\
 	SE_SF(DIG0_AFMT_VBI_PACKET_CONTROL, AFMT_GENERIC_INDEX, mask_sh),\
 	SE_SF(DIG0_AFMT_GENERIC_HDR, AFMT_GENERIC_HB0, mask_sh),\
 	SE_SF(DIG0_AFMT_GENERIC_HDR, AFMT_GENERIC_HB1, mask_sh),\
@@ -205,6 +213,7 @@ struct dcn10_stream_enc_registers {
 	SE_SF(DIG0_HDMI_VBI_PACKET_CONTROL, HDMI_GC_CONT, mask_sh),\
 	SE_SF(DIG0_HDMI_VBI_PACKET_CONTROL, HDMI_GC_SEND, mask_sh),\
 	SE_SF(DIG0_HDMI_VBI_PACKET_CONTROL, HDMI_NULL_SEND, mask_sh),\
+	SE_SF(DIG0_HDMI_VBI_PACKET_CONTROL, HDMI_ACP_SEND, mask_sh),\
 	SE_SF(DIG0_HDMI_INFOFRAME_CONTROL0, HDMI_AUDIO_INFO_SEND, mask_sh),\
 	SE_SF(DIG0_AFMT_INFOFRAME_CONTROL0, AFMT_AUDIO_INFO_UPDATE, mask_sh),\
 	SE_SF(DIG0_HDMI_INFOFRAME_CONTROL1, HDMI_AUDIO_INFO_LINE, mask_sh),\
@@ -256,6 +265,8 @@ struct dcn10_stream_enc_registers {
 	SE_SF(DIG0_AFMT_60958_2, AFMT_60958_CS_CHANNEL_NUMBER_6, mask_sh),\
 	SE_SF(DIG0_AFMT_60958_2, AFMT_60958_CS_CHANNEL_NUMBER_7, mask_sh),\
 	SE_SF(DP0_DP_SEC_AUD_N, DP_SEC_AUD_N, mask_sh),\
+	SE_SF(DP0_DP_SEC_AUD_N_READBACK, DP_SEC_AUD_N_READBACK, mask_sh),\
+	SE_SF(DP0_DP_SEC_AUD_M_READBACK, DP_SEC_AUD_M_READBACK, mask_sh),\
 	SE_SF(DP0_DP_SEC_TIMESTAMP, DP_SEC_TIMESTAMP_MODE, mask_sh),\
 	SE_SF(DP0_DP_SEC_CNTL, DP_SEC_ASP_ENABLE, mask_sh),\
 	SE_SF(DP0_DP_SEC_CNTL, DP_SEC_ATP_ENABLE, mask_sh),\
@@ -330,9 +341,6 @@ struct dcn10_stream_enc_registers {
 	SE_SF(DP0_DP_VID_TIMING, DP_VID_N_MUL, mask_sh),\
 	SE_SF(DIG0_DIG_FE_CNTL, DIG_SOURCE_SELECT, mask_sh),\
 	SE_SF(DIG0_DIG_CLOCK_PATTERN, DIG_CLOCK_PATTERN, mask_sh)
-
-#define SE_COMMON_MASK_SH_LIST_SOC(mask_sh)\
-	SE_COMMON_MASK_SH_LIST_SOC_BASE(mask_sh)
 
 #define SE_COMMON_MASK_SH_LIST_DCN10(mask_sh)\
 	SE_COMMON_MASK_SH_LIST_SOC(mask_sh),\
@@ -473,6 +481,8 @@ struct dcn10_stream_enc_registers {
 	type AFMT_60958_CS_CHANNEL_NUMBER_6;\
 	type AFMT_60958_CS_CHANNEL_NUMBER_7;\
 	type DP_SEC_AUD_N;\
+	type DP_SEC_AUD_N_READBACK;\
+	type DP_SEC_AUD_M_READBACK;\
 	type DP_SEC_TIMESTAMP_MODE;\
 	type DP_SEC_ASP_ENABLE;\
 	type DP_SEC_ATP_ENABLE;\
@@ -559,16 +569,53 @@ struct dcn10_stream_enc_registers {
 	type DP_SEC_GSP11_ENABLE;\
 	type DP_SEC_GSP11_LINE_NUM
 
+#define SE_REG_FIELD_LIST_DCN3_1_COMMON(type) \
+	type DIG_FIFO_OUTPUT_PIXEL_MODE;\
+	type DP_PIXEL_PER_CYCLE_PROCESSING_MODE;\
+	type DIG_SYMCLK_FE_ON;\
+	type DIG_FIFO_READ_START_LEVEL;\
+	type DIG_FIFO_ENABLE;\
+	type DIG_FIFO_RESET;\
+	type DIG_FIFO_RESET_DONE;\
+	type PIXEL_ENCODING_TYPE;\
+	type UNCOMPRESSED_PIXEL_FORMAT;\
+	type UNCOMPRESSED_COMPONENT_DEPTH
+
+#define SE_REG_FIELD_LIST_DCN3_5_COMMON(type) \
+	type DIG_FE_CLK_EN;\
+	type DIG_FE_MODE;\
+	type DIG_FE_SOFT_RESET;\
+	type DIG_FE_ENABLE;\
+	type DIG_FE_SYMCLK_FE_G_CLOCK_ON;\
+	type DIG_FE_DISPCLK_G_CLOCK_ON;\
+	type DIG_FE_SYMCLK_FE_G_AFMT_CLOCK_ON;\
+	type DIG_FE_SYMCLK_FE_G_TMDS_CLOCK_ON;\
+	type DIG_FE_SOCCLK_G_AFMT_CLOCK_ON;\
+	type DIG_STREAM_LINK_TARGET
+
+#define SE_REG_FIELD_LIST_DCN4_01_COMMON(type) \
+	type COMPRESSED_PIXEL_FORMAT;\
+	type DP_VID_N_INTERVAL;\
+	type DIG_FIFO_OUTPUT_PIXEL_PER_CYCLE
+
 struct dcn10_stream_encoder_shift {
 	SE_REG_FIELD_LIST_DCN1_0(uint8_t);
+	uint8_t HDMI_ACP_SEND;
 	SE_REG_FIELD_LIST_DCN2_0(uint8_t);
 	SE_REG_FIELD_LIST_DCN3_0(uint8_t);
+	SE_REG_FIELD_LIST_DCN3_1_COMMON(uint8_t);
+	SE_REG_FIELD_LIST_DCN3_5_COMMON(uint8_t);
+	SE_REG_FIELD_LIST_DCN4_01_COMMON(uint32_t);
 };
 
 struct dcn10_stream_encoder_mask {
 	SE_REG_FIELD_LIST_DCN1_0(uint32_t);
+	uint32_t HDMI_ACP_SEND;
 	SE_REG_FIELD_LIST_DCN2_0(uint32_t);
 	SE_REG_FIELD_LIST_DCN3_0(uint32_t);
+	SE_REG_FIELD_LIST_DCN3_1_COMMON(uint32_t);
+	SE_REG_FIELD_LIST_DCN3_5_COMMON(uint32_t);
+	SE_REG_FIELD_LIST_DCN4_01_COMMON(uint32_t);
 };
 
 struct dcn10_stream_encoder {
@@ -627,9 +674,11 @@ void enc1_stream_encoder_stop_dp_info_packets(
 	struct stream_encoder *enc);
 
 void enc1_stream_encoder_dp_blank(
+	struct dc_link *link,
 	struct stream_encoder *enc);
 
 void enc1_stream_encoder_dp_unblank(
+	struct dc_link *link,
 	struct stream_encoder *enc,
 	const struct encoder_unblank_param *param);
 

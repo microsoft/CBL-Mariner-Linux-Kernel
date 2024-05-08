@@ -11,6 +11,7 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 
+#include "amdgpu.h"
 #include "amd_acpi.h"
 
 #define AMDGPU_PX_QUIRK_FORCE_ATPX  (1 << 0)
@@ -43,7 +44,9 @@ struct amdgpu_atpx {
 
 static struct amdgpu_atpx_priv {
 	bool atpx_detected;
+#ifdef AMDKCL_PCIE_BRIDGE_PM_USABLE
 	bool bridge_pm_usable;
+#endif
 	unsigned int quirks;
 	/* handle for device - and atpx */
 	acpi_handle dhandle;
@@ -73,24 +76,29 @@ struct atpx_mux {
 	u16 mux;
 } __packed;
 
-bool amdgpu_has_atpx(void) {
+bool amdgpu_has_atpx(void)
+{
 	return amdgpu_atpx_priv.atpx_detected;
 }
 
-bool amdgpu_has_atpx_dgpu_power_cntl(void) {
+bool amdgpu_has_atpx_dgpu_power_cntl(void)
+{
 	return amdgpu_atpx_priv.atpx.functions.power_cntl;
 }
 
-bool amdgpu_is_atpx_hybrid(void) {
+bool amdgpu_is_atpx_hybrid(void)
+{
 	return amdgpu_atpx_priv.atpx.is_hybrid;
 }
 
-bool amdgpu_atpx_dgpu_req_power_for_displays(void) {
+bool amdgpu_atpx_dgpu_req_power_for_displays(void)
+{
 	return amdgpu_atpx_priv.atpx.dgpu_req_power_for_displays;
 }
 
 #if defined(CONFIG_ACPI)
-void *amdgpu_atpx_get_dhandle(void) {
+void *amdgpu_atpx_get_dhandle(void)
+{
 	return amdgpu_atpx_priv.dhandle;
 }
 #endif
@@ -133,7 +141,7 @@ static union acpi_object *amdgpu_atpx_call(acpi_handle handle, int function,
 
 	/* Fail only if calling the method fails and ATPX is supported */
 	if (ACPI_FAILURE(status) && status != AE_NOT_FOUND) {
-		printk("failed to evaluate ATPX got %s\n",
+		pr_err("failed to evaluate ATPX got %s\n",
 		       acpi_format_exception(status));
 		kfree(buffer.pointer);
 		return NULL;
@@ -165,7 +173,7 @@ static void amdgpu_atpx_parse_functions(struct amdgpu_atpx_functions *f, u32 mas
 }
 
 /**
- * amdgpu_atpx_validate_functions - validate ATPX functions
+ * amdgpu_atpx_validate - validate ATPX functions
  *
  * @atpx: amdgpu atpx struct
  *
@@ -189,7 +197,7 @@ static int amdgpu_atpx_validate(struct amdgpu_atpx *atpx)
 
 		size = *(u16 *) info->buffer.pointer;
 		if (size < 10) {
-			printk("ATPX buffer is too small: %zu\n", size);
+			pr_err("ATPX buffer is too small: %zu\n", size);
 			kfree(info);
 			return -EINVAL;
 		}
@@ -222,16 +230,23 @@ static int amdgpu_atpx_validate(struct amdgpu_atpx *atpx)
 	atpx->is_hybrid = false;
 	if (valid_bits & ATPX_MS_HYBRID_GFX_SUPPORTED) {
 		if (amdgpu_atpx_priv.quirks & AMDGPU_PX_QUIRK_FORCE_ATPX) {
-			printk("ATPX Hybrid Graphics, forcing to ATPX\n");
+			pr_warn("ATPX Hybrid Graphics, forcing to ATPX\n");
 			atpx->functions.power_cntl = true;
 			atpx->is_hybrid = false;
 		} else {
-			printk("ATPX Hybrid Graphics\n");
+			pr_notice("ATPX Hybrid Graphics\n");
+#ifdef AMDKCL_PCIE_BRIDGE_PM_USABLE
 			/*
 			 * Disable legacy PM methods only when pcie port PM is usable,
 			 * otherwise the device might fail to power off or power on.
 			 */
 			atpx->functions.power_cntl = !amdgpu_atpx_priv.bridge_pm_usable;
+#else
+                        /*
+                         * This is a temporary hack for the kernel doesn't support D3.
+                         */
+			atpx->functions.power_cntl = true;
+#endif
 			atpx->is_hybrid = true;
 		}
 	}
@@ -268,7 +283,7 @@ static int amdgpu_atpx_verify_interface(struct amdgpu_atpx *atpx)
 
 	size = *(u16 *) info->buffer.pointer;
 	if (size < 8) {
-		printk("ATPX buffer is too small: %zu\n", size);
+		pr_err("ATPX buffer is too small: %zu\n", size);
 		err = -EINVAL;
 		goto out;
 	}
@@ -277,8 +292,8 @@ static int amdgpu_atpx_verify_interface(struct amdgpu_atpx *atpx)
 	memcpy(&output, info->buffer.pointer, size);
 
 	/* TODO: check version? */
-	printk("ATPX version %u, functions 0x%08x\n",
-	       output.version, output.function_bits);
+	pr_notice("ATPX version %u, functions 0x%08x\n",
+		  output.version, output.function_bits);
 
 	amdgpu_atpx_parse_functions(&atpx->functions, output.function_bits);
 
@@ -610,16 +625,20 @@ static bool amdgpu_atpx_detect(void)
 	struct pci_dev *pdev = NULL;
 	bool has_atpx = false;
 	int vga_count = 0;
+#ifdef AMDKCL_PCIE_BRIDGE_PM_USABLE
 	bool d3_supported = false;
 	struct pci_dev *parent_pdev;
+#endif
 
 	while ((pdev = pci_get_class(PCI_CLASS_DISPLAY_VGA << 8, pdev)) != NULL) {
 		vga_count++;
 
 		has_atpx |= amdgpu_atpx_pci_probe_handle(pdev);
 
+#ifdef AMDKCL_PCIE_BRIDGE_PM_USABLE
 		parent_pdev = pci_upstream_bridge(pdev);
 		d3_supported |= parent_pdev && parent_pdev->bridge_d3;
+#endif
 		amdgpu_atpx_get_quirks(pdev);
 	}
 
@@ -628,8 +647,10 @@ static bool amdgpu_atpx_detect(void)
 
 		has_atpx |= amdgpu_atpx_pci_probe_handle(pdev);
 
+#ifdef AMDKCL_PCIE_BRIDGE_PM_USABLE
 		parent_pdev = pci_upstream_bridge(pdev);
 		d3_supported |= parent_pdev && parent_pdev->bridge_d3;
+#endif
 		amdgpu_atpx_get_quirks(pdev);
 	}
 
@@ -638,7 +659,9 @@ static bool amdgpu_atpx_detect(void)
 		pr_info("vga_switcheroo: detected switching method %s handle\n",
 			acpi_method_name);
 		amdgpu_atpx_priv.atpx_detected = true;
+#ifdef AMDKCL_PCIE_BRIDGE_PM_USABLE
 		amdgpu_atpx_priv.bridge_pm_usable = d3_supported;
+#endif
 		amdgpu_atpx_init();
 		return true;
 	}
