@@ -63,7 +63,11 @@ EXPORT_SYMBOL_GPL(hyperv_pcpu_output_arg);
  */
 static inline bool hv_output_arg_exists(void)
 {
+#ifdef CONFIG_HV_SECURE_VTL
+	return true;
+#else
 	return hv_root_partition ? true : false;
+#endif
 }
 
 static void hv_kmsg_dump_unregister(void);
