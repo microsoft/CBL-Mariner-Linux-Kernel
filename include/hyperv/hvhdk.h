@@ -998,17 +998,55 @@ union hv_partition_synthetic_processor_features {
 
 #if defined(__x86_64__)
 		/* HvCallRestorePartitionTime is supported. */
-		__u64 restore_time:1;
+		__u64 restore_time : 1;
 
 		/* EnlightenedVmcs nested enlightenment is supported. */
-		__u64 enlightened_vmcs:1;
+		__u64 enlightened_vmcs : 1;
+
+		__u64 nested_debug_ctl : 1;
+
+		__u64 synthetic_time_unhalted_timer : 1;
+
+		__u64 idle_spec_ctrl : 1;
 #else
-		__u64 reserved_z31:1;
-		__u64 reserved_z32:1;
+		__u64 reserved_z31 : 1;
+		__u64 reserved_z32 : 1;
+		__u64 reserved_z33 : 1;
+		__u64 reserved_z34 : 1;
+		__u64 reserved_z35 : 1;
 #endif
 
-		__u64 reserved:30;
-	} __packed;
+#if defined(__aarch64__)
+		__u64 register_intercepts_v1 : 1;
+#else
+		__u64 reserved_z36 : 1;
+#endif
+
+		__u64 wake_vps : 1;
+		__u64 access_vp_regs : 1;
+
+#if defined(__aarch64__)
+		__u64 sync_context : 1;
+#else
+		__u64 reserved_z39 : 1;
+#endif
+		__u64 management_vtl_synic_support : 1;
+
+#if defined(__aarch64__)
+		__u64 proxy_interrupt_doorbell_support : 1;
+#else
+		__u64 reserved_z41 : 1;
+#endif
+
+#if defined(__aarch64__)
+		__u64 intercept_system_reset : 1;
+#else
+		__u64 reserved_z42 : 1;
+#endif
+
+		__u64 reserved : 21;
+
+} __packed;
 };
 
 #define HV_MAKE_COMPATIBILITY_VERSION(major_, minor_)	\
