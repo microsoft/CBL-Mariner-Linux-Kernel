@@ -861,7 +861,6 @@ int mana_hwc_send_request(struct hw_channel_context *hwc, u32 req_len,
 					 (msecs_to_jiffies(hwc->hwc_timeout)))) {
 		if (hwc->hwc_timeout != 0)
 			dev_err(hwc->dev, "HWC: Request timed out!\n");
-
 		err = -ETIMEDOUT;
 		goto out;
 	}
