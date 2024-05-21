@@ -306,8 +306,13 @@ enum hv_isolation_type {
  * Registers are only accessible via HVCALL_GET_VP_REGISTERS hvcall and
  * there is not associated MSR address.
  */
+#define HV_X64_REGISTER_RIP			0x00020010
 #define HV_X64_REGISTER_CR0			0x00040000
 #define	HV_X64_REGISTER_CR4			0x00040003
+#define HV_X64_REGISTER_LDTR			0x00060006
+#define HV_X64_REGISTER_TR			0x00060007
+#define HV_X64_REGISTER_IDTR			0x00070000
+#define	HV_X64_REGISTER_GDTR			0x00070001
 #define HV_X64_REGISTER_EFER			0x00080001
 #define	HV_X64_REGISTER_APIC_BASE		0x00080003
 #define HV_X64_REGISTER_SYSENTER_CS		0x00080005
@@ -325,6 +330,7 @@ enum hv_isolation_type {
 #define	HV_REGISTER_CR_INTERCEPT_CONTROL	0x000E0000
 #define	HV_REGISTER_CR_INTERCEPT_CR0_MASK	0x000E0001
 #define	HV_REGISTER_CR_INTERCEPT_CR4_MASK	0x000E0002
+#define HV_REGISTER_PENDING_EVENT0		0x00010004
 #define	HV_X64_VTL_MASK			GENMASK(3, 0)
 
 /* Hyper-V memory host visibility */
@@ -888,6 +894,20 @@ union hv_cr_intercept_control {
 		u64 msr_tsc_aux_write		: 1;
 		u64 msr_sgx_launch_ctrl_write	: 1;
 		u64 reserved			: 39;
+	};
+} __packed;
+
+union hv_pending_exception_event {
+	u64 as_u64[2];
+	struct {
+		u64 event_pending	: 1;
+		u64 event_type		: 3;
+		u64 reserved_0		: 4;
+		u64 deliver_error_code	: 1;
+		u64 reserved_1		: 7;
+		u64 vector		: 16;
+		u64 error_code		: 32;
+		u64 exception_parameter	: 64;
 	};
 } __packed;
 
