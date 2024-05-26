@@ -23,34 +23,6 @@
  *
  */
 
-
-
-
-/*
- * Copyright 2016 Advanced Micro Devices, Inc.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE COPYRIGHT HOLDER(S) OR AUTHOR(S) BE LIABLE FOR ANY CLAIM, DAMAGES OR
- * OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
- * ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
- * OTHER DEALINGS IN THE SOFTWARE.
- *
- * Authors: AMD
- *
- */
-
 #ifndef MOD_FREESYNC_H_
 #define MOD_FREESYNC_H_
 
@@ -105,6 +77,16 @@ struct mod_vrr_params_fixed_refresh {
 	uint32_t frame_counter;
 };
 
+struct mod_vrr_params_flip_interval {
+	bool flip_interval_workaround_active;
+	bool program_flip_interval_workaround;
+	bool do_flip_interval_workaround_cleanup;
+	uint32_t flip_interval_detect_counter;
+	uint32_t vsyncs_between_flip;
+	uint32_t vsync_to_flip_in_us;
+	uint32_t v_update_timestamp_in_us;
+};
+
 struct mod_vrr_params {
 	bool supported;
 	bool send_info_frame;
@@ -121,6 +103,8 @@ struct mod_vrr_params {
 	struct mod_vrr_params_fixed_refresh fixed;
 
 	struct mod_vrr_params_btr btr;
+
+	struct mod_vrr_params_flip_interval flip_interval;
 };
 
 struct mod_freesync *mod_freesync_create(struct dc *dc);
@@ -181,5 +165,8 @@ bool mod_freesync_is_valid_range(uint32_t min_refresh_cap_in_uhz,
 unsigned int mod_freesync_calc_v_total_from_refresh(
 		const struct dc_stream_state *stream,
 		unsigned int refresh_in_uhz);
+
+// Returns true when FreeSync is supported and enabled (even if it is inactive)
+bool mod_freesync_get_freesync_enabled(struct mod_vrr_params *pVrr);
 
 #endif

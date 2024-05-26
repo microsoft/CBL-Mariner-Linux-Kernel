@@ -26,11 +26,23 @@
 #ifndef __DAL_HUBP_H__
 #define __DAL_HUBP_H__
 
+/**
+ * DOC: overview
+ *
+ * Display Controller Hub (DCHUB) is the gateway between the Scalable Data Port
+ * (SDP) and DCN. This component has multiple features, such as memory
+ * arbitration, rotation, and cursor manipulation.
+ *
+ * There is one HUBP allocated per pipe, which fetches data and converts
+ * different pixel formats (i.e. ARGB8888, NV12, etc) into linear, interleaved
+ * and fixed-depth streams of pixel data.
+ */
+
 #include "mem_input.h"
+#include "cursor_reg_cache.h"
 
 #define OPP_ID_INVALID 0xf
 #define MAX_TTU 0xffffff
-
 
 enum cursor_pitch {
 	CURSOR_PITCH_64_PIXELS = 0,
@@ -63,7 +75,12 @@ struct hubp {
 	int opp_id;
 	int mpcc_id;
 	struct dc_cursor_attributes curs_attr;
+	struct dc_cursor_position curs_pos;
 	bool power_gated;
+
+	struct cursor_position_cache_hubp  pos;
+	struct cursor_attribute_cache_hubp att;
+	struct cursor_rect cur_rect;
 };
 
 struct surface_flip_registers {
@@ -139,6 +156,8 @@ struct hubp_funcs {
 	bool (*hubp_is_flip_pending)(struct hubp *hubp);
 
 	void (*set_blank)(struct hubp *hubp, bool blank);
+	void (*set_blank_regs)(struct hubp *hubp, bool blank);
+	void (*phantom_hubp_post_enable)(struct hubp *hubp);
 	void (*set_hubp_blank_en)(struct hubp *hubp, bool blank);
 
 	void (*set_cursor_attributes)(
@@ -192,8 +211,17 @@ struct hubp_funcs {
 	bool (*hubp_in_blank)(struct hubp *hubp);
 	void (*hubp_soft_reset)(struct hubp *hubp, bool reset);
 
+	void (*hubp_update_force_pstate_disallow)(struct hubp *hubp, bool allow);
+	void (*hubp_update_force_cursor_pstate_disallow)(struct hubp *hubp, bool allow);
+	void (*hubp_update_mall_sel)(struct hubp *hubp, uint32_t mall_sel, bool c_cursor);
+	void (*hubp_prepare_subvp_buffering)(struct hubp *hubp, bool enable);
+
 	void (*hubp_set_flip_int)(struct hubp *hubp);
 
+	void (*program_extended_blank)(struct hubp *hubp,
+			unsigned int min_dst_y_next_start_optimized);
+
+	void (*hubp_wait_pipe_read_start)(struct hubp *hubp);
 };
 
 #endif
