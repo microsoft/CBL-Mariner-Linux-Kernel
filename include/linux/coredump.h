@@ -19,6 +19,7 @@ struct core_vma_metadata {
 extern int core_uses_pid;
 extern char core_pattern[];
 extern unsigned int core_pipe_limit;
+extern unsigned int core_file_note_size_limit;
 
 /*
  * These are the only things you should do on a core-file: use only these
