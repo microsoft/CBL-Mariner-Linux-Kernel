@@ -13,6 +13,7 @@ LINUXINCLUDE := \
 	-I$(src)/../include/uapi \
 	$(USER_INCLUDE)
 
+ccflags-y += -include $(src)/../amdttm/backport/backport.h
 amddrm_ttm_helper-y := amddrm_gem_ttm_helper.o
 obj-$(CONFIG_DRM_BUDDY) += amddrm_buddy.o
 obj-$(CONFIG_DRM_TTM_HELPER) += amddrm_ttm_helper.o
