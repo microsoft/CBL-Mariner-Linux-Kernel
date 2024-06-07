@@ -3,7 +3,7 @@
 /*
  * Hyper-V stub IOMMU driver.
  *
- * Copyright (C) 2019, Microsoft, Inc.
+ * Copyright (C) 2024, Microsoft, Inc.
  *
  * Author : Lan Tianyu <Tianyu.Lan@microsoft.com>
  */
@@ -225,7 +225,8 @@ hyperv_root_ir_compose_msi_msg(struct irq_data *irq_data, struct msi_msg *msg)
 		status = hv_unmap_ioapic_interrupt(ioapic_id, &entry);
 
 		if (status != HV_STATUS_SUCCESS)
-			pr_debug("%s: unexpected unmap status %lld\n", __func__, status);
+			pr_debug("%s: unexpected unmap status %lld\n", __func__,
+				 status);
 
 		data->entry.ioapic_rte.as_uint64 = 0;
 		data->entry.source = 0; /* Invalid source */
@@ -236,7 +237,8 @@ hyperv_root_ir_compose_msi_msg(struct irq_data *irq_data, struct msi_msg *msg)
 					vector, &entry);
 
 	if (status != HV_STATUS_SUCCESS) {
-		pr_err("%s: map hypercall failed, status %lld\n", __func__, status);
+		pr_err("%s: map hypercall failed, status %lld\n", __func__,
+		       status);
 		return;
 	}
 
@@ -277,7 +279,7 @@ static struct irq_chip hyperv_root_ir_chip = {
 	.irq_compose_msi_msg	= hyperv_root_ir_compose_msi_msg,
 };
 
-static int hyperv_root_irq_remapping_alloc(struct irq_domain *domain,
+static int hyperv_root_irq_remapping_alloc(struct irq_domain *irqdom,
 				     unsigned int virq, unsigned int nr_irqs,
 				     void *arg)
 {
@@ -289,20 +291,20 @@ static int hyperv_root_irq_remapping_alloc(struct irq_domain *domain,
 	if (!info || info->type != X86_IRQ_ALLOC_TYPE_IOAPIC || nr_irqs > 1)
 		return -EINVAL;
 
-	ret = irq_domain_alloc_irqs_parent(domain, virq, nr_irqs, arg);
+	ret = irq_domain_alloc_irqs_parent(irqdom, virq, nr_irqs, arg);
 	if (ret < 0)
 		return ret;
 
 	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data) {
-		irq_domain_free_irqs_common(domain, virq, nr_irqs);
+		irq_domain_free_irqs_common(irqdom, virq, nr_irqs);
 		return -ENOMEM;
 	}
 
-	irq_data = irq_domain_get_irq_data(domain, virq);
+	irq_data = irq_domain_get_irq_data(irqdom, virq);
 	if (!irq_data) {
 		kfree(data);
-		irq_domain_free_irqs_common(domain, virq, nr_irqs);
+		irq_domain_free_irqs_common(irqdom, virq, nr_irqs);
 		return -EINVAL;
 	}
 
@@ -315,7 +317,7 @@ static int hyperv_root_irq_remapping_alloc(struct irq_domain *domain,
 	return 0;
 }
 
-static void hyperv_root_irq_remapping_free(struct irq_domain *domain,
+static void hyperv_root_irq_remapping_free(struct irq_domain *irqdom,
 				 unsigned int virq, unsigned int nr_irqs)
 {
 	struct irq_data *irq_data;
@@ -324,7 +326,7 @@ static void hyperv_root_irq_remapping_free(struct irq_domain *domain,
 	int i;
 
 	for (i = 0; i < nr_irqs; i++) {
-		irq_data = irq_domain_get_irq_data(domain, virq + i);
+		irq_data = irq_domain_get_irq_data(irqdom, virq + i);
 
 		if (irq_data && irq_data->chip_data) {
 			data = irq_data->chip_data;
@@ -339,7 +341,7 @@ static void hyperv_root_irq_remapping_free(struct irq_domain *domain,
 		}
 	}
 
-	irq_domain_free_irqs_common(domain, virq, nr_irqs);
+	irq_domain_free_irqs_common(irqdom, virq, nr_irqs);
 }
 
 static const struct irq_domain_ops hyperv_root_ir_domain_ops = {
@@ -365,7 +367,7 @@ __setup("mshv_iommu_skip=", mshv_iommu_setup_skip);
 
 /* DMA remapping support */
 struct hv_iommu_domain {
-	struct iommu_domain domain;
+	struct iommu_domain immdom;
 	struct hv_iommu_dev *hv_iommu;
 
 	struct hv_input_device_domain device_domain;
@@ -386,7 +388,7 @@ enum {
 static struct hv_iommu_domain hv_identity_domain, hv_null_domain;
 
 #define to_hv_iommu_domain(d) \
-	container_of(d, struct hv_iommu_domain, domain)
+	container_of(d, struct hv_iommu_domain, immdom)
 
 struct hv_iommu_mapping {
 	phys_addr_t paddr;
@@ -413,91 +415,91 @@ static struct hv_iommu_dev *hv_iommu_device;
 struct hv_iommu_endpoint {
 	struct device *dev;
 	struct hv_iommu_dev *hv_iommu;
-	struct hv_iommu_domain *domain;
+	struct hv_iommu_domain *hvdom;
 };
 
 static void __init hv_initialize_special_domains(void)
 {
-	struct hv_iommu_domain *domain;
+	struct hv_iommu_domain *hvdom;
 
 	/* Default passthrough domain */
-	domain = &hv_identity_domain;
+	hvdom = &hv_identity_domain;
 
-	memset(domain, 0, sizeof(*domain));
+	memset(hvdom, 0, sizeof(*hvdom));
 
-	domain->device_domain.partition_id = HV_PARTITION_ID_SELF;
-	domain->device_domain.domain_id.type = HV_DEVICE_DOMAIN_TYPE_S2;
-	domain->device_domain.domain_id.id = HV_DEVICE_DOMAIN_ID_S2_DEFAULT;
+	hvdom->device_domain.partition_id = HV_PARTITION_ID_SELF;
+	hvdom->device_domain.domain_id.type = HV_DEVICE_DOMAIN_TYPE_S2;
+	hvdom->device_domain.domain_id.id = HV_DEVICE_DOMAIN_ID_S2_DEFAULT;
 
-	domain->domain.geometry = hv_iommu_device->geometry;
+	hvdom->immdom.geometry = hv_iommu_device->geometry;
 
 	/* NULL domain that blocks all DMA transactions */
-	domain = &hv_null_domain;
+	hvdom = &hv_null_domain;
 
-	memset(domain, 0, sizeof(*domain));
+	memset(hvdom, 0, sizeof(*hvdom));
 
-	domain->device_domain.partition_id = HV_PARTITION_ID_SELF;
-	domain->device_domain.domain_id.type = HV_DEVICE_DOMAIN_TYPE_S2;
-	domain->device_domain.domain_id.id = HV_DEVICE_DOMAIN_ID_S2_NULL;
+	hvdom->device_domain.partition_id = HV_PARTITION_ID_SELF;
+	hvdom->device_domain.domain_id.type = HV_DEVICE_DOMAIN_TYPE_S2;
+	hvdom->device_domain.domain_id.id = HV_DEVICE_DOMAIN_ID_S2_NULL;
 
-	domain->domain.geometry = hv_iommu_device->geometry;
+	hvdom->immdom.geometry = hv_iommu_device->geometry;
 }
 
-static bool is_identity_domain(struct hv_iommu_domain *d)
+static bool is_identity_hvdomain(struct hv_iommu_domain *d)
 {
 	return d->device_domain.domain_id.id == HV_DEVICE_DOMAIN_ID_S2_DEFAULT;
 }
 
-static bool is_null_domain(struct hv_iommu_domain *d)
+static bool is_null_hvdomain(struct hv_iommu_domain *d)
 {
 	return d->device_domain.domain_id.id == HV_DEVICE_DOMAIN_ID_S2_NULL;
 }
 
 static struct iommu_domain *hv_iommu_domain_alloc(unsigned int type)
 {
-	struct hv_iommu_domain *domain;
+	struct hv_iommu_domain *hvdom;
 	int ret;
 	u64 status;
 	unsigned long flags;
 	struct hv_input_create_device_domain *input;
 
 	if (type == IOMMU_DOMAIN_IDENTITY)
-		return &hv_identity_domain.domain;
+		return &hv_identity_domain.immdom;
 
 	if (type == IOMMU_DOMAIN_BLOCKED)
-		return &hv_null_domain.domain;
+		return &hv_null_domain.immdom;
 
-	domain = kzalloc(sizeof(*domain), GFP_KERNEL);
-	if (!domain)
+	hvdom = kzalloc(sizeof(*hvdom), GFP_KERNEL);
+	if (!hvdom)
 		goto out;
 
-	spin_lock_init(&domain->mappings_lock);
-	domain->mappings = RB_ROOT_CACHED;
+	spin_lock_init(&hvdom->mappings_lock);
+	hvdom->mappings = RB_ROOT_CACHED;
 
 	if (type == IOMMU_DOMAIN_DMA &&
-		iommu_get_dma_cookie(&domain->domain)) {
+		iommu_get_dma_cookie(&hvdom->immdom)) {
 		goto out_free;
 	}
 
 	ret = ida_alloc_range(&hv_iommu_device->domain_ids,
-			hv_iommu_device->first_domain, hv_iommu_device->last_domain,
-			GFP_KERNEL);
+			hv_iommu_device->first_domain,
+			hv_iommu_device->last_domain, GFP_KERNEL);
 	if (ret < 0)
 		goto out_put_cookie;
 
-	domain->device_domain.partition_id = HV_PARTITION_ID_SELF;
-	domain->device_domain.domain_id.type = HV_DEVICE_DOMAIN_TYPE_S2;
-	domain->device_domain.domain_id.id = ret;
+	hvdom->device_domain.partition_id = HV_PARTITION_ID_SELF;
+	hvdom->device_domain.domain_id.type = HV_DEVICE_DOMAIN_TYPE_S2;
+	hvdom->device_domain.domain_id.id = ret;
 
-	domain->hv_iommu = hv_iommu_device;
-	domain->map_flags = hv_iommu_device->map_flags;
+	hvdom->hv_iommu = hv_iommu_device;
+	hvdom->map_flags = hv_iommu_device->map_flags;
 
 	local_irq_save(flags);
 
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	memset(input, 0, sizeof(*input));
 
-	input->device_domain = domain->device_domain;
+	input->device_domain = hvdom->device_domain;
 
 	input->create_device_domain_flags.forward_progress_required = 1;
 	input->create_device_domain_flags.inherit_owning_vtl = 0;
@@ -511,36 +513,37 @@ static struct iommu_domain *hv_iommu_domain_alloc(unsigned int type)
 		goto out_free_id;
 	}
 
-	domain->domain.pgsize_bitmap = hv_iommu_device->pgsize_bitmap;
-	domain->domain.geometry = hv_iommu_device->geometry;
+	hvdom->immdom.pgsize_bitmap = hv_iommu_device->pgsize_bitmap;
+	hvdom->immdom.geometry = hv_iommu_device->geometry;
 
-	return &domain->domain;
+	return &hvdom->immdom;
 
 out_free_id:
-	ida_free(&hv_iommu_device->domain_ids, domain->device_domain.domain_id.id);
+	ida_free(&hv_iommu_device->domain_ids,
+		 hvdom->device_domain.domain_id.id);
 out_put_cookie:
-	iommu_put_dma_cookie(&domain->domain);
+	iommu_put_dma_cookie(&hvdom->immdom);
 out_free:
-	kfree(domain);
+	kfree(hvdom);
 out:
 	return NULL;
 }
 
-static void hv_iommu_domain_free(struct iommu_domain *d)
+static void hv_iommu_domain_free(struct iommu_domain *immdom)
 {
-	struct hv_iommu_domain *domain = to_hv_iommu_domain(d);
+	struct hv_iommu_domain *hvdom = to_hv_iommu_domain(immdom);
 	unsigned long flags;
 	u64 status;
 	struct hv_input_delete_device_domain *input;
 
-	if (is_identity_domain(domain) || is_null_domain(domain))
+	if (is_identity_hvdomain(hvdom) || is_null_hvdomain(hvdom))
 		return;
 
 	local_irq_save(flags);
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	memset(input, 0, sizeof(*input));
 
-	input->device_domain = domain->device_domain;
+	input->device_domain = hvdom->device_domain;
 
 	status = hv_do_hypercall(HVCALL_DELETE_DEVICE_DOMAIN, input, NULL);
 
@@ -549,16 +552,18 @@ static void hv_iommu_domain_free(struct iommu_domain *d)
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
 
-	ida_free(&domain->hv_iommu->domain_ids, domain->device_domain.domain_id.id);
+	ida_free(&hvdom->hv_iommu->domain_ids,
+		 hvdom->device_domain.domain_id.id);
 
-	iommu_put_dma_cookie(d);
+	iommu_put_dma_cookie(immdom);
 
-	kfree(domain);
+	kfree(hvdom);
 }
 
-static int hv_iommu_attach_dev(struct iommu_domain *d, struct device *dev)
+/* this to attach a device to a pre allocated and created iommu domain */
+static int hv_iommu_attach_dev(struct iommu_domain *immdom, struct device *dev)
 {
-	struct hv_iommu_domain *domain = to_hv_iommu_domain(d);
+	struct hv_iommu_domain *hvdom = to_hv_iommu_domain(immdom);
 	u64 status;
 	unsigned long flags;
 	struct hv_input_attach_device_domain *input;
@@ -571,14 +576,11 @@ static int hv_iommu_attach_dev(struct iommu_domain *d, struct device *dev)
 
 	pdev = to_pci_dev(dev);
 
-	dev_dbg(dev, "Attaching (%strusted) to %d\n", pdev->untrusted ? "un" : "",
-		domain->device_domain.domain_id.id);
-
 	local_irq_save(flags);
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	memset(input, 0, sizeof(*input));
 
-	input->device_domain = domain->device_domain;
+	input->device_domain = hvdom->device_domain;
 	input->device_id = hv_build_pci_dev_id(pdev);
 
 	status = hv_do_hypercall(HVCALL_ATTACH_DEVICE_DOMAIN, input, NULL);
@@ -587,18 +589,18 @@ static int hv_iommu_attach_dev(struct iommu_domain *d, struct device *dev)
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
 	else
-		vdev->domain = domain;
+		vdev->hvdom = hvdom;
 
 	return hv_status_to_errno(status);
 }
 
-static void hv_iommu_detach_dev(struct iommu_domain *d, struct device *dev)
+static void hv_iommu_detach_dev(struct iommu_domain *immdom, struct device *dev)
 {
 	u64 status;
 	unsigned long flags;
 	struct hv_input_detach_device_domain *input;
 	struct pci_dev *pdev;
-	struct hv_iommu_domain *domain = to_hv_iommu_domain(d);
+	struct hv_iommu_domain *hvdom = to_hv_iommu_domain(immdom);
 	struct hv_iommu_endpoint *vdev = dev_iommu_priv_get(dev);
 
 	/* See the attach function, only PCI devices for now */
@@ -607,7 +609,7 @@ static void hv_iommu_detach_dev(struct iommu_domain *d, struct device *dev)
 
 	pdev = to_pci_dev(dev);
 
-	dev_dbg(dev, "Detaching from %d\n", domain->device_domain.domain_id.id);
+	dev_dbg(dev, "Detaching from %d\n", hvdom->device_domain.domain_id.id);
 
 	local_irq_save(flags);
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
@@ -622,11 +624,12 @@ static void hv_iommu_detach_dev(struct iommu_domain *d, struct device *dev)
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
 
-	vdev->domain = NULL;
+	vdev->hvdom = NULL;
 }
 
-static int hv_iommu_add_mapping(struct hv_iommu_domain *domain, unsigned long iova,
-		phys_addr_t paddr, size_t size, u32 flags)
+static int hv_iommu_add_mapping(struct hv_iommu_domain *hvdom,
+				unsigned long iova, phys_addr_t paddr,
+				size_t size, u32 flags)
 {
 	unsigned long irqflags;
 	struct hv_iommu_mapping *mapping;
@@ -640,15 +643,15 @@ static int hv_iommu_add_mapping(struct hv_iommu_domain *domain, unsigned long io
 	mapping->iova.last = iova + size - 1;
 	mapping->flags = flags;
 
-	spin_lock_irqsave(&domain->mappings_lock, irqflags);
-	interval_tree_insert(&mapping->iova, &domain->mappings);
-	spin_unlock_irqrestore(&domain->mappings_lock, irqflags);
+	spin_lock_irqsave(&hvdom->mappings_lock, irqflags);
+	interval_tree_insert(&mapping->iova, &hvdom->mappings);
+	spin_unlock_irqrestore(&hvdom->mappings_lock, irqflags);
 
 	return 0;
 }
 
-static size_t hv_iommu_del_mappings(struct hv_iommu_domain *domain,
-		unsigned long iova, size_t size)
+static size_t hv_iommu_del_mappings(struct hv_iommu_domain *hvdom,
+				    unsigned long iova, size_t size)
 {
 	unsigned long flags;
 	size_t unmapped = 0;
@@ -656,8 +659,8 @@ static size_t hv_iommu_del_mappings(struct hv_iommu_domain *domain,
 	struct hv_iommu_mapping *mapping = NULL;
 	struct interval_tree_node *node, *next;
 
-	spin_lock_irqsave(&domain->mappings_lock, flags);
-	next = interval_tree_iter_first(&domain->mappings, iova, last);
+	spin_lock_irqsave(&hvdom->mappings_lock, flags);
+	next = interval_tree_iter_first(&hvdom->mappings, iova, last);
 	while (next) {
 		node = next;
 		mapping = container_of(node, struct hv_iommu_mapping, iova);
@@ -669,16 +672,16 @@ static size_t hv_iommu_del_mappings(struct hv_iommu_domain *domain,
 
 		unmapped += mapping->iova.last - mapping->iova.start + 1;
 
-		interval_tree_remove(node, &domain->mappings);
+		interval_tree_remove(node, &hvdom->mappings);
 		kfree(mapping);
 	}
-	spin_unlock_irqrestore(&domain->mappings_lock, flags);
+	spin_unlock_irqrestore(&hvdom->mappings_lock, flags);
 
 	return unmapped;
 }
 
 /* Return: must return exact status from the hypercall without changes */
-static u64 hv_iommu_map_pgs(struct hv_iommu_domain *domain,
+static u64 hv_iommu_map_pgs(struct hv_iommu_domain *hvdom,
 			      unsigned long iova, phys_addr_t paddr,
 			      unsigned long npages, u32 map_flags)
 {
@@ -691,7 +694,7 @@ static u64 hv_iommu_map_pgs(struct hv_iommu_domain *domain,
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	memset(input, 0, sizeof(*input));
 
-	input->device_domain = domain->device_domain;
+	input->device_domain = hvdom->device_domain;
 	input->map_flags = map_flags;
 	input->target_device_va_base = iova;
 
@@ -711,13 +714,13 @@ static u64 hv_iommu_map_pgs(struct hv_iommu_domain *domain,
  * iommu. The core vfio loops over huge ranges calling this function with
  * the largest size from HV_IOMMU_PGSIZES. cond_resched() in vfio_iommu_map.
  */
-static int hv_iommu_map(struct iommu_domain *d, unsigned long iova,
+static int hv_iommu_map(struct iommu_domain *immdom, unsigned long iova,
 			phys_addr_t paddr, size_t size, int prot, gfp_t gfp)
 {
 	u32 map_flags;
 	unsigned long npages, done = 0;
 	int ret;
-	struct hv_iommu_domain *domain = to_hv_iommu_domain(d);
+	struct hv_iommu_domain *hvdom = to_hv_iommu_domain(immdom);
 	u64 status;
 
 	/* Reject size that's not a whole page */
@@ -727,7 +730,7 @@ static int hv_iommu_map(struct iommu_domain *d, unsigned long iova,
 	map_flags = HV_MAP_GPA_READABLE; /* Always required */
 	map_flags |= prot & IOMMU_WRITE ? HV_MAP_GPA_WRITABLE : 0;
 
-	ret = hv_iommu_add_mapping(domain, iova, paddr, size, map_flags);
+	ret = hv_iommu_add_mapping(hvdom, iova, paddr, size, map_flags);
 	if (ret)
 		return ret;
 
@@ -735,7 +738,7 @@ static int hv_iommu_map(struct iommu_domain *d, unsigned long iova,
 	while (done < npages) {
 		ulong completed, remain = npages - done;
 
-		status = hv_iommu_map_pgs(domain, iova, paddr, remain,
+		status = hv_iommu_map_pgs(hvdom, iova, paddr, remain,
 					  map_flags);
 
 		completed = hv_repcomp(status);
@@ -764,22 +767,22 @@ static int hv_iommu_map(struct iommu_domain *d, unsigned long iova,
 		size = done << HV_HYP_PAGE_SHIFT;
 
 		/* following will call hv_iommu_del_mappings() */
-		hv_iommu_unmap(d, iova - size, size, NULL);
+		hv_iommu_unmap(immdom, iova - size, size, NULL);
 	}
 
 	return hv_status_to_errno(status);
 }
 
-static size_t hv_iommu_unmap(struct iommu_domain *d, unsigned long iova,
+static size_t hv_iommu_unmap(struct iommu_domain *immdom, unsigned long iova,
 			   size_t size, struct iommu_iotlb_gather *gather)
 {
 	size_t unmapped;
-	struct hv_iommu_domain *domain = to_hv_iommu_domain(d);
+	struct hv_iommu_domain *hvdom = to_hv_iommu_domain(immdom);
 	unsigned long flags, npages;
 	struct hv_input_unmap_device_gpa_pages *input;
 	u64 status;
 
-	unmapped = hv_iommu_del_mappings(domain, iova, size);
+	unmapped = hv_iommu_del_mappings(hvdom, iova, size);
 	if (unmapped < size)
 		return 0;
 
@@ -789,12 +792,12 @@ static size_t hv_iommu_unmap(struct iommu_domain *d, unsigned long iova,
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	memset(input, 0, sizeof(*input));
 
-	input->device_domain = domain->device_domain;
+	input->device_domain = hvdom->device_domain;
 	input->target_device_va_base = iova;
 
 	/* Unmap `npages` pages starting from VA base */
 	status = hv_do_rep_hypercall(HVCALL_UNMAP_DEVICE_GPA_PAGES, npages,
-			0, input, NULL);
+				     0, input, NULL);
 
 	local_irq_restore(flags);
 
@@ -804,22 +807,22 @@ static size_t hv_iommu_unmap(struct iommu_domain *d, unsigned long iova,
 	return hv_result_success(status) ? unmapped : 0;
 }
 
-static phys_addr_t hv_iommu_iova_to_phys(struct iommu_domain *d,
+static phys_addr_t hv_iommu_iova_to_phys(struct iommu_domain *immdom,
 				       dma_addr_t iova)
 {
 	u64 paddr = 0;
 	unsigned long flags;
 	struct hv_iommu_mapping *mapping;
 	struct interval_tree_node *node;
-	struct hv_iommu_domain *domain = to_hv_iommu_domain(d);
+	struct hv_iommu_domain *hvdom = to_hv_iommu_domain(immdom);
 
-	spin_lock_irqsave(&domain->mappings_lock, flags);
-	node = interval_tree_iter_first(&domain->mappings, iova, iova);
+	spin_lock_irqsave(&hvdom->mappings_lock, flags);
+	node = interval_tree_iter_first(&hvdom->mappings, iova, iova);
 	if (node) {
 		mapping = container_of(node, struct hv_iommu_mapping, iova);
 		paddr = mapping->paddr + (iova - mapping->iova.start);
 	}
-	spin_unlock_irqrestore(&domain->mappings_lock, flags);
+	spin_unlock_irqrestore(&hvdom->mappings_lock, flags);
 
 	return paddr;
 }
@@ -845,8 +848,7 @@ static struct iommu_device *hv_iommu_probe_device(struct device *dev)
 		do {
 			parsed = 0;
 
-			sscanf(pci_devs_to_skip + pos,
-				" (%x:%x:%x.%x) %n",
+			sscanf(pci_devs_to_skip + pos, " (%x:%x:%x.%x) %n",
 				&segment, &bus, &slot, &func, &parsed);
 
 			if (parsed <= 0)
@@ -855,8 +857,8 @@ static struct iommu_device *hv_iommu_probe_device(struct device *dev)
 			if (pci_domain_nr(pdev->bus) == segment &&
 				pdev->bus->number == bus &&
 				PCI_SLOT(pdev->devfn) == slot &&
-				PCI_FUNC(pdev->devfn) == func)
-			{
+				PCI_FUNC(pdev->devfn) == func) {
+
 				dev_info(dev, "skipped by MSHV IOMMU\n");
 				return ERR_PTR(-ENODEV);
 			}
@@ -879,9 +881,9 @@ static struct iommu_device *hv_iommu_probe_device(struct device *dev)
 
 static void hv_iommu_probe_finalize(struct device *dev)
 {
-	struct iommu_domain *d = iommu_get_domain_for_dev(dev);
+	struct iommu_domain *immdom = iommu_get_domain_for_dev(dev);
 
-	if (d && d->type == IOMMU_DOMAIN_DMA)
+	if (immdom && immdom->type == IOMMU_DOMAIN_DMA)
 		iommu_setup_dma_ops(dev, 1 << PAGE_SHIFT, 0);
 	else
 		set_dma_ops(dev, NULL);
@@ -892,8 +894,8 @@ static void hv_iommu_release_device(struct device *dev)
 	struct hv_iommu_endpoint *vdev = dev_iommu_priv_get(dev);
 
 	/* Need to detach device from device domain if necessary. */
-	if (vdev->domain)
-		hv_iommu_detach_dev(&vdev->domain->domain, dev);
+	if (vdev->hvdom)
+		hv_iommu_detach_dev(&vdev->hvdom->immdom, dev);
 
 	dev_iommu_priv_set(dev, NULL);
 	set_dma_ops(dev, NULL);
@@ -914,7 +916,8 @@ static struct iommu_group *hv_iommu_device_group(struct device *dev)
  * IOMMU core, which will then use this information to split physically
  * contiguous memory regions it is mapping into page sizes that we support.
  *
- * Given the size of the PFN array we can accommodate less than 512 4KiB pages.
+ * SZ_1M because at present we can only fit less than 512 PFNs in a page for
+ * hypercalls.
  */
 #define HV_IOMMU_PGSIZES (SZ_4K | SZ_1M)
 
@@ -926,7 +929,7 @@ static void hv_iommu_get_resv_regions(struct device *dev,
 		intel_iommu_get_resv_regions(dev, head);
 		break;
 	default:
-		/* Do nothing */;
+		break;  /* Do nothing */;
 	}
 }
 
@@ -1007,13 +1010,13 @@ int __init hv_iommu_init(void)
 	hv_iommu->map_flags = IOMMU_READ | IOMMU_WRITE;
 	hv_iommu->pgsize_bitmap = HV_IOMMU_PGSIZES;
 
-	ret = iommu_device_sysfs_add(&hv_iommu->iommu, NULL, NULL, "%s", "hv-iommu");
+	ret = iommu_device_sysfs_add(&hv_iommu->iommu, NULL, NULL, "%s",
+				     "hv-iommu");
 	if (ret) {
 		pr_err("iommu_device_sysfs_add failed: %d\n", ret);
 		goto err_free;
 	}
 
-	/* This must come before bus_set_iommu because it calls into the hooks. */
 	hv_iommu_device = hv_iommu;
 	hv_initialize_special_domains();
 
