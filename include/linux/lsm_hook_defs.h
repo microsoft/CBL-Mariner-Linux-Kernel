@@ -187,6 +187,8 @@ LSM_HOOK(int, 0, file_send_sigiotask, struct task_struct *tsk,
 LSM_HOOK(int, 0, file_receive, struct file *file)
 LSM_HOOK(int, 0, file_open, struct file *file)
 LSM_HOOK(int, 0, file_truncate, struct file *file)
+LSM_HOOK(int, 0, file_set_userspace_pathname, struct file *file,
+	 const struct filename *name)
 LSM_HOOK(int, 0, task_alloc, struct task_struct *task,
 	 unsigned long clone_flags)
 LSM_HOOK(void, LSM_RET_VOID, task_free, struct task_struct *task)
@@ -421,3 +423,12 @@ LSM_HOOK(int, 0, uring_override_creds, const struct cred *new)
 LSM_HOOK(int, 0, uring_sqpoll, void)
 LSM_HOOK(int, 0, uring_cmd, struct io_uring_cmd *ioucmd)
 #endif /* CONFIG_IO_URING */
+
+#ifdef CONFIG_BLK_DEV_INITRD
+LSM_HOOK(void, LSM_RET_VOID, unpack_initramfs_security, void)
+#endif
+
+LSM_HOOK(int, 0, bdev_alloc_security, struct block_device *bdev)
+LSM_HOOK(void, LSM_RET_VOID, bdev_free_security, struct block_device *bdev)
+LSM_HOOK(int, 0, bdev_setsecurity, struct block_device *bdev, const char *name,
+	 const void *value, size_t size)
