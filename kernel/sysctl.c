@@ -134,7 +134,7 @@ static int ngroups_max = NGROUPS_MAX;
 static const int cap_last_cap = CAP_LAST_CAP;
 #define CORE_FILE_NOTE_SIZE_DEFAULT (4*1024*1024)
 /* Define a reasonable max cap */
-#define CORE_FILE_NOTE_SIZE_MAX (16*1024*1024)
+#define CORE_FILE_NOTE_SIZE_MAX (256*1024*1024)
 unsigned int core_file_note_size_limit = CORE_FILE_NOTE_SIZE_DEFAULT;
 
 /*
