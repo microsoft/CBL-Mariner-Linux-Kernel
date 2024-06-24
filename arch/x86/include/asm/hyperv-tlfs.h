@@ -306,7 +306,9 @@ enum hv_isolation_type {
  * Registers are only accessible via HVCALL_GET_VP_REGISTERS hvcall and
  * there is not associated MSR address.
  */
-#define	HV_X64_REGISTER_VSM_VP_STATUS	0x000D0003
+#define	HV_X64_REGISTER_VSM_VP_STATUS		0x000D0003
+#define HV_REGISTER_VSM_CODEPAGE_OFFSETS	0x000D0002
+#define HV_REGISTER_VSM_PARTITION_STATUS	0x000D0004
 #define	HV_X64_VTL_MASK			GENMASK(3, 0)
 
 /* Hyper-V memory host visibility */
@@ -798,6 +800,47 @@ struct hv_get_vp_from_apic_id_in {
 	u8 res[7];
 	u32 apic_ids[];
 } __packed;
+
+/* Types for the EnablePartitionVtl hypercall */
+union hv_enable_partition_vtl_flags {
+	u8 as_u8;
+
+	struct {
+		u8 enable_mbec : 1;
+		u8 reserved : 7;
+	};
+};
+
+struct hv_input_enable_partition_vtl {
+	u64 partition_id;
+	u8 target_vtl;
+	union hv_enable_partition_vtl_flags flags;
+	u16 reserved16_z;
+	u32 reserved32_z;
+} __packed;
+
+union hv_register_vsm_partition_status {
+	u64 as_u64;
+
+	struct {
+		u64 enabled_vtl_set : 16;
+		u64 max_vtl : 4;
+		u64 mbec_enabled_vtl_set: 16;
+		u64 reserved_z : 28;
+	};
+};
+
+union hv_register_vsm_vp_status {
+	u64 as_u64;
+
+	struct {
+		u64 active_vtl : 4;
+		u64 active_mbec_enabled : 1;
+		u64 reserved_z0 : 11;
+		u64 enabled_vtl_set : 16;
+		u64 reserved_z1 : 32;
+	};
+};
 
 #include <asm-generic/hyperv-tlfs.h>
 
