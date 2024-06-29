@@ -23,6 +23,7 @@
  *
  */
 
+#include "core_types.h"
 #include "dm_services.h"
 #include "dcn20_opp.h"
 #include "reg_helper.h"
@@ -337,17 +338,43 @@ bool opp2_dpg_is_blanked(struct output_pixel_processor *opp)
 		(double_buffer_pending == 0);
 }
 
-void opp2_program_left_edge_extra_pixel (
-		struct output_pixel_processor *opp,
-		bool count)
+bool opp2_dpg_is_pending(struct output_pixel_processor *opp)
 {
 	struct dcn20_opp *oppn20 = TO_DCN20_OPP(opp);
+	uint32_t double_buffer_pending;
+	uint32_t dpg_en;
 
-	/* Specifies the number of extra left edge pixels that are supplied to
+	REG_GET(DPG_CONTROL, DPG_EN, &dpg_en);
+
+	REG_GET(DPG_STATUS, DPG_DOUBLE_BUFFER_PENDING, &double_buffer_pending);
+
+	return (dpg_en == 1 && double_buffer_pending == 1);
+}
+
+void opp2_program_left_edge_extra_pixel(
+		struct output_pixel_processor *opp,
+		enum dc_pixel_encoding pixel_encoding,
+		bool is_primary)
+{
+	struct dcn20_opp *oppn20 = TO_DCN20_OPP(opp);
+	uint32_t count = opp2_get_left_edge_extra_pixel_count(opp, pixel_encoding, is_primary);
+
+	/*
+	 * Specifies the number of extra left edge pixels that are supplied to
 	 * the 422 horizontal chroma sub-sample filter.
-	 * Note that when left edge pixel is not "0", fmt pixel encoding can be in either 420 or 422 mode
-	 * */
+	 */
 	REG_UPDATE(FMT_422_CONTROL, FMT_LEFT_EDGE_EXTRA_PIXEL_COUNT, count);
+}
+
+uint32_t opp2_get_left_edge_extra_pixel_count(struct output_pixel_processor *opp,
+		enum dc_pixel_encoding pixel_encoding, bool is_primary)
+{
+	if ((pixel_encoding == PIXEL_ENCODING_YCBCR422 || pixel_encoding == PIXEL_ENCODING_YCBCR420) &&
+			!opp->ctx->dc->debug.force_chroma_subsampling_1tap &&
+			!is_primary)
+		return 1;
+	else
+		return 0;
 }
 
 /*****************************************/
@@ -363,9 +390,11 @@ static struct opp_funcs dcn20_opp_funcs = {
 		.opp_set_disp_pattern_generator = opp2_set_disp_pattern_generator,
 		.opp_program_dpg_dimensions = opp2_program_dpg_dimensions,
 		.dpg_is_blanked = opp2_dpg_is_blanked,
+		.dpg_is_pending = opp2_dpg_is_pending,
 		.opp_dpg_set_blank_color = opp2_dpg_set_blank_color,
 		.opp_destroy = opp1_destroy,
 		.opp_program_left_edge_extra_pixel = opp2_program_left_edge_extra_pixel,
+		.opp_get_left_edge_extra_pixel_count = opp2_get_left_edge_extra_pixel_count,
 };
 
 void dcn20_opp_construct(struct dcn20_opp *oppn20,

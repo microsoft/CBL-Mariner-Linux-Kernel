@@ -87,7 +87,7 @@ static int smu10_send_msg_to_smc(struct pp_hwmgr *hwmgr, uint16_t msg)
 	smu10_send_msg_to_smc_without_waiting(hwmgr, msg);
 
 	if (smu10_wait_for_response(hwmgr) == 0)
-		printk("Failed to send Message %x.\n", msg);
+		dev_err(adev->dev, "Failed to send Message %x.\n", msg);
 
 	return 0;
 }
@@ -108,7 +108,7 @@ static int smu10_send_msg_to_smc_with_parameter(struct pp_hwmgr *hwmgr,
 
 
 	if (smu10_wait_for_response(hwmgr) == 0)
-		printk("Failed to send Message %x.\n", msg);
+		dev_err(adev->dev, "Failed to send Message %x.\n", msg);
 
 	return 0;
 }
@@ -185,10 +185,13 @@ static int smu10_copy_table_to_smc(struct pp_hwmgr *hwmgr,
 static int smu10_verify_smc_interface(struct pp_hwmgr *hwmgr)
 {
 	uint32_t smc_driver_if_version;
+	int ret = 0;
 
-	smum_send_msg_to_smc(hwmgr,
+	ret = smum_send_msg_to_smc(hwmgr,
 			PPSMC_MSG_GetDriverIfVersion,
 			&smc_driver_if_version);
+	if (ret)
+		return ret;
 
 	if ((smc_driver_if_version != SMU10_DRIVER_IF_VERSION) &&
 	    (smc_driver_if_version != SMU10_DRIVER_IF_VERSION + 1)) {
@@ -250,9 +253,8 @@ static int smu10_smu_init(struct pp_hwmgr *hwmgr)
 
 	/* allocate space for watermarks table */
 	r = amdgpu_bo_create_kernel((struct amdgpu_device *)hwmgr->adev,
-			sizeof(Watermarks_t),
-			PAGE_SIZE,
-			AMDGPU_GEM_DOMAIN_VRAM,
+			sizeof(Watermarks_t), PAGE_SIZE,
+			AMDGPU_GEM_DOMAIN_VRAM | AMDGPU_GEM_DOMAIN_GTT,
 			&priv->smu_tables.entry[SMU10_WMTABLE].handle,
 			&priv->smu_tables.entry[SMU10_WMTABLE].mc_addr,
 			&priv->smu_tables.entry[SMU10_WMTABLE].table);
@@ -266,9 +268,8 @@ static int smu10_smu_init(struct pp_hwmgr *hwmgr)
 
 	/* allocate space for watermarks table */
 	r = amdgpu_bo_create_kernel((struct amdgpu_device *)hwmgr->adev,
-			sizeof(DpmClocks_t),
-			PAGE_SIZE,
-			AMDGPU_GEM_DOMAIN_VRAM,
+			sizeof(DpmClocks_t), PAGE_SIZE,
+			AMDGPU_GEM_DOMAIN_VRAM | AMDGPU_GEM_DOMAIN_GTT,
 			&priv->smu_tables.entry[SMU10_CLOCKTABLE].handle,
 			&priv->smu_tables.entry[SMU10_CLOCKTABLE].mc_addr,
 			&priv->smu_tables.entry[SMU10_CLOCKTABLE].table);

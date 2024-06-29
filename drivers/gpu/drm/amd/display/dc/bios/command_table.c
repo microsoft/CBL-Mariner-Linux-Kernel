@@ -37,7 +37,7 @@
 #define EXEC_BIOS_CMD_TABLE(command, params)\
 	(amdgpu_atom_execute_table(((struct amdgpu_device *)bp->base.ctx->driver_context)->mode_info.atom_context, \
 		GetIndexIntoMasterTable(COMMAND, command), \
-		(uint32_t *)&params) == 0)
+		(uint32_t *)&params, sizeof(params)) == 0)
 
 #define BIOS_CMD_TABLE_REVISION(command, frev, crev)\
 	amdgpu_atom_parse_cmd_header(((struct amdgpu_device *)bp->base.ctx->driver_context)->mode_info.atom_context, \
@@ -399,7 +399,7 @@ static enum bp_result transmitter_control_v1_6(
 static void init_transmitter_control(struct bios_parser *bp)
 {
 	uint8_t frev;
-	uint8_t crev;
+	uint8_t crev = 0;
 
 	if (BIOS_CMD_TABLE_REVISION(UNIPHYTransmitterControl,
 			frev, crev) == false)
@@ -456,7 +456,7 @@ static enum bp_result transmitter_control_v2(
 		if ((CONNECTOR_ID_DUAL_LINK_DVII == connector_id) ||
 				(CONNECTOR_ID_DUAL_LINK_DVID == connector_id))
 			/* on INIT this bit should be set according to the
-			 * phisycal connector
+			 * physical connector
 			 * Bit0: dual link connector flag
 			 * =0 connector is single link connector
 			 * =1 connector is dual link connector
@@ -468,7 +468,7 @@ static enum bp_result transmitter_control_v2(
 				cpu_to_le16((uint8_t)cntl->connector_obj_id.id);
 		break;
 	case TRANSMITTER_CONTROL_SET_VOLTAGE_AND_PREEMPASIS:
-		/* votage swing and pre-emphsis */
+		/* voltage swing and pre-emphsis */
 		params.asMode.ucLaneSel = (uint8_t)cntl->lane_select;
 		params.asMode.ucLaneSet = (uint8_t)cntl->lane_settings;
 		break;
@@ -522,7 +522,8 @@ static enum bp_result transmitter_control_v2(
 		 */
 		params.acConfig.ucEncoderSel = 1;
 
-	if (CONNECTOR_ID_DISPLAY_PORT == connector_id)
+	if (CONNECTOR_ID_DISPLAY_PORT == connector_id ||
+	    CONNECTOR_ID_USBC == connector_id)
 		/* Bit4: DP connector flag
 		 * =0 connector is none-DP connector
 		 * =1 connector is DP connector
@@ -2120,7 +2121,7 @@ static enum bp_result program_clock_v5(
 	memset(&params, 0, sizeof(params));
 	if (!bp->cmd_helper->clock_source_id_to_atom(
 			bp_params->pll_id, &atom_pll_id)) {
-		BREAK_TO_DEBUGGER(); /* Invalid Inpute!! */
+		BREAK_TO_DEBUGGER(); /* Invalid Input!! */
 		return BP_RESULT_BADINPUT;
 	}
 
