@@ -2987,16 +2987,16 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	if (err < 0)
 		goto free_modinfo;
 
+	err = apply_relocations(mod, info);
+	if (err < 0)
+		goto free_modinfo;
+
 	token = heki_validate_module(mod, info, flags);
 	if (token < 0) {
 		err = token;
 		goto free_modinfo;
 	}
 	mod->heki_token = token;
-
-	err = apply_relocations(mod, info);
-	if (err < 0)
-		goto free_modinfo;
 
 	err = post_relocation(mod, info);
 	if (err < 0)
