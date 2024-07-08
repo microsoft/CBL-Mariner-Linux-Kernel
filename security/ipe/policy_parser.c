@@ -80,66 +80,6 @@ static size_t remove_trailing_spaces(char *line)
 }
 
 /**
- * tokenize - Split a string into tokens considering quoted strings
- * @buf: The string to be tokenized
- * @delim: The delimiter characters
- *
- * tokenize() updates @buf to point after the token, ready for the next call.
- * It supports tokens enclosed in double quotes and treats them as single tokens.
- * This function behaves like strsep but with added functionality for handling quoted strings.
- *
- * Return: the next token or NULL if there are no more tokens.
- */
-static char *tokenize(char **buf, const char *delim)
-{
-	if (!*buf)
-		return NULL;
-
-	char *start = *buf, *end;
-	bool in_quotes = false;
-
-	for (end = start; *end; end++) {
-		if (*end == '\"')
-			in_quotes = !in_quotes;
-		else if (!in_quotes && strchr(delim, *end))
-			break;
-	}
-
-	if (*end == '\0') {
-		*buf = NULL;
-	} else {
-		*end = '\0';
-		*buf = end + 1;
-	}
-
-	return start;
-}
-
-/**
- * match_strdup_quoted - allocate a new string with the contents of a substring_t, excluding quotes
- * @s: &substring_t to copy
- *
- * Description: Allocates and returns a string filled with the contents of
- * the &substring_t @s, excluding the starting and ending quotes if present.
- * The caller is responsible for freeing the returned string with kfree().
- *
- * Return: the address of the newly allocated NUL-terminated string or
- * %NULL on error.
- */
-static char *match_strdup_quoted(const substring_t *s)
-{
-	const char *start = s->from;
-	const char *end = s->to;
-
-	if (*start == '\"' && *(end - 1) == '\"' && end - start >= 2) {
-		start++;
-		end--;
-	}
-
-	return kmemdup_nul(start, end - start, GFP_KERNEL);
-}
-
-/**
  * parse_version - Parse policy version.
  * @ver: Supplies a version string to be parsed.
  * @p: Supplies the partial parsed policy.
@@ -202,7 +142,7 @@ static int parse_header(char *line, struct ipe_parsed_policy *p)
 	substring_t args[MAX_OPT_ARGS];
 	size_t idx = 0;
 
-	while ((t = tokenize(&line, IPE_POLICY_DELIM)) != NULL) {
+	while ((t = strsep(&line, IPE_POLICY_DELIM)) != NULL) {
 		int token;
 
 		if (*t == '\0')
@@ -220,11 +160,9 @@ static int parse_header(char *line, struct ipe_parsed_policy *p)
 
 		switch (token) {
 		case IPE_HEADER_POLICY_NAME:
-			p->name = match_strdup_quoted(&args[0]);
+			p->name = match_strdup(&args[0]);
 			if (!p->name)
 				rc = -ENOMEM;
-			else if (strchr(p->name, '"'))
-				rc = -EBADMSG;
 			break;
 		case IPE_HEADER_POLICY_VERSION:
 			ver = match_strdup(&args[0]);
