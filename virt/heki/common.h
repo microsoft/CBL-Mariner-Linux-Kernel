@@ -13,12 +13,4 @@
 
 #define pr_fmt(fmt) "heki-guest: " fmt
 
-/*
- * If the active hypervisor supports Heki, it will plug its heki_hypervisor
- * pointer into this heki structure.
- */
-struct heki {
-	struct heki_hypervisor *hypervisor;
-};
-
 #endif /* _HEKI_COMMON_H */
