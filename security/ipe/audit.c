@@ -39,7 +39,6 @@ static const char *const audit_op_names[__IPE_OP_MAX + 1] = {
 	"KEXEC_INITRAMFS",
 	"POLICY",
 	"X509_CERT",
-	"READ",
 	"UNKNOWN",
 };
 
@@ -49,7 +48,6 @@ static const char *const audit_hook_names[__IPE_HOOK_MAX] = {
 	"MPROTECT",
 	"KERNEL_READ",
 	"KERNEL_LOAD",
-	"OPEN",
 };
 
 static const char *const audit_prop_names[__IPE_PROP_MAX] = {

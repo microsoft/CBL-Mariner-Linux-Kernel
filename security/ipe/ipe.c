@@ -60,7 +60,6 @@ static struct security_hook_list ipe_hooks[] __ro_after_init = {
 #ifdef CONFIG_IPE_PROP_FS_VERITY
 	LSM_HOOK_INIT(inode_setsecurity, ipe_inode_setsecurity),
 #endif /* CONFIG_IPE_PROP_FS_VERITY */
-	LSM_HOOK_INIT(file_open, ipe_file_open),
 };
 
 /**
