@@ -2133,14 +2133,4 @@ static inline int security_uring_cmd(struct io_uring_cmd *ioucmd)
 #endif /* CONFIG_SECURITY */
 #endif /* CONFIG_IO_URING */
 
-#ifdef CONFIG_BLK_DEV_INITRD
-#ifdef CONFIG_SECURITY
-extern void security_unpack_initramfs(void);
-#else
-static inline void security_unpack_initramfs(void)
-{
-}
-#endif /* CONFIG_SECURITY */
-#endif /* CONFIG_BLK_DEV_INITRD */
-
 #endif /* ! __LINUX_SECURITY_H */
