@@ -2,3 +2,4 @@
 
 obj-y += main.o
 obj-y += walk.o
+obj-y += protect.o

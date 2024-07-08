@@ -14,6 +14,7 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
+#include <linux/xarray.h>
 
 /*
  * A hypervisor that supports Heki will instantiate this structure to
@@ -28,6 +29,17 @@ struct heki_hypervisor {
 };
 
 #ifdef CONFIG_HEKI
+
+/*
+ * If the active hypervisor supports Heki, it will plug its heki_hypervisor
+ * pointer into this heki structure.
+ */
+struct heki {
+	struct heki_hypervisor *hypervisor;
+	struct mutex lock;
+};
+
+extern struct heki heki;
 /*
  * The kernel page table is walked to locate kernel mappings. For each
  * mapping, a callback function is called. The table walker passes information
@@ -39,6 +51,7 @@ struct heki_args {
 	phys_addr_t pa;
 	size_t size;
 	unsigned long flags;
+	struct xarray permissions;
 };
 
 /* Callback function called by the table walker. */
@@ -46,6 +59,15 @@ typedef void (*heki_func_t)(struct heki_args *args);
 
 void heki_late_init(void);
 void heki_register_hypervisor(struct heki_hypervisor *hypervisor);
+void heki_walk(unsigned long va, unsigned long va_end, heki_func_t func,
+	       struct heki_args *args);
+void heki_map(unsigned long va, unsigned long end);
+void heki_init_perm(unsigned long va, unsigned long end,
+		    struct heki_args *args);
+
+/* Arch-specific functions. */
+void heki_arch_init(void);
+unsigned long heki_flags_to_permissions(unsigned long flags);
 
 #else /* !CONFIG_HEKI */
 

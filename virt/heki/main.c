@@ -31,6 +31,10 @@ void heki_late_init(void)
 		pr_warn("Unable to lock down control registers\n");
 	else
 		pr_warn("Control registers locked\n");
+
+	mutex_init(&heki.lock);
+	heki_arch_init();
+
 	/*
 	 * Signal end of kernel boot.
 	 * This means all boot time lvbs protections are in place and protections on
