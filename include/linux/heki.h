@@ -14,7 +14,36 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/printk.h>
+#include <linux/mm.h>
 #include <linux/xarray.h>
+
+/*
+ * This structure contains a guest physical range and its attributes (e.g.,
+ * permissions (RWX)).
+ */
+struct heki_range {
+	unsigned long va;
+	phys_addr_t pa;
+	phys_addr_t epa;
+	unsigned long attributes;
+};
+
+/*
+ * Guest ranges are passed to the VMM or hypervisor so they can be authenticated
+ * and their permissions can be set in the host page table. When an array of
+ * these is passed to the Hypervisor or VMM, the array must be in physically
+ * contiguous memory.
+ *
+ * This struct occupies one page. In each page, an array of guest ranges can
+ * be passed. A guest request to the VMM/Hypervisor may contain a list of
+ * these structs (linked by "next_pa").
+ */
+struct heki_page {
+	struct heki_page *next;
+	phys_addr_t next_pa;
+	unsigned long nranges;
+	struct heki_range ranges[];
+};
 
 /*
  * A hypervisor that supports Heki will instantiate this structure to
@@ -26,6 +55,9 @@ struct heki_hypervisor {
 
 	/* Signal end of kernel boot */
 	int (*finish_boot)(void);
+
+	/* Protect guest memory */
+	int (*protect_memory)(phys_addr_t pa, unsigned long nranges);
 };
 
 #ifdef CONFIG_HEKI
@@ -52,6 +84,16 @@ struct heki_args {
 	size_t size;
 	unsigned long flags;
 	struct xarray permissions;
+
+	/* attributes passed to heki_add_pa_range(). */
+	unsigned long attributes;
+
+	/* Page list is built by the callback. */
+	struct heki_page *head;
+	struct heki_page *tail;
+	struct heki_range *cur;
+	unsigned long nranges;
+	phys_addr_t head_pa;
 };
 
 /* Callback function called by the table walker. */
@@ -64,6 +106,10 @@ void heki_walk(unsigned long va, unsigned long va_end, heki_func_t func,
 void heki_map(unsigned long va, unsigned long end);
 void heki_init_perm(unsigned long va, unsigned long end,
 		    struct heki_args *args);
+void heki_protect(unsigned long va, unsigned long end, struct heki_args *args);
+void heki_add_range(struct heki_args *args, unsigned long va,
+		    phys_addr_t pa, phys_addr_t epa);
+void heki_cleanup_args(struct heki_args *args);
 
 /* Arch-specific functions. */
 void heki_arch_init(void);
