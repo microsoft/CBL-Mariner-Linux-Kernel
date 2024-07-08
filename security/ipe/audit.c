@@ -67,9 +67,6 @@ static const char *const audit_prop_names[__IPE_PROP_MAX] = {
 	"fsverity_signature=FALSE",
 	"fsverity_signature=TRUE",
 #endif /* CONFIG_IPE_PROP_FS_VERITY */
-#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
-	"intended_pathname=",
-#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME*/
 };
 
 #ifdef CONFIG_IPE_PROP_DM_VERITY
@@ -106,26 +103,6 @@ static void audit_fsv_digest(struct audit_buffer *ab, const void *d)
 }
 #endif /* CONFIG_IPE_PROP_DM_VERITY */
 
-#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
-/**
- * audit_intended_pathname - audit the path pattern of an intended_pathname rule
- * @ab: Supplies a pointer to the audit_buffer to append to.
- * @path: Supplies a pointer to the path pattern.
- */
-static void audit_intended_pathname(struct audit_buffer *ab,
-				    const char *pattern)
-{
-	audit_log_format(ab, "%s",
-			 audit_prop_names[IPE_PROP_INTENDED_PATHNAME]);
-	audit_log_untrustedstring(ab, pattern);
-}
-#else
-static void audit_intended_pathname(struct audit_buffer *ab,
-				    const char *pattern)
-{
-}
-#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
-
 /**
  * audit_rule - audit an IPE policy rule approximation.
  * @ab: Supplies a pointer to the audit_buffer to append to.
@@ -144,9 +121,6 @@ static void audit_rule(struct audit_buffer *ab, const struct ipe_rule *r)
 			break;
 		case IPE_PROP_FSV_DIGEST:
 			audit_fsv_digest(ab, ptr->value);
-			break;
-		case IPE_PROP_INTENDED_PATHNAME:
-			audit_intended_pathname(ab, ptr->value);
 			break;
 		default:
 			audit_log_format(ab, "%s", audit_prop_names[ptr->type]);

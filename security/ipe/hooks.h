@@ -55,10 +55,4 @@ int ipe_inode_setsecurity(struct inode *inode, const char *name,
 			  int flags);
 #endif /* CONFIG_IPE_PROP_FS_VERITY */
 
-#ifdef CONFIG_IPE_PROP_INTENDED_PATHNAME
-void ipe_file_free_security(struct file *f);
-
-int ipe_file_set_userspace_pathname(struct file *f, const struct filename *path);
-#endif /* CONFIG_IPE_PROP_INTENDED_PATHNAME */
-
 #endif /* _IPE_HOOKS_H */
