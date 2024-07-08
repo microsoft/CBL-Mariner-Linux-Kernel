@@ -16,6 +16,4 @@
 struct ipe_sb *ipe_sb(const struct super_block *sb);
 #endif /* CONFIG_BLK_DEV_INITRD */
 
-extern bool ipe_enabled;
-
 #endif /* _IPE_H */
