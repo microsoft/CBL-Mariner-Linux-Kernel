@@ -22,6 +22,5 @@ void ipe_digest_free(struct digest_info *digest_info);
 void ipe_digest_audit(struct audit_buffer *ab, const struct digest_info *val);
 bool ipe_digest_eval(const struct digest_info *expected,
 		     const struct digest_info *digest);
-struct digest_info *ipe_digest_dup(const struct digest_info *src);
 
 #endif /* _IPE_DIGEST_H */
