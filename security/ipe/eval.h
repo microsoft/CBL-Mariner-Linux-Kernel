@@ -10,12 +10,10 @@
 #include <linux/types.h>
 
 #include "policy.h"
-#include "hooks.h"
 
 #define IPE_EVAL_CTX_INIT ((struct ipe_eval_ctx){ 0 })
 
 extern struct ipe_policy __rcu *ipe_active_policy;
-extern bool success_audit;
 
 #ifdef CONFIG_BLK_DEV_INITRD
 struct ipe_sb {
@@ -25,7 +23,6 @@ struct ipe_sb {
 
 struct ipe_eval_ctx {
 	enum ipe_op_type op;
-	enum ipe_hook_type hook;
 
 	const struct file *file;
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -33,15 +30,7 @@ struct ipe_eval_ctx {
 #endif /* CONFIG_BLK_DEV_INITRD */
 };
 
-enum ipe_match {
-	IPE_MATCH_RULE = 0,
-	IPE_MATCH_TABLE,
-	IPE_MATCH_GLOBAL,
-	__IPE_MATCH_MAX
-};
-
-void build_eval_ctx(struct ipe_eval_ctx *ctx, const struct file *file,
-		    enum ipe_op_type op, enum ipe_hook_type hook);
+void build_eval_ctx(struct ipe_eval_ctx *ctx, const struct file *file, enum ipe_op_type op);
 int ipe_evaluate_event(const struct ipe_eval_ctx *const ctx);
 
 #endif /* _IPE_EVAL_H */
