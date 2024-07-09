@@ -15,6 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/mm.h>
+#include <linux/vmalloc.h>
 #include <linux/xarray.h>
 
 /*
@@ -45,6 +46,11 @@ struct heki_page {
 	struct heki_range ranges[];
 };
 
+enum heki_kdata_type {
+	HEKI_MODULE_CERTS,
+	HEKI_KDATA_MAX,
+};
+
 /*
  * A hypervisor that supports Heki will instantiate this structure to
  * provide hypervisor specific functions for Heki.
@@ -58,6 +64,9 @@ struct heki_hypervisor {
 
 	/* Protect guest memory */
 	int (*protect_memory)(phys_addr_t pa, unsigned long nranges);
+
+	/* Load kernel data */
+	int (*load_kdata)(phys_addr_t pa, unsigned long nranges);
 };
 
 #ifdef CONFIG_HEKI
@@ -110,6 +119,7 @@ void heki_protect(unsigned long va, unsigned long end, struct heki_args *args);
 void heki_add_range(struct heki_args *args, unsigned long va,
 		    phys_addr_t pa, phys_addr_t epa);
 void heki_cleanup_args(struct heki_args *args);
+void heki_load_kdata(void);
 
 /* Arch-specific functions. */
 void heki_arch_init(void);
