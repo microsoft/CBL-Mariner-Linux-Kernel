@@ -2903,13 +2903,6 @@ static int load_module(struct load_info *info, const char __user *uargs,
 		goto free_copy;
 	}
 
-	token = heki_validate_module(mod, info, flags);
-	if (token < 0) {
-		err = token;
-		goto free_copy;
-	}
-	mod->heki_token = token;
-
 	module_allocated = true;
 
 	audit_log_kern_module(mod->name);
@@ -2956,6 +2949,13 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	err = simplify_symbols(mod, info);
 	if (err < 0)
 		goto free_modinfo;
+
+	token = heki_validate_module(mod, info, flags);
+	if (token < 0) {
+		err = token;
+		goto free_modinfo;
+	}
+	mod->heki_token = token;
 
 	err = apply_relocations(mod, info);
 	if (err < 0)

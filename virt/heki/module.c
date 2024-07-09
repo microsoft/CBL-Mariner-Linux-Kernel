@@ -8,10 +8,14 @@
 #include <linux/heki.h>
 #include "../../kernel/module/internal.h"
 
+#include <asm-generic/sections.h>
+
 #include "common.h"
 
 extern __initconst const u8 system_certificate_list[];
 extern __initconst const unsigned long module_cert_size;
+
+static struct heki_kinfo heki_kinfo;
 
 static u8 *heki_module_certs;
 static unsigned long heki_module_cert_size;
@@ -70,6 +74,25 @@ void heki_load_kdata(void)
 	args.attributes = HEKI_MODULE_CERTS;
 	heki_walk((unsigned long)heki_module_certs,
 		  (unsigned long)heki_module_certs + heki_module_cert_size,
+		  heki_get_ranges, &args);
+
+	heki_kinfo.ksymtab_start =
+			(struct kernel_symbol *)__start___ksymtab;
+	heki_kinfo.ksymtab_end =
+			(struct kernel_symbol *)__stop___ksymtab;
+	heki_kinfo.ksymtab_gpl_start =
+			(struct kernel_symbol *)__start___ksymtab_gpl;
+	heki_kinfo.ksymtab_gpl_end =
+			(struct kernel_symbol *)__stop___ksymtab_gpl;
+
+	args.attributes = HEKI_KERNEL_INFO;
+	heki_walk((unsigned long)&heki_kinfo,
+		  (unsigned long)&heki_kinfo + sizeof(heki_kinfo),
+		  heki_get_ranges, &args);
+
+	args.attributes = HEKI_KERNEL_DATA;
+	heki_walk((unsigned long)__start_rodata,
+		  (unsigned long)__end_rodata,
 		  heki_get_ranges, &args);
 
 	if (hypervisor->load_kdata(args.head_pa, args.nranges))
