@@ -56,6 +56,7 @@
 #include <linux/dynamic_debug.h>
 #include <linux/audit.h>
 #include <linux/cfi.h>
+#include <linux/heki.h>
 #include <linux/debugfs.h>
 #include <uapi/linux/module.h>
 #include "internal.h"
@@ -1978,6 +1979,7 @@ static void free_copy(struct load_info *info, int flags)
 		module_decompress_cleanup(info);
 	else
 		vfree(info->hdr);
+	vfree(info->orig_hdr);
 }
 
 static int rewrite_section_headers(struct load_info *info, int flags)
@@ -2826,6 +2828,16 @@ static int early_mod_check(struct load_info *info, int flags)
 	return err;
 }
 
+static int save_hdr(struct load_info *info)
+{
+	info->orig_len = info->len;
+	info->orig_hdr = vmalloc(info->len);
+	if (!info->orig_hdr)
+		return -ENOMEM;
+	memcpy(info->orig_hdr, info->hdr, info->len);
+	return 0;
+}
+
 /*
  * Allocate and load the module: note that size of section 0 is always
  * zero, and we rely on this for optional sections.
@@ -2835,8 +2847,17 @@ static int load_module(struct load_info *info, const char __user *uargs,
 {
 	struct module *mod;
 	bool module_allocated = false;
-	long err = 0;
+	long err = 0, token;
 	char *after_dashes;
+
+	/*
+	 * The header gets modified in this function. But the original
+	 * header needs to be passed to the hypervisor for verification
+	 * if this is a guest. So, save the original header.
+	 */
+	err = save_hdr(info);
+	if (err)
+		return err;
 
 	/*
 	 * Do the signature check (if any) first. All that
@@ -2873,6 +2894,13 @@ static int load_module(struct load_info *info, const char __user *uargs,
 		err = PTR_ERR(mod);
 		goto free_copy;
 	}
+
+	token = heki_validate_module(mod, info, flags);
+	if (token < 0) {
+		err = token;
+		goto free_copy;
+	}
+	mod->heki_token = token;
 
 	module_allocated = true;
 

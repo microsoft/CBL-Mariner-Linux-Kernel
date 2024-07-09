@@ -15,8 +15,11 @@
 #include <linux/kernel.h>
 #include <linux/printk.h>
 #include <linux/mm.h>
+#include <linux/module.h>
 #include <linux/vmalloc.h>
 #include <linux/xarray.h>
+
+struct load_info;
 
 /*
  * This structure contains a guest physical range and its attributes (e.g.,
@@ -52,6 +55,12 @@ enum heki_kdata_type {
 };
 
 /*
+ * Attribute value for module info that does not conflict with any of the
+ * values in enum mod_mem_type.
+ */
+#define MOD_ELF		MOD_MEM_NUM_TYPES
+
+/*
  * A hypervisor that supports Heki will instantiate this structure to
  * provide hypervisor specific functions for Heki.
  */
@@ -67,6 +76,13 @@ struct heki_hypervisor {
 
 	/* Load kernel data */
 	int (*load_kdata)(phys_addr_t pa, unsigned long nranges);
+
+	/*
+	 * Pass a module blob (ELF file) and module contents to KVM for
+	 * validation.
+	 */
+	long (*validate_module)(phys_addr_t pa, unsigned long nranges,
+				unsigned long flags);
 };
 
 /*
@@ -132,6 +148,7 @@ void heki_add_range(struct heki_args *args, unsigned long va,
 		    phys_addr_t pa, phys_addr_t epa);
 void heki_cleanup_args(struct heki_args *args);
 void heki_load_kdata(void);
+long heki_validate_module(struct module *mod, struct load_info *info, int flags);
 
 /* Arch-specific functions. */
 void heki_arch_init(void);
@@ -141,6 +158,12 @@ unsigned long heki_flags_to_permissions(unsigned long flags);
 
 static inline void heki_late_init(void)
 {
+}
+
+static inline long heki_validate_module(struct module *mod,
+					struct load_info *info, int flags)
+{
+	return 0;
 }
 
 static void heki_register_hypervisor(struct heki_hypervisor *hypervisor) { }
