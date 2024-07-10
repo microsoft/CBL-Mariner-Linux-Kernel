@@ -69,6 +69,18 @@ struct heki_hypervisor {
 	int (*load_kdata)(phys_addr_t pa, unsigned long nranges);
 };
 
+/*
+ * The ranges contain VTL0 pages. VTL0 pages are mapped into VTL1 address space
+ * so VTL1 can access VTL0 memory at va.
+ */
+struct heki_mem {
+	void			*va;
+	unsigned long		size;
+	long			offset;
+	struct heki_range	*ranges;
+	unsigned long		nranges;
+};
+
 #ifdef CONFIG_HEKI
 
 /*
