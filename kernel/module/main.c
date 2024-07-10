@@ -58,6 +58,7 @@
 #include <linux/cfi.h>
 #include <linux/heki.h>
 #include <linux/debugfs.h>
+#include <linux/heki.h>
 #include <uapi/linux/module.h>
 #include "internal.h"
 
@@ -2227,6 +2228,7 @@ static int move_module(struct module *mod, struct load_info *info)
 	void *ptr;
 	enum mod_mem_type t = 0;
 	int ret = -ENOMEM;
+	bool preallocated = false;
 
 	for_each_mod_mem_type(type) {
 		if (!mod->mem[type].size) {
@@ -2234,6 +2236,10 @@ static int move_module(struct module *mod, struct load_info *info)
 			continue;
 		}
 		mod->mem[type].size = PAGE_ALIGN(mod->mem[type].size);
+		if (mod->mem[type].base) {
+			preallocated = true;
+			continue;
+		}
 		ptr = module_memory_alloc(mod->mem[type].size, type);
 		/*
                  * The pointer to these blocks of memory are stored on the module
@@ -2294,8 +2300,10 @@ static int move_module(struct module *mod, struct load_info *info)
 
 	return 0;
 out_enomem:
-	for (t--; t >= 0; t--)
-		module_memory_free(mod->mem[t].base, t);
+	if (!preallocated) {
+		for (t--; t >= 0; t--)
+			module_memory_free(mod->mem[t].base, t);
+	}
 	return ret;
 }
 
@@ -3067,6 +3075,106 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	free_copy(info, flags);
 	return err;
 }
+
+int __attribute__((weak)) module_id_map(struct heki_mod *hmod)
+{
+	return -EINVAL;
+}
+
+void __attribute__((weak)) module_id_unmap(struct heki_mod *hmod)
+{
+}
+
+int validate_guest_module(struct load_info *info, int flags,
+			  struct heki_mod *hmod)
+{
+	struct heki_mem *mem = hmod->mem;
+	struct module *mod;
+	void *orig, *copy;
+	size_t orig_size, copy_size;
+	int err;
+
+	err = module_sig_check(info, flags);
+	if (err) {
+		pr_warn("%s: Signature verification failed\n", __func__);
+		return err;
+	}
+
+	err = elf_validity_cache_copy(info, flags);
+	if (err) {
+		pr_warn("%s: ELF validity check failed\n", __func__);
+		return err;
+	}
+	/* info->name may be available after the above call. */
+
+	err = rewrite_section_headers(info, flags);
+	if (err) {
+		pr_warn("%s: Rewrite section headers for %s failed\n",
+			__func__, info->name);
+		return err;
+	}
+	hmod->mod = info->mod;
+
+	err = module_id_map(hmod);
+	if (err) {
+		pr_warn("%s: Could not map module %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
+
+	mod = layout_and_allocate(info, flags);
+	if (IS_ERR(mod)) {
+		pr_warn("%s: Host module not allocated for %s\n",
+			__func__, info->name);
+		err = -ENOMEM;
+		goto unmap_mod;
+	}
+	hmod->mod = mod;
+
+	/* Compare the original module contents and their copies. */
+	for_each_mod_mem_type(type) {
+		orig = mem[type].va;
+		orig_size = mem[type].size;
+		copy = mod->mem[type].base;
+		copy_size = mod->mem[type].size;
+
+		if (orig_size != copy_size) {
+			pr_warn("heki: %s: Size mismatch for %d\n",
+				info->name, type);
+			err = -EINVAL;
+			goto unmap_mod;
+		}
+
+		if (!orig_size)
+			continue;
+
+		if (type == MOD_DATA || type == MOD_INIT_DATA) {
+			/*
+			 * These sections are writable in the guest and the
+			 * EPT. So, they can be modified at any time by a
+			 * kernel actor. There is no sense in checking the
+			 * contents of these.
+			 */
+			continue;
+		}
+
+		if (memcmp(orig, copy, orig_size)) {
+			pr_warn("heki: %s: Auth memory mismatch for %d\n",
+				info->name, type);
+			err = -EINVAL;
+			goto unmap_mod;
+		}
+	}
+	pr_warn("Auth memory matched for %s\n", info->name);
+
+unmap_mod:
+	if (err) {
+		module_id_unmap(hmod);
+		hmod->mod = NULL;
+	}
+	return err;
+}
+EXPORT_SYMBOL_GPL(validate_guest_module);
 
 SYSCALL_DEFINE3(init_module, void __user *, umod,
 		unsigned long, len, const char __user *, uargs)
