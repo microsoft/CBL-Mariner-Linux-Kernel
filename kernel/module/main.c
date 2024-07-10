@@ -2991,13 +2991,6 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	if (err < 0)
 		goto free_modinfo;
 
-	token = heki_validate_module(mod, info, flags);
-	if (token < 0) {
-		err = token;
-		goto free_modinfo;
-	}
-	mod->heki_token = token;
-
 	err = post_relocation(mod, info);
 	if (err < 0)
 		goto free_modinfo;
@@ -3015,6 +3008,13 @@ static int load_module(struct load_info *info, const char __user *uargs,
 
 	/* Ftrace init must be called in the MODULE_STATE_UNFORMED state */
 	ftrace_module_init(mod);
+
+	token = heki_validate_module(mod, info, flags);
+	if (token < 0) {
+		err = token;
+		goto ddebug_cleanup;
+	}
+	mod->heki_token = token;
 
 	/* Finally it's fully formed, ready to start executing. */
 	err = complete_formation(mod, info);
