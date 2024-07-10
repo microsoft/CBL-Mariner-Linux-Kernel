@@ -150,3 +150,22 @@ long heki_validate_module(struct module *mod, struct load_info *info, int flags)
 
 	return token;
 }
+
+void heki_free_module_init(struct module *mod)
+{
+	struct heki_hypervisor *hypervisor = heki.hypervisor;
+	int err;
+
+	if (!hypervisor)
+		return;
+
+	mutex_lock(&heki.lock);
+
+	err = hypervisor->free_module_init(mod->heki_token);
+	if (err) {
+		pr_warn("Failed to free module %s init (%d).\n",
+			mod->name, err);
+	}
+
+	mutex_unlock(&heki.lock);
+}
