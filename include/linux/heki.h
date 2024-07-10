@@ -99,6 +99,9 @@ struct heki_hypervisor {
 	 */
 	long (*validate_module)(phys_addr_t pa, unsigned long nranges,
 				unsigned long flags);
+
+	/* Free module init sections. */
+	int (*free_module_init)(long token);
 };
 
 /*
@@ -186,6 +189,7 @@ void heki_add_range(struct heki_args *args, unsigned long va,
 void heki_cleanup_args(struct heki_args *args);
 void heki_load_kdata(void);
 long heki_validate_module(struct module *mod, struct load_info *info, int flags);
+void heki_free_module_init(struct module *mod);
 
 /* Arch-specific functions. */
 void heki_arch_init(void);
@@ -203,6 +207,8 @@ static inline long heki_validate_module(struct module *mod,
 {
 	return 0;
 }
+
+static inline void heki_free_module_init(struct module *mod) { }
 
 static void heki_register_hypervisor(struct heki_hypervisor *hypervisor) { }
 
