@@ -23,6 +23,8 @@ struct load_info;
 
 #include <asm/heki.h>
 
+#include <asm/heki.h>
+
 /*
  * This structure contains a guest physical range and its attributes (e.g.,
  * permissions (RWX)).
