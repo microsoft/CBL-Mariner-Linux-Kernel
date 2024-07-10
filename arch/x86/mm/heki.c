@@ -72,3 +72,12 @@ unsigned long heki_flags_to_permissions(unsigned long flags)
 
 	return permissions;
 }
+
+void heki_load_arch_kinfo(struct heki_kinfo *kinfo)
+{
+	struct heki_arch_kinfo *arch_kinfo = &kinfo->arch;
+
+	arch_kinfo->pv_ops = pv_ops;
+	arch_kinfo->pv_bug = paravirt_BUG;
+	arch_kinfo->pv_nop = _paravirt_nop;
+}
