@@ -409,5 +409,10 @@ static inline int same_magic(const char *amagic, const char *bmagic, bool has_cr
 }
 #endif /* CONFIG_MODVERSIONS */
 
+const char *kernel_symbol_name(const struct kernel_symbol *sym);
+
+typedef void (*resolve_func)(char *name, Elf64_Sym *sym);
+
+struct heki_mod;
 int validate_guest_module(struct load_info *info, int flags,
-			  struct heki_mod *hmod);
+			  struct heki_mod *hmod, resolve_func resolve);
