@@ -51,6 +51,7 @@ static int mana_ib_probe(struct auxiliary_device *adev,
 {
 	struct mana_adev *madev = container_of(adev, struct mana_adev, adev);
 	struct gdma_dev *mdev = madev->mdev;
+	struct net_device *ndev;
 	struct mana_context *mc;
 	struct mana_ib_dev *dev;
 	int ret;
@@ -76,6 +77,23 @@ static int mana_ib_probe(struct auxiliary_device *adev,
 	 */
 	dev->ib_dev.num_comp_vectors = 1;
 	dev->ib_dev.dev.parent = mdev->gdma_context->dev;
+
+	rcu_read_lock(); /* required to get primary netdev */
+	ndev = mana_get_primary_netdev_rcu(mc, 0);
+	if (!ndev) {
+		rcu_read_unlock();
+		ret = -ENODEV;
+		ibdev_err(&dev->ib_dev, "Failed to get netdev for IB port 1");
+		goto free_ib_device;
+	}
+	ether_addr_copy(mac_addr, ndev->dev_addr);
+	addrconf_addr_eui48((u8 *)&dev->ib_dev.node_guid, ndev->dev_addr);
+	ret = ib_device_set_netdev(&dev->ib_dev, ndev, 1);
+	rcu_read_unlock();
+	if (ret) {
+		ibdev_err(&dev->ib_dev, "Failed to set ib netdev, ret %d", ret);
+		goto free_ib_device;
+	}
 
 	ret = mana_gd_register_device(&mdev->gdma_context->mana_ib);
 	if (ret) {
