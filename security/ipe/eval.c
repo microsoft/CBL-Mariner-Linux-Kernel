@@ -338,7 +338,6 @@ int ipe_evaluate_event(const struct ipe_eval_ctx *const ctx)
 		} else {
 			action = pol->parsed->global_default_action;
 		}
-		rcu_read_unlock();
 		match_type = IPE_MATCH_GLOBAL;
 		goto eval;
 	}
@@ -369,9 +368,9 @@ int ipe_evaluate_event(const struct ipe_eval_ctx *const ctx)
 		match_type = IPE_MATCH_GLOBAL;
 	}
 
-	rcu_read_unlock();
 eval:
 	ipe_audit_match(ctx, match_type, action, rule);
+	rcu_read_unlock();
 
 	if (action == IPE_ACTION_DENY)
 		rc = -EACCES;

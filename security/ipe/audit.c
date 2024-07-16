@@ -134,7 +134,8 @@ void ipe_audit_match(const struct ipe_eval_ctx *const ctx,
 	if (act != IPE_ACTION_DENY && !READ_ONCE(success_audit))
 		return;
 
-	ab = audit_log_start(audit_context(), GFP_KERNEL, AUDIT_IPE_ACCESS);
+	ab = audit_log_start(audit_context(), GFP_ATOMIC | __GFP_NOWARN,
+			     AUDIT_IPE_ACCESS);
 	if (!ab)
 		return;
 
