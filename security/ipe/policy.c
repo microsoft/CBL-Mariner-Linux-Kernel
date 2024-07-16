@@ -121,11 +121,11 @@ int ipe_update_policy(struct inode *root, const char *text, size_t textlen,
 	if (old == ap) {
 		rcu_assign_pointer(ipe_active_policy, new);
 		mutex_unlock(&ipe_policy_lock);
-		synchronize_rcu();
 		ipe_audit_policy_activation(old, new);
 	} else {
 		mutex_unlock(&ipe_policy_lock);
 	}
+	synchronize_rcu();
 	ipe_free_policy(old);
 
 	return 0;
@@ -221,7 +221,6 @@ int ipe_set_active_pol(const struct ipe_policy *p)
 
 	rcu_assign_pointer(ipe_active_policy, p);
 	mutex_unlock(&ipe_policy_lock);
-	synchronize_rcu();
 
 	ipe_audit_policy_activation(ap, p);
 

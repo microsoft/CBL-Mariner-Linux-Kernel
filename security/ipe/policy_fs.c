@@ -366,6 +366,7 @@ static ssize_t delete_policy(struct file *f, const char __user *data,
 	root->i_private = NULL;
 	inode_unlock(root);
 
+	synchronize_rcu();
 	ipe_free_policy(p);
 	return len;
 }
