@@ -55,4 +55,33 @@ config HYPERV_BALLOON
 	help
 	  Select this option to enable Hyper-V Balloon driver.
 
+config MSHV
+	tristate "Microsoft Hypervisor root partition interfaces: /dev/mshv"
+	depends on HYPERV
+	select EVENTFD
+	select MSHV_VFIO
+	select MSHV_XFER_TO_GUEST_WORK
+	default n
+	help
+	  Select this option to enable core functionality for managing guest
+	  virtual machines running under the Microsoft Hypervisor.
+
+	  The interfaces are provided via a device named /dev/mshv.
+
+	  To compile this as a module, choose M here.
+
+	  If unsure, say N.
+
+config MSHV_ROOT
+	tristate "Microsoft Hyper-V root partition APIs driver"
+	depends on MSHV
+	select HYPERV_NONTLFS_HEADERS
+	help
+	  Select this option to provide /dev/mshv interfaces specific to
+	  running as the root partition on Microsoft Hypervisor.
+
+	  To compile this as a module, choose M here.
+
+	  If unsure, say N.
+
 endmenu
