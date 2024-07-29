@@ -24,7 +24,7 @@
  */
 #include "dc.h"
 #include "reg_helper.h"
-#include "dcn10_dpp.h"
+#include "dcn10/dcn10_dpp.h"
 
 #include "dcn10_cm_common.h"
 #include "custom_float.h"
@@ -60,6 +60,26 @@ void cm_helper_program_color_matrices(
 		i++;
 	}
 
+}
+
+void cm_helper_read_color_matrices(struct dc_context *ctx,
+				   uint16_t *regval,
+				   const struct color_matrices_reg *reg)
+{
+	uint32_t cur_csc_reg, regval0, regval1;
+	unsigned int i = 0;
+
+	for (cur_csc_reg = reg->csc_c11_c12;
+	     cur_csc_reg <= reg->csc_c33_c34; cur_csc_reg++) {
+		REG_GET_2(cur_csc_reg,
+				csc_c11, &regval0,
+				csc_c12, &regval1);
+
+		regval[2 * i] = regval0;
+		regval[(2 * i) + 1] = regval1;
+
+		i++;
+	}
 }
 
 void cm_helper_program_xfer_func(
@@ -308,7 +328,10 @@ bool cm_helper_convert_to_custom_float(
 #define NUMBER_REGIONS     32
 #define NUMBER_SW_SEGMENTS 16
 
-bool cm_helper_translate_curve_to_hw_format(
+#define DC_LOGGER \
+		ctx->logger
+
+bool cm_helper_translate_curve_to_hw_format(struct dc_context *ctx,
 				const struct dc_transfer_func *output_tf,
 				struct pwl_params *lut_params, bool fixpoint)
 {
@@ -487,10 +510,18 @@ bool cm_helper_translate_curve_to_hw_format(
 		rgb->delta_green = dc_fixpt_sub(rgb_plus_1->green, rgb->green);
 		rgb->delta_blue  = dc_fixpt_sub(rgb_plus_1->blue,  rgb->blue);
 
+
 		if (fixpoint == true) {
-			rgb->delta_red_reg   = dc_fixpt_clamp_u0d10(rgb->delta_red);
-			rgb->delta_green_reg = dc_fixpt_clamp_u0d10(rgb->delta_green);
-			rgb->delta_blue_reg  = dc_fixpt_clamp_u0d10(rgb->delta_blue);
+			uint32_t red_clamp = dc_fixpt_clamp_u0d14(rgb->delta_red);
+			uint32_t green_clamp = dc_fixpt_clamp_u0d14(rgb->delta_green);
+			uint32_t blue_clamp = dc_fixpt_clamp_u0d14(rgb->delta_blue);
+
+			if (red_clamp >> 10 || green_clamp >> 10 || blue_clamp >> 10)
+				DC_LOG_WARNING("Losing delta precision while programming shaper LUT.");
+
+			rgb->delta_red_reg   = red_clamp & 0x3ff;
+			rgb->delta_green_reg = green_clamp & 0x3ff;
+			rgb->delta_blue_reg  = blue_clamp & 0x3ff;
 			rgb->red_reg         = dc_fixpt_clamp_u0d14(rgb->red);
 			rgb->green_reg       = dc_fixpt_clamp_u0d14(rgb->green);
 			rgb->blue_reg        = dc_fixpt_clamp_u0d14(rgb->blue);

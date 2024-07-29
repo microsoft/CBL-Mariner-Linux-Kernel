@@ -26,6 +26,7 @@
 #ifndef __DAL_DCN30_VPG_H__
 #define __DAL_DCN30_VPG_H__
 
+#include "vpg.h"
 
 #define DCN30_VPG_FROM_VPG(vpg)\
 	container_of(vpg, struct dcn30_vpg, base)
@@ -132,27 +133,18 @@ struct dcn30_vpg_mask {
 	VPG_DCN3_REG_FIELD_LIST(uint32_t);
 };
 
-struct vpg;
-
-struct vpg_funcs {
-	void (*update_generic_info_packet)(
-		struct vpg *vpg,
-		uint32_t packet_index,
-		const struct dc_info_packet *info_packet);
-};
-
-struct vpg {
-	const struct vpg_funcs *funcs;
-	struct dc_context *ctx;
-	int inst;
-};
-
 struct dcn30_vpg {
 	struct vpg base;
 	const struct dcn30_vpg_registers *regs;
 	const struct dcn30_vpg_shift *vpg_shift;
 	const struct dcn30_vpg_mask *vpg_mask;
 };
+
+void vpg3_update_generic_info_packet(
+	struct vpg *vpg,
+	uint32_t packet_index,
+	const struct dc_info_packet *info_packet,
+	bool immediate_update);
 
 void vpg3_construct(struct dcn30_vpg *vpg3,
 	struct dc_context *ctx,
