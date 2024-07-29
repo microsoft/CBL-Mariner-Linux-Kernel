@@ -41,7 +41,7 @@ symlink_hash(unsigned int link_len, const char *link_str, u8 *md5_hash)
 	struct crypto_shash *md5 = NULL;
 	struct sdesc *sdescmd5 = NULL;
 
-	rc = cifs_alloc_hash("md5", &md5, &sdescmd5);
+	rc = cifs_alloc_hash("smb3md5", &md5, &sdescmd5);
 	if (rc)
 		goto symlink_hash_err;
 
