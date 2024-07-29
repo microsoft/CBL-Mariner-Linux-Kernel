@@ -37,6 +37,7 @@ struct dm_ima_device_table_metadata {
 	char *device_metadata;
 	unsigned int device_metadata_len;
 	unsigned int num_targets;
+	unsigned int num_measured_targets;
 
 	/*
 	 * Contains the sha256 hashes of the IMA measurements of the target
