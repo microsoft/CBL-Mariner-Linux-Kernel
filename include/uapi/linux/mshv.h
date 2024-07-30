@@ -44,7 +44,6 @@
  *************************************************************************
  */
 
-
 #define MSHV_VP_MAX_REGISTERS	128
 
 struct mshv_vp_registers {
@@ -446,6 +445,7 @@ struct mshv_root_hvcall {
 enum mshv_hv_vp_state_page_type {
 	MSHV_VP_MMAP_OFFSET_REGISTERS,
 	MSHV_VP_MMAP_OFFSET_INTERCEPT_MESSAGE,
+	MSHV_VP_MMAP_OFFSET_GHCB,
 	MSHV_VP_MMAP_OFFSET_COUNT
 };
 
