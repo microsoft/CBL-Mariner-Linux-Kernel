@@ -43,6 +43,23 @@ static inline u64 hv_get_msr(unsigned int reg)
 	return hv_get_vpreg(reg);
 }
 
+/*
+ * Nested is not supported on arm64
+ */
+static inline void hv_set_non_nested_msr(unsigned int reg, u64 value)
+{
+	hv_set_msr(reg, value);
+}
+static inline u64 hv_get_non_nested_msr(unsigned int reg)
+{
+	return hv_get_msr(reg);
+}
+
+static inline bool hv_should_clear_interrupt(enum hv_interrupt_type type)
+{
+	return 0;
+}
+
 /* SMCCC hypercall parameters */
 #define HV_SMCCC_FUNC_NUMBER	1
 #define HV_FUNC_ID	ARM_SMCCC_CALL_VAL(			\

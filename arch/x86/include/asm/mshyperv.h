@@ -243,6 +243,11 @@ static inline struct hv_vp_assist_page *hv_get_vp_assist_page(unsigned int cpu)
 	return hv_vp_assist_page[cpu];
 }
 
+static inline bool hv_should_clear_interrupt(enum hv_interrupt_type type)
+{
+	return type == HV_X64_INTERRUPT_TYPE_EXTINT;
+}
+
 void __init hyperv_init(void);
 void hyperv_setup_mmu_ops(void);
 void set_hv_tscchange_cb(void (*cb)(void));
