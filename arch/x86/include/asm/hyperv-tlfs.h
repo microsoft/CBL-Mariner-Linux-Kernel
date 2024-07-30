@@ -11,6 +11,10 @@
 
 #include <linux/types.h>
 #include <asm/page.h>
+
+/* x86 supports nested virtualization */
+#define HV_SUPPORTS_NESTED
+
 /*
  * The below CPUID leaves are present if VersionAndFeatures.HypervisorPresent
  * is set by CPUID(HvCpuIdFunctionVersionAndFeatures).
