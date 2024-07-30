@@ -1032,4 +1032,13 @@ struct hv_input_configure_device_domain {
 #define HV_MAP_GPA_READABLE		0x1
 #define HV_MAP_GPA_WRITABLE		0x2
 
+/* Define connection identifier type. */
+union hv_connection_id {
+	u32 asu32;
+	struct {
+		u32 id:24;
+		u32 reserved:8;
+	} u;
+};
+
 #endif
