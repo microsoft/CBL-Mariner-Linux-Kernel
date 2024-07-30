@@ -22,6 +22,8 @@
 #include <linux/arm-smccc.h>
 #include <asm-generic/hyperv-defs.h>
 
+extern u64 hv_current_partition_id;
+
 /*
  * Declare calls to get and set Hyper-V VP register values on ARM64, which
  * requires a hypercall.
