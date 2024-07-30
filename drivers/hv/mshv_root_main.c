@@ -1249,7 +1249,7 @@ static int mshv_vp_mmap(struct file *file, struct vm_area_struct *vma)
 	if (!vp->register_page)
 		return -EOPNOTSUPP;
 
-	if (vma->vm_pgoff != MSHV_VP_MMAP_REGISTERS_OFFSET)
+	if (vma->vm_pgoff != HV_VP_STATE_PAGE_REGISTERS * PAGE_SIZE)
 		return -EINVAL;
 
 	vma->vm_ops = &mshv_vp_vm_ops;

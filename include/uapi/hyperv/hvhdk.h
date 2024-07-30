@@ -1096,11 +1096,9 @@ struct hv_input_set_partition_property {
 	__u64 property_value;
 } __packed;
 
-
-
 enum hv_vp_state_page_type {
-	HV_VP_STATE_PAGE_REGISTERS = 0,
-	HV_VP_STATE_PAGE_INTERCEPT_MESSAGE = 1,
+	HV_VP_STATE_PAGE_REGISTERS,
+	HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
 	HV_VP_STATE_PAGE_COUNT
 };
 
