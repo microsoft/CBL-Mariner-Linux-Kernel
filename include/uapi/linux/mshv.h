@@ -44,7 +44,6 @@
  *************************************************************************
  */
 
-#define MSHV_VP_MMAP_REGISTERS_OFFSET  (HV_VP_STATE_PAGE_REGISTERS * 0x1000)
 
 #define MSHV_VP_MAX_REGISTERS	128
 
@@ -434,6 +433,21 @@ struct mshv_root_hvcall {
  */
 
 #define MSHV_RUN_VP_BUF_SZ 256
+
+/*
+ * Map various VP state pages to userspace.
+ * Multiply the offset by PAGE_SIZE before being passed as the 'offset'
+ * argument to mmap().
+ * e.g.
+ * void *reg_page = mmap(NULL, PAGE_SIZE, PROT_READ|PROT_WRITE,
+ *                       MAP_SHARED, vp_fd,
+ *                       MSHV_VP_MMAP_OFFSET_REGISTERS * PAGE_SIZE);
+ */
+enum mshv_hv_vp_state_page_type {
+	MSHV_VP_MMAP_OFFSET_REGISTERS,
+	MSHV_VP_MMAP_OFFSET_INTERCEPT_MESSAGE,
+	MSHV_VP_MMAP_OFFSET_COUNT
+};
 
 struct mshv_run_vp {
 	__u8 msg_buf[MSHV_RUN_VP_BUF_SZ];
