@@ -169,10 +169,14 @@ union hv_reference_tsc_msr {
 #define HVCALL_POST_DEBUG_DATA			0x0069
 #define HVCALL_RETRIEVE_DEBUG_DATA		0x006a
 #define HVCALL_RESET_DEBUG_SESSION		0x006b
+#define HVCALL_SET_SYSTEM_PROPERTY		0x006f
+#define HVCALL_GET_SYSTEM_PROPERTY		0x007b
 #define HVCALL_ADD_LOGICAL_PROCESSOR		0x0076
 #define HVCALL_MAP_DEVICE_INTERRUPT		0x007c
 #define HVCALL_UNMAP_DEVICE_INTERRUPT		0x007d
 #define HVCALL_RETARGET_INTERRUPT		0x007e
+#define HVCALL_ENTER_SLEEP_STATE		0x0084
+#define HVCALL_NOTIFY_PARTITION_EVENT		0x0087
 #define HVCALL_START_VP				0x0099
 #define HVCALL_GET_VP_ID_FROM_APIC_ID		0x009a
 #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_SPACE 0x00af
@@ -274,6 +278,17 @@ enum HV_GENERIC_SET_FORMAT {
 #define HV_SYNIC_VERSION_1		(0x1)
 /* Valid SynIC vectors are 16-255. */
 #define HV_SYNIC_FIRST_VALID_VECTOR	(16)
+
+/* Hyper-V defined statically assigned SINTs */
+#define HV_SYNIC_INTERCEPTION_SINT_INDEX 0x00000000
+#define HV_SYNIC_IOMMU_FAULT_SINT_INDEX  0x00000001
+#define HV_SYNIC_VMBUS_SINT_INDEX        0x00000002
+#define HV_SYNIC_HAL_HV_TIMER_SINT_INDEX 0x00000003
+#define HV_SYNIC_HVL_SHARED_SINT_INDEX   0x00000004
+#define HV_SYNIC_FIRST_UNUSED_SINT_INDEX 0x00000005
+
+/* mshv assigned SINT for doorbell */
+#define HV_SYNIC_DOORBELL_SINT_INDEX     HV_SYNIC_FIRST_UNUSED_SINT_INDEX
 
 #define HV_SYNIC_CONTROL_ENABLE		(1ULL << 0)
 #define HV_SYNIC_SIMP_ENABLE		(1ULL << 0)
@@ -426,7 +441,9 @@ union hv_synic_sint {
 		u64 masked:1;
 		u64 auto_eoi:1;
 		u64 polling:1;
-		u64 reserved2:45;
+		u64 as_intercept: 1;
+		u64 proxy: 1;
+		u64 reserved2:43;
 	} __packed;
 };
 
@@ -1033,8 +1050,13 @@ struct hv_input_configure_device_domain {
 } __packed;
 
 /* HV Map GPA (Guest Physical Address) Flags */
+#define HV_MAP_GPA_PERMISSIONS_NONE	0x0
 #define HV_MAP_GPA_READABLE		0x1
 #define HV_MAP_GPA_WRITABLE		0x2
+#define HV_MAP_GPA_KERNEL_EXECUTABLE	0x4
+#define HV_MAP_GPA_USER_EXECUTABLE	0x8
+#define HV_MAP_GPA_EXECUTABLE		0xC
+#define HV_MAP_GPA_PERMISSIONS_MASK	0xF
 
 /* Define connection identifier type. */
 union hv_connection_id {
@@ -1044,5 +1066,65 @@ union hv_connection_id {
 		u32 reserved:8;
 	} u;
 };
+
+enum hv_system_property {
+	/* Add more values when needed */
+	HV_SYSTEM_PROPERTY_SLEEP_STATE = 3,
+	HV_SYSTEM_PROPERTY_SCHEDULER_TYPE = 15,
+};
+
+enum hv_scheduler_type {
+	HV_SCHEDULER_TYPE_LP = 1, /* Classic scheduler w/o SMT */
+	HV_SCHEDULER_TYPE_LP_SMT = 2, /* Classic scheduler w/ SMT */
+	HV_SCHEDULER_TYPE_CORE_SMT = 3, /* Core scheduler */
+	HV_SCHEDULER_TYPE_ROOT = 4, /* Root / integrated scheduler */
+	HV_SCHEDULER_TYPE_MAX
+};
+
+enum hv_sleep_state {
+	HV_SLEEP_STATE_S1 = 1,
+	HV_SLEEP_STATE_S2 = 2,
+	HV_SLEEP_STATE_S3 = 3,
+	HV_SLEEP_STATE_S4 = 4,
+	HV_SLEEP_STATE_S5 = 5,
+	/*
+	 * After hypervisor has reseived this, any follow up sleep
+	 * state registration requests will be rejected.
+	 */
+	HV_SLEEP_STATE_LOCK = 6
+};
+
+struct hv_sleep_state_info {
+	u32 sleep_state; /* enum hv_sleep_state */
+	u8 pm1a_slp_typ;
+	u8 pm1b_slp_typ;
+} __packed;
+
+struct hv_input_get_system_property {
+	u32 property_id; /* enum hv_system_property */
+	union {
+		u32 as_uint32;
+		/* More fields to be filled in when needed */
+	};
+} __packed;
+
+struct hv_output_get_system_property {
+	union {
+		u32 scheduler_type; /* enum hv_scheduler_type */
+	};
+} __packed;
+
+struct hv_input_set_system_property {
+	u32 property_id; /* enum hv_system_property */
+	u32 reserved;
+	union {
+		/* More fields to be filled in when needed */
+		struct hv_sleep_state_info set_sleep_state_info;
+	};
+} __packed;
+
+struct hv_input_enter_sleep_state {
+	u32 sleep_state; /* enum hv_sleep_state */
+} __packed;
 
 #endif
