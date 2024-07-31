@@ -1099,6 +1099,7 @@ struct hv_input_set_partition_property {
 enum hv_vp_state_page_type {
 	HV_VP_STATE_PAGE_REGISTERS,
 	HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
+	HV_VP_STATE_PAGE_GHCB,
 	HV_VP_STATE_PAGE_COUNT
 };
 

@@ -34,6 +34,7 @@ struct mshv_vp {
 	struct mutex mutex;
 	struct hv_vp_register_page *register_page;
 	struct hv_message *intercept_message_page;
+	void *ghcb_page;
 	struct hv_stats_page *stats_page;
 	struct hv_register_assoc *registers;
 	struct {
