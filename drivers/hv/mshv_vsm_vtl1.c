@@ -1877,7 +1877,7 @@ static int mshv_vsm_configure_partition(void)
 	return hv_vsm_set_register(HV_REGISTER_VSM_PARTITION_CONFIG, config.as_u64);
 }
 
-static int mshv_vsm_per_cpu_synic_init(unsigned int cpu)
+static int mshv_vsm_per_cpu_synic_init_guest(unsigned int cpu)
 {
 	struct hv_vsm_per_cpu *per_cpu = this_cpu_ptr(&vsm_per_cpu);
 	union hv_synic_simp simp;
@@ -1914,6 +1914,53 @@ static int mshv_vsm_per_cpu_synic_init(unsigned int cpu)
 	/* Enable the global synic bit */
 	hv_set_register(HV_REGISTER_SCONTROL, sctrl.as_uint64);
 	return 0;
+}
+
+int mshv_vsm_per_cpu_synic_init_root(unsigned int cpu)
+{
+	struct hv_vsm_per_cpu *per_cpu = this_cpu_ptr(&vsm_per_cpu);
+	void **msg_page = &per_cpu->synic_message_page;
+	union hv_synic_simp simp;
+#ifdef HYPERVISOR_CALLBACK_VECTOR
+	union hv_synic_sint sint;
+#endif
+	union hv_synic_scontrol sctrl;
+
+	/* Setup the Synic's message page */
+	simp.as_uint64 = hv_get_non_nested_register(HV_REGISTER_SIMP);
+	simp.simp_enabled = true;
+	*msg_page = memremap(simp.base_simp_gpa << HV_HYP_PAGE_SHIFT,
+			     HV_HYP_PAGE_SIZE, MEMREMAP_WB);
+	if (!(*msg_page)) {
+		pr_err("%s: SIMP memremap failed\n", __func__);
+		return -EFAULT;
+	}
+	hv_set_non_nested_register(HV_REGISTER_SIMP, simp.as_uint64);
+
+#ifdef HYPERVISOR_CALLBACK_VECTOR
+	/* Enable intercepts */
+	sint.as_uint64 = 0;
+	sint.vector = HYPERVISOR_CALLBACK_VECTOR;
+	sint.masked = false;
+	sint.auto_eoi = !(ms_hyperv.hints & HV_DEPRECATING_AEOI_RECOMMENDED);
+	hv_set_non_nested_register(HV_REGISTER_SINT0 + SYNIC_INTERCEPTION_SINT,
+				   sint.as_uint64);
+#endif
+
+	/* Enable global synic bit */
+	sctrl.as_uint64 = hv_get_non_nested_register(HV_REGISTER_SCONTROL);
+	sctrl.enable = 1;
+	hv_set_non_nested_register(HV_REGISTER_SCONTROL, sctrl.as_uint64);
+
+	return 0;
+}
+
+static int mshv_vsm_per_cpu_synic_init(unsigned int cpu)
+{
+	if (hv_root_partition)
+		return mshv_vsm_per_cpu_synic_init_root(cpu);
+	else
+		return mshv_vsm_per_cpu_synic_init_guest(cpu);
 }
 
 static int mshv_vsm_per_cpu_init(unsigned int cpu)
