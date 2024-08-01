@@ -29,6 +29,13 @@
 
 #define VTPM_BASE_ADDRESS 0xfed40000
 
+enum hv_partition_type {
+	HV_PARTITION_GUEST,
+	HV_PARTITION_ROOT,
+	HV_PARTITION_L1VH,
+	HV_PARTITION_MAX
+};
+
 struct ms_hyperv_info {
 	u32 features;
 	u32 priv_high;
@@ -56,6 +63,7 @@ struct ms_hyperv_info {
 		};
 	};
 	u64 shared_gpa_boundary;
+	enum hv_partition_type hv_current_partition;
 };
 extern struct ms_hyperv_info ms_hyperv;
 extern bool hv_nested;
@@ -206,7 +214,20 @@ void hv_remove_crash_handler(void);
 extern int vmbus_interrupt;
 extern int vmbus_irq;
 
-extern bool hv_root_partition;
+static inline int hv_root_partition(void)
+{
+	return ms_hyperv.hv_current_partition == HV_PARTITION_ROOT;
+}
+
+static inline int hv_l1vh_partition(void)
+{
+	return ms_hyperv.hv_current_partition == HV_PARTITION_L1VH;
+}
+
+static inline int hv_parent_partition(void)
+{
+	return hv_root_partition() || hv_l1vh_partition();
+}
 
 #if IS_ENABLED(CONFIG_HYPERV)
 /*
@@ -324,6 +345,7 @@ int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages);
 int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
 int hv_sleep_notifiers_register(void);
 int hv_retrieve_scheduler_type(enum hv_scheduler_type *out);
+void hv_identify_partition_type(void);
 
 #if IS_ENABLED(CONFIG_MSHV_ROOT) && defined(CONFIG_KEXEC_CORE)
 void hv_root_crash_init(void);
