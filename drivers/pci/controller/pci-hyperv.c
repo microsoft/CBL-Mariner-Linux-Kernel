@@ -732,7 +732,7 @@ out:
 
 static void hv_arch_irq_unmask(struct irq_data *data)
 {
-	if (hv_nested && hv_root_partition)
+	if (hv_nested && hv_root_partition())
 		/*
 		 * In case of the nested root partition, the nested hypervisor
 		 * is taking care of interrupt remapping and thus the
@@ -2077,7 +2077,7 @@ return_null_message:
 static int hv_irq_set_affinity(struct irq_data *data,
 			       const struct cpumask *dest, bool force)
 {
-	if (hv_nested && hv_root_partition) {
+	if (hv_nested && hv_root_partition()) {
 		printk_once("Hyper-V: IRQ affinity change in nested root "
 			    "partition is currently not available\n");
 		return -EPERM;
@@ -4133,7 +4133,7 @@ static int __init init_hv_pci_drv(void)
 	if (!hv_is_hyperv_initialized())
 		return -ENODEV;
 
-	if (hv_root_partition && !hv_nested)
+	if (hv_root_partition() && !hv_nested)
 		return -ENODEV;
 
 	ret = hv_pci_irqchip_init();
