@@ -35,8 +35,8 @@
 #include <asm/svm.h>
 #include <asm/e820/api.h>
 
-/* Is Linux running as the root partition? */
-bool hv_root_partition;
+/* Linux partition type: guest, root or l1vh */
+enum hv_partition_type hv_current_partition;
 /* Is Linux running on nested Microsoft Hypervisor */
 bool hv_nested;
 struct ms_hyperv_info ms_hyperv;
@@ -704,26 +704,9 @@ static void __init ms_hyperv_init_platform(void)
 	pr_debug("Hyper-V: max %u virtual processors, %u logical processors\n",
 		 ms_hyperv.max_vp_index, ms_hyperv.max_lp_index);
 
-	/*
-	 * Check CPU management privilege.
-	 *
-	 * To mirror what Windows does we should extract CPU management
-	 * features and use the ReservedIdentityBit to detect if Linux is the
-	 * root partition. But that requires negotiating CPU management
-	 * interface (a process to be finalized). For now, use the privilege
-	 * flag as the indicator for running as root.
-	 *
-	 * Hyper-V should never specify running as root and as a Confidential
-	 * VM. But to protect against a compromised/malicious Hyper-V trying
-	 * to exploit root behavior to expose Confidential VM memory, ignore
-	 * the root partition setting if also a Confidential VM.
-	 */
-	if ((ms_hyperv.priv_high & HV_CPU_MANAGEMENT) &&
-	    !(ms_hyperv.priv_high & HV_ISOLATION)) {
-		hv_root_partition = true;
-		pr_info("Hyper-V: running as root partition\n");
+	hv_identify_partition_type();
 
-
+	if (hv_root_partition()) {
 		/* very first thing, reserve/log exclusive hypervisor memory */
 		if (mshv_loader_new)
 			hv_dump_mshv_memory();
@@ -812,7 +795,7 @@ static void __init ms_hyperv_init_platform(void)
 
 #if IS_ENABLED(CONFIG_HYPERV) && defined(CONFIG_KEXEC_CORE)
 	machine_ops.shutdown = hv_machine_shutdown;
-	if (!hv_root_partition)
+	if (!hv_root_partition())
 		machine_ops.crash_shutdown = hv_guest_crash_shutdown;
 #endif
 	if (ms_hyperv.features & HV_ACCESS_TSC_INVARIANT) {
@@ -862,7 +845,7 @@ static void __init ms_hyperv_init_platform(void)
 
 # ifdef CONFIG_SMP
 	smp_ops.smp_prepare_boot_cpu = hv_smp_prepare_boot_cpu;
-	if (hv_root_partition ||
+	if (hv_root_partition() ||
 	    (!ms_hyperv.paravisor_present && hv_isolation_type_snp()))
 		smp_ops.smp_prepare_cpus = hv_smp_prepare_cpus;
 # endif
