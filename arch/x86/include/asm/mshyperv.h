@@ -40,6 +40,7 @@ static inline unsigned char hv_get_nmi_reason(void)
 
 #if IS_ENABLED(CONFIG_HYPERV)
 extern bool hyperv_paravisor_present;
+extern int hv_crash_enabled;
 
 extern void *hv_hypercall_pg;
 

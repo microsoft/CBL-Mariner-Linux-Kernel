@@ -566,6 +566,8 @@ void __init hyperv_init(void)
 
 		/* mark ram reserved for hypervisor as owned by hypervisor */
 		hv_mark_resources();
+
+		hv_root_crash_init();
 	} else {
 		hypercall_msr.guest_physical_address = vmalloc_to_pfn(hv_hypercall_pg);
 		wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
