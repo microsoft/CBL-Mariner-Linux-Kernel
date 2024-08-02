@@ -18,6 +18,7 @@
 #include <asm/mshyperv.h>
 
 static bool hyperv_initialized;
+bool hv_nested;
 
 u64 hv_current_partition_id = HV_PARTITION_ID_SELF;
 EXPORT_SYMBOL_GPL(hv_current_partition_id);
@@ -54,6 +55,9 @@ static int __init hyperv_init(void)
 	struct hv_get_vp_registers_output	result;
 	u64	guest_id;
 	int	ret;
+
+	/* Not supported on ARM64 yet */
+	hv_nested = false;
 
 	/*
 	 * Allow for a kernel built with CONFIG_HYPERV to be running in
