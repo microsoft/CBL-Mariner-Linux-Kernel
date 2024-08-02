@@ -308,6 +308,16 @@ bool hv_query_ext_cap(u64 cap_query);
 void hv_setup_dma_ops(struct device *dev, bool coherent);
 int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages);
 int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
+
+#if IS_ENABLED(CONFIG_MSHV_ROOT) && defined(CONFIG_KEXEC_CORE)
+void hv_root_crash_init(void);
+void hv_crash_asm32(void);
+void hv_crash_asm64_lbl(void);
+void hv_crash_asm32_end(void);
+#else
+static inline void hv_root_crash_init(void) {}
+#endif
+
 #else /* CONFIG_HYPERV */
 static inline bool hv_is_hyperv_initialized(void) { return false; }
 static inline bool hv_is_hibernation_supported(void) { return false; }
