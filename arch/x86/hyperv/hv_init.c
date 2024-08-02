@@ -558,8 +558,8 @@ void __init hyperv_init(void)
 		wrmsrl(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 
 		pg = vmalloc_to_page(hv_hypercall_pg);
-		src = memremap(hypercall_msr.guest_physical_address << PAGE_SHIFT, PAGE_SIZE,
-				MEMREMAP_WB);
+		src = memremap(hypercall_msr.guest_physical_address << HV_HYP_PAGE_SHIFT,
+			       PAGE_SIZE, MEMREMAP_WB);
 		BUG_ON(!src);
 		memcpy_to_page(pg, 0, src, HV_HYP_PAGE_SIZE);
 		memunmap(src);
