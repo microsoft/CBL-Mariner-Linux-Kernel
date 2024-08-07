@@ -64,7 +64,7 @@ config HYPERV_NONTLFS_HEADERS
 	  with hyper-tlfs.h or not. If unsure, say N.
 
 config MSHV
-	tristate "Microsoft Hypervisor root partition interfaces: /dev/mshv"
+	tristate "Microsoft Hypervisor VMM interfaces: /dev/mshv"
 	depends on HYPERV
 	select EVENTFD
 	select MSHV_VFIO
@@ -91,5 +91,9 @@ config MSHV_ROOT
 	  To compile this as a module, choose M here.
 
 	  If unsure, say N.
+
+config MSHV_XFER_TO_GUEST_WORK
+	bool
+	depends on MSHV_ROOT
 
 endmenu
