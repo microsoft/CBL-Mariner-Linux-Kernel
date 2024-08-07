@@ -702,8 +702,6 @@ static int init_non_clock_fields(struct pp_hwmgr *hwmgr,
 				ATOM_PPLIB_PCIE_LINK_WIDTH_MASK) >>
 				ATOM_PPLIB_PCIE_LINK_WIDTH_SHIFT) + 1;
 
-	ps->pcie.lanes = 0;
-
 	ps->display.disableFrameModulation = false;
 
 	rrr_index = (le32_to_cpu(pnon_clock_info->ulCapsAndSettings) &
@@ -1237,7 +1235,7 @@ static int get_vce_clock_voltage_limit_table(struct pp_hwmgr *hwmgr,
 		const VCEClockInfoArray    *array)
 {
 	unsigned long i;
-	struct phm_vce_clock_voltage_dependency_table *vce_table = NULL;
+	struct phm_vce_clock_voltage_dependency_table *vce_table;
 
 	vce_table = kzalloc(struct_size(vce_table, entries, table->numEntries),
 			    GFP_KERNEL);
