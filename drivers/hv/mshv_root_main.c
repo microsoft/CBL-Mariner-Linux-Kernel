@@ -41,6 +41,7 @@
 #include "mshv_eventfd.h"
 #include "mshv.h"
 #include "mshv_root.h"
+#include "mshv_vfio.h"
 
 struct mshv_root mshv_root = {};
 
@@ -2338,6 +2339,12 @@ mshv_partition_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 		ret = mshv_ioctl_passthru_hvcall(partition, true,
 						 (void __user *)arg);
 		break;
+#ifdef CONFIG_MSHV_VFIO
+	case MSHV_CREATE_DEVICE:
+		ret = mshv_partition_ioctl_create_device(partition,
+							 (void __user *)arg);
+		break;
+#endif
 #ifdef HV_SUPPORTS_SEV_SNP_GUESTS
 	case MSHV_MODIFY_GPA_HOST_ACCESS:
 	case MSHV_IMPORT_ISOLATED_PAGES:
@@ -2664,6 +2671,7 @@ static void destroy_partition(struct mshv_partition *partition)
 	hv_call_withdraw_memory(U64_MAX, NUMA_NO_NODE, partition->id);
 	hv_call_delete_partition(partition->id);
 
+	mshv_destroy_devices(partition);
 	mshv_free_routing_table(partition);
 	kfree(partition);
 }
@@ -2781,6 +2789,8 @@ mshv_ioctl_create_partition(void __user *user_arg, struct device *module_dev)
 	init_completion(&partition->async_hypercall);
 
 	INIT_HLIST_HEAD(&partition->irq_ack_notifier_list);
+
+	INIT_HLIST_HEAD(&partition->devices);
 
 	INIT_HLIST_HEAD(&partition->mem_regions);
 
@@ -3241,6 +3251,10 @@ int __init mshv_parent_partition_init(void)
 	if (ret)
 		goto exit_partition;
 
+	ret = mshv_vfio_ops_init();
+	if (ret)
+		goto destroy_irqds_wq;
+
 	spin_lock_init(&mshv_root.partitions.lock);
 	hash_init(mshv_root.partitions.items);
 
@@ -3248,6 +3262,8 @@ int __init mshv_parent_partition_init(void)
 
 	return 0;
 
+destroy_irqds_wq:
+	mshv_irqfd_wq_cleanup();
 exit_partition:
 	if (hv_root_partition())
 		mshv_root_partition_exit();
@@ -3265,6 +3281,7 @@ void __exit mshv_parent_partition_exit(void)
 	hv_setup_mshv_handler(NULL);
 	mshv_port_table_fini();
 	mshv_set_ioctl_func(NULL, NULL);
+	mshv_vfio_ops_exit();
 	mshv_irqfd_wq_cleanup();
 	if (hv_root_partition())
 		mshv_root_partition_exit();
