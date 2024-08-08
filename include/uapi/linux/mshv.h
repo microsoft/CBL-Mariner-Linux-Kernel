@@ -500,9 +500,9 @@ struct mshv_create_device {
 	__u32	flags;	/* in: MSHV_CREATE_DEVICE_xxx */
 };
 
-#define  MSHV_DEV_VFIO_GROUP			1
-#define   MSHV_DEV_VFIO_GROUP_ADD			1
-#define   MSHV_DEV_VFIO_GROUP_DEL			2
+#define MSHV_DEV_VFIO_FILE		1
+#define MSHV_DEV_VFIO_FILE_ADD	1
+#define MSHV_DEV_VFIO_FILE_DEL	2
 
 enum mshv_device_type {
 	MSHV_DEV_TYPE_VFIO,
