@@ -96,6 +96,10 @@ config MSHV_XFER_TO_GUEST_WORK
 	bool
 	depends on MSHV_ROOT
 
+config MSHV_VFIO
+	bool
+	depends on MSHV_ROOT
+
 config MSHV_DIAG
 	tristate "Interface to get diagnostic logs from Microsoft Hypervisor: /dev/mshv_diag"
 	depends on HYPERV

@@ -109,6 +109,8 @@ struct mshv_partition {
 	struct srcu_struct irq_srcu;
 	struct hlist_head irq_ack_notifier_list;
 
+	struct hlist_head devices;
+
 	/*
 	 * Since MSHV does not support more than one async hypercall in flight
 	 * for a single partition. Thus, it is okay to define per partition
