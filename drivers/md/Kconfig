@@ -668,4 +668,75 @@ config DM_AUDIT
 	  Enables audit logging of several security relevant events in the
 	  particular device-mapper targets, especially the integrity target.
 
+config DM_IMA_MEASURE_CACHE
+	bool "Measure Device mapper target of type cache by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper cache target to be measured by IMA.
+
+config DM_IMA_MEASURE_CRYPT
+	bool "Measure Device mapper target of type crypt by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper crypt target to be measured by IMA.
+
+config DM_IMA_MEASURE_INTEGRITY
+	bool "Measure Device mapper target of type integrity by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper integrity target to be measured by IMA.
+
+config DM_IMA_MEASURE_LINEAR
+	bool "Measure Device mapper target of type linear by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper linear target to be measured by IMA.
+
+config DM_IMA_MEASURE_MIRROR
+	bool "Measure Device mapper target of type mirror by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper mirror target to be measured by IMA.
+
+config DM_IMA_MEASURE_MULTIPATH
+	bool "Measure Device mapper target of type multipath by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper multipath target to be measured by IMA.
+
+config DM_IMA_MEASURE_RAID
+	bool "Measure Device mapper target of type raid by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper raid target to be measured by IMA.
+
+config DM_IMA_MEASURE_SNAPSHOT
+	bool "Measure Device mapper target of type snapshot by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper snapshot target to be measured by IMA.
+
+config DM_IMA_MEASURE_STRIPED
+	bool "Measure Device mapper target of type striped by IMA."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper striped target to be measured by IMA.
+
+config DM_IMA_MEASURE_VERITY
+	bool "Measure Device mapper target of type verity."
+	depends on IMA
+	default y
+	help
+	   This option allows device-mapper verity target to be measured by IMA.
+
+
 endif # MD
