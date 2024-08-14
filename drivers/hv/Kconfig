@@ -96,4 +96,15 @@ config MSHV_XFER_TO_GUEST_WORK
 	bool
 	depends on MSHV_ROOT
 
+config MSHV_DIAG
+	tristate "Interface to get diagnostic logs from Microsoft Hypervisor: /dev/mshv_diag"
+	depends on HYPERV
+	help
+	  Grants access to Diagnostic(error) logs from Microsoft Hypervisor via char
+	  device interface.
+
+	  To compile this as a module, choose M here.
+
+	  If unsure, say N.
+
 endmenu
