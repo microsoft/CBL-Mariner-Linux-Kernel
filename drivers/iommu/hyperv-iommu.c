@@ -455,6 +455,17 @@ static bool is_null_hvdomain(struct hv_iommu_domain *d)
 	return d->device_domain.domain_id.id == HV_DEVICE_DOMAIN_ID_S2_NULL;
 }
 
+bool hv_iommu_capable(struct device *dev, enum iommu_cap cap)
+{
+	switch (cap) {
+	case IOMMU_CAP_CACHE_COHERENCY:
+		return true;
+
+	default:
+		return false;
+	}
+}
+
 static struct iommu_domain *hv_iommu_domain_alloc(unsigned int type)
 {
 	struct hv_iommu_domain *hvdom;
@@ -940,6 +951,7 @@ static int hv_iommu_def_domain_type(struct device *dev)
 }
 
 static struct iommu_ops hv_iommu_ops = {
+	.capable	    = hv_iommu_capable,
 	.domain_alloc       = hv_iommu_domain_alloc,
 	.probe_device       = hv_iommu_probe_device,
 	.probe_finalize     = hv_iommu_probe_finalize,
@@ -1038,6 +1050,9 @@ err_free:
 
 void __init hv_iommu_detect(void)
 {
+	if (no_iommu || iommu_detected)
+		return;
+
 	if (!(ms_hyperv.misc_features & HV_DEVICE_DOMAIN_AVAILABLE))
 		return;
 
