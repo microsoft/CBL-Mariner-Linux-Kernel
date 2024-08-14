@@ -1,0 +1,1080 @@
+#!/usr/bin/env python3
+
+# SPDX-License-Identifier: GPL-2.0-only
+#
+# A top-like utility for displaying mshv statistics
+#
+# Copyright (c) 2023, Microsoft Corporation.
+#
+# Authors:
+#  Stanislav Kinsburskii <skinsburskii@microsoft.com>
+#
+
+"""
+The mshv_stat module gathers VM statistics by sampling data from the MSHV's debugfs entries.
+
+Users can choose which data to monitor and stream it to the console or a file.
+
+The module has two modes:
+    1. Batch mode (writes statistics once and terminates) and
+    2. Incremental mode (computes and streams statistics increments until interrupted or specified number of times reached).
+"""
+
+import argparse
+import os
+import sys
+import re
+import time
+import csv
+import curses
+
+from pathlib import Path
+
+
+class DebugfsPath:
+    """
+    A utility class to construct paths to debugfs entries.
+    """
+
+    @staticmethod
+    def partition_path(partition: str) -> str:
+        """
+        Returns the path to the debugfs entry for the given partition.
+
+        Args:
+            partition (str): The partition name.
+
+        Returns:
+            str: The path to the debugfs entry for the partition.
+
+        Raises:
+            FileNotFoundError: If the path to the partition does not exist.
+        """
+        path = os.path.join(PATH_DEBUGFS_MSHV, "partition", partition)
+        if not os.path.exists(path):
+            raise FileNotFoundError("Invalid partition: {}".format(partition))
+        return path
+
+    @staticmethod
+    def partition_stats_path(partition: str) -> str:
+        """
+        Returns the path to the debugfs entry for the partition's stats.
+
+        Args:
+            partition (str): The partition name.
+
+        Returns:
+            str: The path to the debugfs entry for the partition's stats.
+        """
+        return os.path.join(DebugfsPath.partition_path(partition), "stats")
+
+    @staticmethod
+    def partition_vp_path(partition: str) -> str:
+        """
+        Returns the path to the debugfs entry for the partition's virtual processors.
+
+        Args:
+            partition (str): The partition name.
+
+        Returns:
+            str: The path to the debugfs entry for the partition's virtual processors.
+        """
+        return os.path.join(DebugfsPath.partition_path(partition), "vp")
+
+    @staticmethod
+    def partition_vp_stats_path(partition: str, vp_idx: str) -> str:
+        """
+        Returns the path to the debugfs entry for the specified virtual processor in the partition.
+
+        Args:
+            partition (str): The partition name.
+            vp_idx (str): The virtual processor index.
+
+        Returns:
+            str: The path to the debugfs entry for the specified virtual processor in the partition.
+
+        Raises:
+            FileNotFoundError: If the path to the virtual processor's stats does not exist.
+        """
+        path = os.path.join(DebugfsPath.partition_vp_path(partition), vp_idx, "stats")
+        if not os.path.exists(path):
+            raise FileNotFoundError("Invalid virtual processor in partition {}: {}".format(partition, vp_idx))
+        return path
+
+    @staticmethod
+    def lp_path() -> str:
+        """
+        Returns the path to the debugfs entry for the logical processors.
+
+        Returns:
+            str: The path to the debugfs entry for the logical processors.
+        """
+        return os.path.join(PATH_DEBUGFS_MSHV, "lp")
+
+    @staticmethod
+    def lp_stats_path(lp_idx) -> str:
+        """
+        Returns the path to the debugfs entry for the specified logical processor.
+
+        Args:
+            lp_idx (str): The logical processor index.
+
+        Returns:
+            str: The path to the debugfs entry for the specified logical processor.
+
+        Raises:
+            FileNotFoundError: If the path to the logical processor's stats does not exist.
+        """
+        path = os.path.join(PATH_DEBUGFS_MSHV, "lp", lp_idx, "stats")
+        if not os.path.exists(path):
+            raise FileNotFoundError("Invalid logical processor: {}".format(lp_idx))
+        return path
+
+    @staticmethod
+    def hv_stats_path() -> str:
+        """
+        Returns the path to the debugfs entry for the hypervisor's stats.
+
+        Returns:
+            str: The path to the debugfs entry for the hypervisor's stats.
+        """
+        return os.path.join(PATH_DEBUGFS_MSHV, "stats")
+
+
+class Stats(object):
+    """
+    A utility class to read statistics from a file and return them as a dictionary.
+    """
+
+    aggregated = {}
+
+    def __init__(self):
+        """
+        Initializes a new instance of the Stats class.
+        """
+        self.max_name_len = 0
+
+    def as_dict(self) -> dict[str, int]:
+        """
+        Reads statistics from a file and returns them as a dictionary.
+
+        Returns:
+            A dictionary with statistic names and values.
+        """
+        with open(self.path, "r") as file:  # Opens the file at the path given by self.path in read mode
+            # Splits each line of the file into a list of words, then creates a dictionary from the list
+            # where the first element is the statistic name and the second element is the statistic value
+            # and stores the dictionary in the 'stats' variable
+            stats = dict(
+                map(lambda word: int(word)  # Converts the word to an integer if it contains only digits
+                    if '\n' in word else word.strip(), line.split(":"))
+                for line in file
+            )
+            # Finds the length of the longest statistic name and stores it in self.max_name_len
+            self.max_name_len = len(max(stats.keys(), key=len))
+
+        for name, terms in self.aggregated.items():
+            stats[name] = sum([stats[t] for t in terms])
+
+        return stats  # Returns the dictionary containing the statistics.
+
+
+class StatsStream(object):
+    """
+    A base class for writing statistics to an output stream.
+    """
+    def write(self, stats: dict[str, int], max_name_len: int):
+        raise NotImplementedError("Subclasses must implement write method")
+
+
+class StatsStreamScreen(StatsStream):
+    """
+    A concrete class for writing statistics to the screen.
+    """
+    def __init__(self):
+        self.times_written = 0
+
+    def write(self, stats_dict: dict[str, int], max_name_len: int, header: str = None):
+        """Write statistics to the screen.
+
+        Args:
+            stats_dict (dict[str, int]): A dictionary of statistics to be printed.
+            max_name_len (int): The maximum length of the statistic names, used for formatting.
+
+        """
+        # Only print a newline character if this isn't the first time printing
+        if self.times_written != 0:
+            print("", flush=True)
+
+        # Print each statistic name and value, formatted to line up with the longest name
+        for name, value in stats_dict.items():
+            print(f"{name:<{max_name_len}}: {value}", flush=True)
+
+        self.times_written += 1
+
+
+class StatsStreamCsvScreen(StatsStream):
+    """
+    A concrete class for writing statistics to the screen in CSV format.
+    """
+    def __init__(self):
+        self.keys = None
+
+    def write(self, stats_dict: dict[str, int], max_name_len: int, header: str = None):
+        """
+        Write statistics to screen as CSV file.
+
+        Args:
+            stats_dict (Dict[str, int]): A dictionary of statistics to be printed.
+            max_name_len (int): The maximum length of the statistic names, used for formatting.
+        """
+        if not self.keys:
+            self.keys = sorted(stats_dict.keys())
+            print(','.join('"{0}"'.format(k) for k in self.keys), flush=True)
+        print(",".join('"{0}"'.format(stats_dict[k]) for k in self.keys),
+              flush=True)
+
+
+class StatsStreamCsvFile(StatsStream):
+    """
+    A concrete class for writing statistics to a file in CSV format.
+    """
+    def __init__(self, path: str):
+        self.csvfile = open(path, 'w', newline='')
+        self.writer = None
+
+    def write(self, stats_dict: dict[str, int], max_name_len: int, header: str = None):
+        """
+        Write statistics to a CSV file.
+
+        Args:
+            stats_dict (Dict[str, int]): A dictionary of statistics to be printed.
+            max_name_len (int): The maximum length of the statistic names, used for formatting.
+        """
+        if not self.writer:
+            self.writer = csv.DictWriter(self.csvfile,
+                                         fieldnames=list(stats_dict.keys()),
+                                         dialect="unix")
+            self.writer.writeheader()
+        self.writer.writerow(stats_dict)
+
+
+class StatsWriter:
+    """
+    A base class for writing statistics to output streams
+    """
+    def __init__(self, stats_names: list[str] = None, stats_filter: str = None, print_all: bool = None):
+        """Initialize a StatsWriter.
+
+        Args:
+            stats_names (list[str], optional): A list of statistic names to include. Defaults to None.
+            stats_filter (str, optional): A regular expression used to filter statistic names. Defaults to None.
+            print_all (bool, optional): Whether to print all statistics, regardless of name or filter. Defaults to None.
+
+        """
+        self.stats_names = stats_names
+        self.stats_filter = stats_filter
+        self.print_all = print_all
+        self.streams = []
+
+    def is_stat_named(self, name: str) -> bool:
+        """Check if a statistic is named.
+
+        Args:
+            name (str): The name of the statistic.
+
+        Returns:
+            bool: True if the statistic is named, False otherwise.
+
+        """
+        if not self.stats_names:
+            return True
+        return name in self.stats_names
+
+    def is_stat_filtered(self, name: str) -> bool:
+        """Check if a statistic is filtered.
+
+        Args:
+            name (str): The name of the statistic.
+
+        Returns:
+            bool: True if the statistic is filtered, False otherwise.
+
+        """
+        if not self.stats_filter:
+            return True
+        return re.match(self.stats_filter, name) is not None
+
+    def is_stat_wanted(self, name: str, value: int) -> bool:
+        """Check if a statistic is wanted.
+
+        Args:
+            name (str): The name of the statistic.
+            value (int): The value of the statistic.
+
+        Returns:
+            bool: True if the statistic is wanted, False otherwise.
+
+        """
+        if self.print_all:
+            return True
+        if not self.stats_names and not self.stats_filter:
+            return value != 0
+        return self.is_stat_named(name) and self.is_stat_filtered(name)
+
+    def write(self, stats: Stats):
+        """Write statistics to streams.
+
+        Args:
+            stats (Stats): The statistics to write.
+
+        """
+        stats_dict = {k: v for k, v in stats.as_dict().items()
+                      if self.is_stat_wanted(k, v)}
+        if not stats_dict:
+            return
+        for stream in self.streams:
+            stream.write(stats_dict, stats.max_name_len, stats.header)
+
+
+class StatsStreamTop(StatsStream):
+    """
+    This class represents a top-like statistics stream for displaying information on a curses-based terminal interface.
+    """
+    def __init__(self):
+        # Initialize the curses screen and set some options
+        self.screen = curses.initscr()
+        curses.noecho()
+        curses.cbreak()
+
+    def __del__(self):
+        # Restore the terminal to its previous state when the object is deleted
+        curses.nocbreak()
+        self.screen.keypad(False)
+        curses.echo()
+        curses.endwin()
+
+    def write(self, stats_dict: dict, max_name_len: int, header=None):
+        # Write the header if it is provided
+        if header:
+            self.screen.addstr(0, 0, header)
+
+        # Write each key-value pair in stats_dict to the screen
+        row = 2
+        for k, v in stats_dict.items():
+            try:
+                self.screen.addstr(row, 2, "{}{} : {}".format(
+                    k, ' ' * (max_name_len - len(k)), v))
+            except curses.error:
+                pass
+            row += 1
+
+        # Refresh the screen to show the updated contents
+        self.screen.refresh()
+
+
+class CsvStatsWriter(StatsWriter):
+    """
+    A concrete class for writing statistics in CSV format to output streams
+    """
+    def __init__(self, stats_names=None, stats_filter=None, csv_path=None, print_all=None):
+        StatsWriter.__init__(self, stats_names, stats_filter, print_all)
+        if csv_path:  # Write statistics as CSV to a file if path has non-zero lengh
+            self.streams.append(StatsStreamCsvFile(csv_path))
+        elif csv_path is not None:  # Or write statistics as CSV to screen, if not None
+            self.streams.append(StatsStreamCsvScreen())
+
+
+class BatchStatsWriter(StatsWriter):
+    """
+    A concrete class for writing statistics to the screen in a batch.
+    """
+    def __init__(self, stats_names: list = None, stats_filter: str = None, csv_path: str = None, print_all: bool = None):
+        CsvStatsWriter.__init__(self, stats_names, stats_filter, csv_path, print_all)
+        if csv_path or csv_path is None:  # Add screen writer only if CSV output isn't writtent to screen
+            self.streams.append(StatsStreamScreen())
+
+
+class IncrementalStatsWriter(StatsWriter):
+    """
+    A concrete class for writing statistics to the screen incrementally.
+    """
+    def __init__(self, stats_names: list = None, stats_filter: str = None,
+                 csv_path: str = None, print_all: bool = None, count: str = None):
+        CsvStatsWriter.__init__(self, stats_names, stats_filter, csv_path, print_all)
+        self.count = int(count) if count else None
+        if csv_path or csv_path is None:  # Add screen writer only if CSV output isn't writtent to screen
+            self.streams.append(StatsStreamTop())
+
+    def __run(self) -> bool:
+        """
+        Decrement the count and return True if it is not None and greater than zero, False otherwise.
+        """
+        if self.count is None:
+            return True
+        if not self.count:
+            return False
+        self.count -= 1
+        return True
+
+    def write(self, stats: Stats):
+        """
+        Writes statistics incremenatally.
+
+        Args:
+            stats (Stats): The statistics to write.
+        """
+        inc_stats = IncrementalStats(stats)
+        while self.__run():
+            try:
+                time.sleep(1)
+                StatsWriter.write(self, inc_stats)
+            except KeyboardInterrupt:
+                break
+
+
+class SummarizedStats(Stats):
+    """
+    A base class for computing the summarized statistics for multiple Stats objects.
+    """
+    def __init__(self, term_subdirs: list[str]):
+        """
+        A class for summarizing stats from subdirectories.
+
+        Args:
+        - term_subdirs: a list of subdirectory names to summarize stats from.
+        """
+        Stats.__init__(self)
+        self.__term_subdirs = term_subdirs
+
+    @property
+    def path(self) -> str:
+        """
+        Property for the path of the directory that contains the subdirectories
+        """
+        raise NotImplementedError("Subclasses must implement path property")
+
+    def term_stats(self, subdir: str) -> Stats:
+        """
+        Get stats for a single subdirectory.
+
+        Args:
+        - d: the subdirectory to get stats from.
+
+        Returns:
+        - A Stats object containing the stats from the subdirectory.
+        """
+        raise NotImplementedError("Subclasses must implement term_stats method")
+
+    @property
+    def term_subdirs(self) -> list[str]:
+        """
+        Property for the subdirectory names to summarize stats from. If not
+        specified, get all subdirectories with names that are integers.
+
+        Returns:
+        - A list of subdirectory names to summarize stats from.
+        """
+        if self.__term_subdirs:
+            return self.__term_subdirs
+        return [os.path.basename(d) for d in Path(self.path).glob("[0-9]*") if Path(d).is_dir()]
+
+    @property
+    def header_parts(self) -> tuple[str, str]:
+        """
+        Returns a tuple containing two strings: a term pluralization indicator and a comma-separated
+        list of subdirectory names.
+        """
+        plural = "s" if len(self.term_subdirs) != 1 else ""
+        subdirs_list = ",".join(sorted(self.__term_subdirs)) if self.__term_subdirs else "combined"
+        return [plural, subdirs_list]
+
+    def as_dict(self) -> dict[str, int]:
+        """
+        Get a dictionary representation of the summarized stats.
+
+        Returns:
+        - A dictionary containing the summarized stats.
+        """
+        stats = {}
+        for subdir in self.term_subdirs:
+            subdir_stats = self.term_stats(subdir).as_dict()
+            for k, v in subdir_stats.items():
+                stats[k] = stats.get(k, 0) + v
+        self.max_name_len = len(max(stats.keys(), key=len))
+        return stats
+
+
+class IncrementalStats(Stats):
+    """
+    A concrete class for computing the incremental difference between two Stats objects.
+    """
+    def __init__(self, stats: Stats):
+        """
+        Initializes an IncrementalStats object.
+
+        :param stats: The Stats object to compute the incremental difference from.
+        """
+        self.stats = stats
+        self.stats_dict = stats.as_dict()
+
+    @property
+    def header(self):
+        return self.stats.header
+
+    @property
+    def max_name_len(self) -> int:
+        """
+        Returns the maximum length of the statistic names.
+
+        :return: The maximum length of the statistic names.
+        """
+        return self.stats.max_name_len
+
+    def as_dict(self) -> dict[str, int]:
+        """
+        Computes the incremental difference between the current Stats object and the previous one.
+
+        :return: A dictionary of the incremental difference between the current Stats object and the previous one.
+        """
+        prev = self.stats_dict
+        self.stats_dict = self.stats.as_dict()
+        return {k: self.stats_dict[k] - prev[k] for k in prev.keys()}
+
+
+class PartitionStats(Stats):
+    """
+    A concrete class representing the statistics of a partition.
+    """
+    def __init__(self, partition: str):
+        """
+        Initializes a PartitionStats object.
+
+        :param partition: The partition to get statistics for.
+        """
+        Stats.__init__(self)
+        self.partition = partition
+
+    @property
+    def header(self):
+        return "Microsoft hypervisor statistics: Partition {}".format(self.partition)
+
+    @property
+    def path(self) -> str:
+        """
+        The path to the partition's statistics.
+
+        :return: The path to the partition's statistics.
+        """
+        return DebugfsPath.partition_stats_path(self.partition)
+
+
+class VpStats(Stats):
+    """
+    A concrete class representing the statistics of a partition's virtual processor.
+    """
+    aggregated = {
+        "TotalMessages": [
+            "ExtendedHypercallInterceptMessages",
+            "MemoryInterceptMessages",
+            "OtherMessages",
+            # The following counters are AMD64-specific
+            "IoInterceptMessages"
+        ],
+
+        "TotalIntercepts": [
+            "HypercallsCount",
+            "OtherInterceptsCount",
+            "ExternalInterruptsCount",
+            "PendingInterruptsCount",
+            "NestedPageFaultInterceptsCount",
+
+            # The following counters are AMD64-specific
+            "ControlRegisterAccessesCount",
+            "DebugRegisterAccessesCount",
+            "EmulatedInstructionsCount",
+            "CpuidInstructionsCount",
+            "HltInstructionsCount",
+            "IoInstructionsCount",
+            "MsrAccessesCount",
+            "MwaitInstructionsCount",
+            "PageFaultInterceptsCount",
+            "PageInvalidationsCount",
+            "ControlRegisterAccessesForwardedCount",
+            "HypercallsForwardedCount",
+            "PageInvalidationsForwardedCount",
+            "IoInstructionsForwardedCount",
+            "HltInstructionsForwardedCount",
+            "MwaitInstructionsForwardedCount",
+            "CpuidInstructionsForwardedCount",
+            "MsrAccessesForwardedCount",
+            "OtherInterceptsForwardedCount",
+            "PendingInterruptsForwardedCount",
+            "EmulatedInstructionsForwardedCount",
+            "DebugRegisterAccessesForwardedCount",
+            "PageFaultInterceptsForwardedCount",
+            "VmclearEmulationCount",
+            "VmptrldEmulationCount",
+            "VmptrstEmulationCount",
+            "VmreadEmulationCount",
+            "VmwriteEmulationCount",
+            "VmxoffEmulationCount",
+            "VmxonEmulationCount",
+            "NestedVMEntriesCount",
+            "NestedSLATSoftPageFaultsCount",
+            "NestedSLATHardPageFaultsCount",
+            "InvEptAllContextEmulationCount",
+            "InvEptSingleContextEmulationCount",
+            "InvVpidAllContextEmulationCount",
+            "InvVpidSingleContextEmulationCount",
+            "InvVpidSingleAddressEmulationCount",
+            "VmloadEmulationCount",
+            "VmsaveEmulationCount",
+            "GifInstructionEmulationCount"
+        ],
+
+        "TotalInterceptsTime": [
+            "HypercallsTime",
+            "OtherInterceptsTime",
+            "ExternalInterruptsTime",
+            "PendingInterruptsTime",
+            "NestedPageFaultInterceptsTime",
+
+            # The following counters are AMD64-specific
+            "ControlRegisterAccessesTime",
+            "CpuidInstructionsTime",
+            "DebugRegisterAccessesTime",
+            "EmulatedInstructionsTime",
+            "HltInstructionsTime",
+            "IoInstructionsTime",
+            "MsrAccessesTime",
+            "MwaitInstructionsTime",
+            "PageFaultInterceptsTime",
+            "PageInvalidationsTime",
+            "HypercallsForwardingTime",
+            "PageInvalidationsForwardingTime",
+            "ControlRegisterAccessesForwardingTime",
+            "IoInstructionsForwardingTime",
+            "HltInstructionsForwardingTime",
+            "MwaitInstructionsForwardingTime",
+            "CpuidInstructionsForwardingTime",
+            "MsrAccessesForwardingTime",
+            "OtherInterceptsForwardingTime",
+            "PendingInterruptsForwardingTime",
+            "EmulatedInstructionsForwardingTime",
+            "DebugRegisterAccessesForwardingTime",
+            "PageFaultInterceptsForwardingTime",
+            "VmclearEmulationTime",
+            "VmptrldEmulationTime",
+            "VmptrstEmulationTime",
+            "VmreadEmulationTime",
+            "VmwriteEmulationTime",
+            "VmxoffEmulationTime",
+            "VmxonEmulationTime",
+            "NestedVMEntriesTime",
+            "NestedSLATSoftPageFaultsTime",
+            "NestedSLATHardPageFaultsTime",
+            "InvEptAllContextEmulationTime",
+            "InvEptSingleContextEmulationTime",
+            "InvVpidAllContextEmulationTime",
+            "InvVpidSingleContextEmulationTime",
+            "InvVpidSingleAddressEmulationTime",
+            "VmloadEmulationTime",
+            "VmsaveEmulationTime",
+            "GifInstructionEmulationTime"
+        ],
+
+        "TotalVirtInstrEmulation": [
+            # The following counters are AMD64-specific
+            "VmclearEmulationCount",
+            "VmptrldEmulationCount",
+            "VmptrstEmulationCount",
+            "VmreadEmulationCount",
+            "VmwriteEmulationCount",
+            "VmxoffEmulationCount",
+            "VmxonEmulationCount",
+            "NestedVMEntriesCount",
+            "InvEptAllContextEmulationCount",
+            "InvEptSingleContextEmulationCount",
+            "InvVpidAllContextEmulationCount",
+            "InvVpidSingleContextEmulationCount",
+            "InvVpidSingleAddressEmulationCount",
+            "VmloadEmulationCount",
+            "VmsaveEmulationCount",
+            "GifInstructionEmulationCount"
+        ],
+
+        "TotalVirtInstrEmulationTime": [
+            # The following counters are AMD64-specific
+            "VmclearEmulationTime",
+            "VmptrldEmulationTime",
+            "VmptrstEmulationTime",
+            "VmreadEmulationTime",
+            "VmwriteEmulationTime",
+            "VmxoffEmulationTime",
+            "VmxonEmulationTime",
+            "NestedVMEntriesTime",
+            "InvEptAllContextEmulationTime",
+            "InvEptSingleContextEmulationTime",
+            "InvVpidAllContextEmulationTime",
+            "InvVpidSingleContextEmulationTime",
+            "InvVpidSingleAddressEmulationTime",
+            "VmloadEmulationTime",
+            "VmsaveEmulationTime",
+            "GifInstructionEmulationTime"
+        ]
+    }
+
+    def __init__(self, partition: str, vp_idx: str):
+        """
+        Initializes a VpStats object.
+
+        :param partition: The partition the virtual processor is on.
+        :param vp_idx: The index of the virtual processor to get statistics for.
+        """
+        Stats.__init__(self)
+        self.partition = partition
+        self.vp_idx = vp_idx
+
+    @property
+    def path(self) -> str:
+        """
+        The path to the virtual processor's statistics.
+
+        :return: The path to the virtual processor's statistics.
+        """
+        return DebugfsPath.partition_vp_stats_path(self.partition, self.vp_idx)
+
+
+class SummarizedVpStats(SummarizedStats):
+    """
+    A concrete class representing the summarized statistics of partition's virtual processors.
+    """
+    def __init__(self, partition: str, vp_idx_list: list):
+        """
+        Initializes a SummarizedVpStats class.
+
+        :param partition: The partition the virtual partitions are on.
+        :param vp_idx_list: A list of virtual processor indices to summarize statistics for.
+        """
+        SummarizedStats.__init__(self, vp_idx_list)
+        self.partition = partition
+
+    @property
+    def header(self):
+        return "Microsoft hypervisor statistics: " \
+               "Partition {} Virtual Processor{} {}".format(self.partition, *self.header_parts)
+
+    @property
+    def path(self) -> str:
+        """
+        The path to the virtual processor directory.
+
+        :return: The path to the processor's virtual processors directory.
+        """
+        return DebugfsPath.partition_vp_path(self.partition)
+
+    def term_stats(self, d):
+        """
+        Get the statistics of a partition's virtual processor.
+
+        :param d: The index of the virtual processor to get statistics for.
+        :return: The statistics of the virtual processor.
+        """
+        return VpStats(self.partition, d)
+
+
+class LpStats(Stats):
+    """
+    A concrete class representing the statistics of a logical processor.
+    """
+
+    aggregated = {
+        "TotalInterrupts": [
+            "HardwareInterrupts",
+            "InterProcessorInterrupts",
+            "SchedulerInterrupts",
+            "TimerInterrupts"
+        ]
+    }
+
+    def __init__(self, lp_idx: str):
+        """
+        Initializes a LpStats object.
+
+        :param vp_idx: The index of the logical processor to get statistics for.
+        """
+        Stats.__init__(self)
+        self.lp_idx = lp_idx
+
+    @property
+    def path(self) -> str:
+        """
+        The path to the logical processor's statistics.
+
+        :return: The path to the virtual processor's statistics.
+        """
+        return DebugfsPath.lp_stats_path(self.lp_idx)
+
+
+class SummarizedLpStats(SummarizedStats):
+    """
+    A concrete class representing the summarized statistics of logical processors.
+    """
+    def __init__(self, lp_idx_list: list):
+        """
+        Initializes a SummarizedVpStats class.
+
+        :param lp_idx_list: A list of logical processor indices to summarize statistics for.
+        """
+        SummarizedStats.__init__(self, lp_idx_list)
+
+    @property
+    def header(self):
+        return "Microsoft hypervisor statistics: Logical processor{} {}".format(*self.header_parts)
+
+    @property
+    def path(self) -> str:
+        """
+        The path to the logical processor directory.
+
+        :return: The path to the logical processors directory.
+        """
+        return DebugfsPath.lp_path()
+
+    def term_stats(self, d):
+        """
+        Get the statistics of a logical processor.
+
+        :param d: The index of the logical processor to get statistics for.
+        :return: The statistics of the logical processor.
+        """
+        return LpStats(d)
+
+
+class MshvStats(Stats):
+    """
+    A concrete class representing Microsoft Hyper-V (MSHV) statistics.
+    """
+    def __init__(self):
+        """
+        Initializes a MshvStats class.
+        """
+        Stats.__init__(self)
+
+    @property
+    def header(self):
+        return "Microsoft hypervisor statistics"
+
+    @property
+    def path(self) -> str:
+        """
+        Returns the path of the debugfs file for MSHV.
+
+        Returns:
+            The path of the debugfs file for MSHV.
+        """
+        return DebugfsPath.hv_stats_path()
+
+
+def parse_options(): # noqa c901
+    """Returns processed program arguments."""
+    description_text = """
+This script displays various statistics about VMs running under MSHV.
+The statistics are gathered from the MSHV debugfs entries.
+
+Requirements:
+- Access to:
+    %s
+""" % (PATH_DEBUGFS_MSHV)
+
+    examples_text = """
+Batch mode examples:
+
+    Display all statistics for the MSHV hypervisor:
+        mshv_stat --all -1
+
+    Display all statistics summary for all available logical processors:
+        mshv_stat --lp -1
+
+    Display statistics that match a regular expression:
+        mshv_stat --lp -1 -f .*RunTime
+
+Incremental mode examples:
+
+    Display only non-zero statistics increments for the logical processor with index 0:
+        mshv_stat --lp 0
+
+    Display only statistics increments for a specific partition and its specific virtual processors:
+        mshv_stat -p 1 --vp 3 7 --all
+
+    Display only non-zero statistics increments for the root partition and its all virtual processors:
+        mshv_stat --vp
+
+    Display only specific statistics increments for a guest partition and its all virtual processors:
+        mshv_stat -p 3 --vp --all -s TotalRunTime HypervisorRunTime
+
+    Display only specific statistics increments for a guest partition and its all virtual processors as CSV:
+        mshv_stat -p 3 --vp --all -s TotalRunTime HypervisorRunTime --csv
+
+    Write statistics that match a regular expression into a file as CSV:
+        mshv_stat --lp -1 -f .*RunTime --csv stats.csv
+
+"""
+
+    def check_number(value):
+        try:
+            ivalue = int(value)
+        except ValueError:
+            raise argparse.ArgumentTypeError(
+                "{} is not a number".format(value))
+        return ivalue
+
+    def check_partition(value):
+        if check_number(value) <= 0:
+            raise argparse.ArgumentTypeError(
+                "{} is not a positive value".format(value))
+        return value
+
+    def check_non_negative(value):
+        if check_number(value) < 0:
+            raise argparse.ArgumentTypeError(
+                "{} is a negative value".format(value))
+        return value
+
+    def check_regex(value):
+        try:
+            re.compile(value)
+        except re.error:
+            raise argparse.ArgumentTypeError(
+                "{}: Not a valid regular expression".format(value))
+        return value
+
+    def check_path(value):
+        if not len(value):
+            return ""
+        if not os.access(os.path.dirname(value), os.W_OK):
+            sys.stderr.write("Can't open {} for writing\n".format(
+                os.path.dirname(value)))
+            sys.exit(1)
+        return value
+
+    parser = argparse.ArgumentParser(description=description_text,
+                                     formatter_class=argparse
+                                     .RawTextHelpFormatter,
+                                     epilog=examples_text)
+
+    batch_group = parser.add_mutually_exclusive_group()
+
+    batch_group.add_argument("-1", "--once", "--batch", action="store_true",
+                             default=False, help="display statistics once and exit (batch mode)")
+
+    batch_group.add_argument("-c", "--count", type=check_non_negative,
+                             required=False,
+                             help="number of times to display statistics (for incremental mode; default: unlimited)")
+
+    parser.add_argument("--all", action="store_true", default=False,
+                        help="display all statistics, including those with value zero")
+
+    lp_prt_grp = parser.add_mutually_exclusive_group()
+
+    lp_prt_grp.add_argument("-p", "--partition", type=check_partition,
+                            required=False,
+                            help="ID of the partition to display statistics for (default: 1 if \"--vp\" option is specified)")
+
+    lp_prt_grp.add_argument("--lp", nargs="*", type=check_non_negative,
+                            required=False,
+                            help="index of the logical processor to display statistics for (default: all)")
+
+    parser.add_argument("--vp", nargs="*", type=check_non_negative,
+                        required=False,
+                        help="list of indexes of the virtual processor to display statistics for (default: all)")
+
+    parser.add_argument("-s", "--stats", nargs="+", required=False,
+                        help="list of statistic names to display")
+
+    parser.add_argument("-f", "--filter", type=check_regex, required=False,
+                        help="regular expression to filter statistics by name")
+
+    parser.add_argument("--csv", type=check_path, nargs='?', const="",
+                        required=False,
+                        help="file name to write CSV representation into"
+                        "(STDOUT if none)")
+
+    args = parser.parse_args()
+
+    if args.csv and not args.all and not args.filter and not args.stats:
+        parser.error("CSV output requires either \"--filter\", \"--stats\""
+                     "or \"--all\" option")
+
+    if args.vp is not None and not args.partition:
+        args.partition = "1"
+
+    return args
+
+
+def assign_globals():
+    global PATH_DEBUGFS_MSHV
+
+    debugfs = ""
+    for line in open("/proc/mounts"):
+        if line.split(" ")[0] == "debugfs":
+            debugfs = line.split(" ")[1]
+            break
+    if debugfs == "":
+        sys.stderr.write("Please make sure that CONFIG_DEBUG_FS "
+                         "is enabled in your kernel, mounted and\n"
+                         "readable by the current user:\n"
+                         "(\"mount - t debugfs debugfs "
+                         "/ sys/kernel/debug\")\n")
+        sys.exit(1)
+
+    if not os.access(debugfs, os.R_OK):
+        sys.stderr.write("Use sudo to access debugfs\n")
+        sys.exit(1)
+
+    PATH_DEBUGFS_MSHV = os.path.join(debugfs, "mshv")
+
+    if not os.path.exists(PATH_DEBUGFS_MSHV):
+        sys.stderr.write("Please make sure that CONFIG_MSHV_ROOT "
+                         "is enabled in your kernel and "
+                         "that the modules are loaded.\n")
+        sys.exit(1)
+
+
+def main():
+    assign_globals()
+    options = parse_options()
+
+    if options.partition:
+        if options.vp is not None:
+            stats = SummarizedVpStats(options.partition, options.vp)
+        else:
+            stats = PartitionStats(options.partition)
+    elif options.lp is not None:
+        stats = SummarizedLpStats(options.lp)
+    else:
+        stats = MshvStats()
+
+    try:
+        if options.once:
+            writer = BatchStatsWriter(stats_names=options.stats,
+                                      stats_filter=options.filter,
+                                      csv_path=options.csv,
+                                      print_all=options.all)
+        else:
+            writer = IncrementalStatsWriter(stats_names=options.stats,
+                                            stats_filter=options.filter,
+                                            csv_path=options.csv,
+                                            print_all=options.all,
+                                            count=options.count)
+        writer.write(stats)
+    except FileNotFoundError as e:
+        sys.stderr.write("Error: {}\n".format(e))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+
+# vim: set syntax=python:
