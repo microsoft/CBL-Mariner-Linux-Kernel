@@ -22,6 +22,7 @@
 #include <linux/uio.h>
 #include <linux/uaccess.h>
 #include <keys/request_key_auth-type.h>
+#include <linux/heki.h>
 #include "internal.h"
 
 #define KEY_MAX_DESC_SIZE 4096
@@ -135,6 +136,9 @@ SYSCALL_DEFINE5(add_key, const char __user *, _type,
 				       payload, plen, KEY_PERM_UNDEF,
 				       KEY_ALLOC_IN_QUOTA);
 	if (!IS_ERR(key_ref)) {
+		if (!strcmp(key_ref_to_ptr(keyring_ref)->description, ".secondary_trusted_keys"))
+			heki_copy_secondary_key(payload, plen);
+
 		ret = key_ref_to_ptr(key_ref)->serial;
 		key_ref_put(key_ref);
 	}
