@@ -15,12 +15,21 @@
 extern __initconst const u8 system_certificate_list[];
 extern __initconst const unsigned long module_cert_size;
 
+extern __initconst const u8 revocation_certificate_list[];
+extern __initconst const unsigned long revocation_certificate_list_size;
+
 static struct heki_kinfo heki_kinfo;
 
 static u8 *heki_module_certs;
 static unsigned long heki_module_cert_size;
 
-static int __init heki_copy_module_certs(void)
+static u8 *heki_revocation_certs;
+static unsigned long heki_revocation_cert_size;
+
+static char *heki_blacklist_hashes;
+static size_t heki_blacklist_hash_count;
+
+static int __init heki_copy_boot_certs(void)
 {
 	heki_module_certs = vmalloc(module_cert_size);
 	if (!heki_module_certs) {
@@ -34,9 +43,28 @@ static int __init heki_copy_module_certs(void)
 	 * the end of init.
 	 */
 	memcpy(heki_module_certs, system_certificate_list, module_cert_size);
+
+	if (revocation_certificate_list_size <= 0) {
+		pr_info("No revocation certificates found.\n");
+		return 0;
+	}
+
+	heki_revocation_certs = vmalloc(revocation_certificate_list_size);
+	if (!heki_revocation_certs) {
+		pr_warn("Failed to alloc revocation certificates.\n");
+		return -ENOMEM;
+	}
+	heki_revocation_cert_size = revocation_certificate_list_size;
+
+	/*
+	 * Copy the revocation certificates because they will be freed at
+	 * the end of init.
+	 */
+	memcpy(heki_revocation_certs, revocation_certificate_list,
+	       revocation_certificate_list_size);
 	return 0;
 }
-core_initcall(heki_copy_module_certs);
+core_initcall(heki_copy_boot_certs);
 
 static void heki_get_ranges(struct heki_args *args)
 {
@@ -76,6 +104,21 @@ void heki_load_kdata(void)
 		  (unsigned long)heki_module_certs + heki_module_cert_size,
 		  heki_get_ranges, &args);
 
+	if (heki_revocation_cert_size > 0) {
+		args.attributes = HEKI_REVOCATION_CERTS;
+		heki_walk((unsigned long)heki_revocation_certs,
+			  (unsigned long)heki_revocation_certs + heki_revocation_cert_size,
+			  heki_get_ranges, &args);
+	}
+
+	if (heki_blacklist_hash_count > 0) {
+		args.attributes = HEKI_BLACKLIST_HASHES;
+		heki_walk((unsigned long)heki_blacklist_hashes,
+			  (unsigned long)heki_blacklist_hashes +
+			  HEKI_MAX_TOTAL_HASH_LEN * heki_blacklist_hash_count,
+			  heki_get_ranges, &args);
+	}
+
 	heki_kinfo.ksymtab_start =
 			(struct kernel_symbol *)__start___ksymtab;
 	heki_kinfo.ksymtab_end =
@@ -106,6 +149,10 @@ void heki_load_kdata(void)
 
 	heki_cleanup_args(&args);
 	vfree(heki_module_certs);
+	vfree(heki_revocation_certs);
+	vfree(heki_blacklist_hashes);
+	heki_blacklist_hashes = NULL;
+	heki_blacklist_hash_count = 0;
 }
 
 long heki_validate_module(struct module *mod, struct load_info *info, int flags)
@@ -211,4 +258,33 @@ void heki_copy_secondary_key(const void *data, size_t size)
 	mutex_unlock(&heki.lock);
 
 	heki_cleanup_args(&args);
+}
+
+void __init heki_store_blacklist_raw_hashes(const char *hash)
+{
+	/* Initialize the blacklist hashes array if it does not already exist */
+	if (!heki_blacklist_hashes) {
+		heki_blacklist_hashes = vmalloc(HEKI_MAX_TOTAL_HASHES * HEKI_MAX_TOTAL_HASH_LEN);
+		if (!heki_blacklist_hashes) {
+			pr_warn("Failed to allocate memory for blacklist hashes\n");
+			return;
+		}
+	}
+
+	/* Check if the hash is longer than 132 characters not including null terminator.
+	 * Hashes are formally vetted automatically in both vtl0 and vtl1.
+	 */
+	if (strlen(hash) > HEKI_MAX_TOTAL_HASH_LEN - 1) {
+		pr_warn("Invalid hash: %s\n", hash);
+		return;
+	}
+
+	if (heki_blacklist_hash_count >= HEKI_MAX_TOTAL_HASHES) {
+		pr_warn("Maximum number of hashes reached. Cannot add new hash: %s\n", hash);
+		return;
+	}
+
+	strscpy(&heki_blacklist_hashes[heki_blacklist_hash_count * HEKI_MAX_TOTAL_HASH_LEN],
+		hash, HEKI_MAX_TOTAL_HASH_LEN);
+	heki_blacklist_hash_count++;
 }
