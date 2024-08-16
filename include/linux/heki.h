@@ -73,6 +73,13 @@ enum heki_kdata_type {
 /* We store the hash, the prefix which is either "tbs:" or "bin:", and the null terminator */
 #define HEKI_MAX_TOTAL_HASH_LEN 133
 
+/*
+ * According to crypto/asymmetric_keys/x509_cert_parser.c:x509_note_pkey_algo(),
+ * the size of the currently longest supported hash algorithm is 512 bits,
+ * which translates into 128 hex characters.
+ */
+#define MAX_HASH_LEN	128
+
 struct heki_kinfo {
 	struct kernel_symbol	*ksymtab_start;
 	struct kernel_symbol	*ksymtab_end;
