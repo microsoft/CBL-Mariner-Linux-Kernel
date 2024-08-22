@@ -508,6 +508,7 @@ void security_bdev_free(struct block_device *bdev);
 int security_bdev_setintegrity(struct block_device *bdev,
 			       enum lsm_integrity_type type, const void *value,
 			       size_t size);
+int lock_kernel_down(const char *where, enum lockdown_reason level);
 #else /* CONFIG_SECURITY */
 
 static inline int call_blocking_lsm_notifier(enum lsm_event event, void *data)
@@ -1439,6 +1440,7 @@ static inline int security_locked_down(enum lockdown_reason what)
 {
 	return 0;
 }
+<<<<<<< HEAD
 
 static inline int security_bdev_alloc(struct block_device *bdev)
 {
@@ -1456,6 +1458,13 @@ static inline int security_bdev_setintegrity(struct block_device *bdev,
 	return 0;
 }
 
+=======
+static inline int
+lock_kernel_down(const char *where, enum lockdown_reason level)
+{
+	return -EOPNOTSUPP;
+}
+>>>>>>> efi: Lock down the kernel if booted in secure boot mode
 #endif	/* CONFIG_SECURITY */
 
 #if defined(CONFIG_SECURITY) && defined(CONFIG_WATCH_QUEUE)
