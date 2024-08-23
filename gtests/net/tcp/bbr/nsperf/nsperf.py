@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python3
 #
 # Use netem, network namespaces, and veth virtual NICs
 # to run a multi-flow TCP test on a single Linux machine.

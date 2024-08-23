@@ -5,10 +5,15 @@
 set -x  # print commands before executing
 set -e  # exit upon error
 
-sudo apt update
-sudo apt install -y python2
-sudo apt install -y netperf
-sudo apt install -y gnuplot-nox
+# Quick and dirty installation of netperf:
+wget https://rpmfind.net/linux/fedora/linux/development/rawhide/Everything/x86_64/os/Packages/l/lksctp-tools-1.0.19-9.fc41.x86_64.rpm
+wget https://fr2.rpmfind.net/linux/fedora/linux/development/rawhide/Everything/x86_64/os/Packages/n/netperf-2.7.0-9.20210803git3bc455b.fc41.x86_64.rpm
+sudo dnf install -y --nogpgcheck lksctp-tools-1.0.19-9.fc41.x86_64.rpm
+sudo dnf install -y --nogpgcheck netperf-2.7.0-9.20210803git3bc455b.fc41.x86_64.rpm
+
+# Quick and dirty installation pahole which is needed to compile the kernel:
+wget https://rpmfind.net/linux/openmandriva/cooker/repository/x86_64/main/release/pahole-1.25-1-omv2390.x86_64.rpm
+sudo dnf install -y --nogpgcheck pahole-1.25-1-omv2390.x86_64.rpm
 
 # On Ubuntu 18.04.2 LTS, there are issues with the iproute2 binaries:
 #  (1) the 'tc' binary  has a bug and cannot parse netem random loss rates
@@ -19,7 +24,8 @@ sudo apt install -y gnuplot-nox
 # from the iproute2 sources, with patches from the BBRv3
 # source tree:
 
-sudo apt install -y pkg-config make bison flex
+# Install other tools which are needed to compile the kernel.
+sudo dnf install -y pkg-config make bison flex git gcc binutils glibc-devel kernel-headers openssl-devel elfutils-libelf-devel zlib-devel
 
 # Our project's patches for the iproute2 package are in this directory:
 PATCH_DIR=`pwd`
