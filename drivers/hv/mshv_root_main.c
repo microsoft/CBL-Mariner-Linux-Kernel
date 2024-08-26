@@ -225,6 +225,15 @@ free_pages_out:
 	return ret;
 }
 
+static inline bool is_ghcb_mapping_available(void)
+{
+#if defined(__x86_64__)
+	return ms_hyperv.ext_features & HV_VP_GHCB_ROOT_MAPPING_AVAILABLE;
+#else
+	return 0;
+#endif
+}
+
 static int mshv_get_vp_registers(u32 vp_index, u64 partition_id, u16 count,
 				 struct hv_register_assoc *registers)
 {
@@ -1235,6 +1244,7 @@ mshv_vp_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 static vm_fault_t mshv_vp_fault(struct vm_fault *vmf)
 {
 	struct mshv_vp *vp = vmf->vma->vm_file->private_data;
+
 	switch (vmf->vma->vm_pgoff) {
 	case MSHV_VP_MMAP_OFFSET_REGISTERS:
 		vmf->page = virt_to_page(vp->register_page);
@@ -1243,7 +1253,8 @@ static vm_fault_t mshv_vp_fault(struct vm_fault *vmf)
 		vmf->page = virt_to_page(vp->intercept_message_page);
 		break;
 	case MSHV_VP_MMAP_OFFSET_GHCB:
-		vmf->page = virt_to_page(vp->ghcb_page);
+		if (is_ghcb_mapping_available())
+			vmf->page = virt_to_page(vp->ghcb_page);
 		break;
 	default:
 		return -EINVAL;
@@ -1268,7 +1279,7 @@ static int mshv_vp_mmap(struct file *file, struct vm_area_struct *vma)
 			return -ENODEV;
 		break;
 	case MSHV_VP_MMAP_OFFSET_GHCB:
-		if (!vp->ghcb_page)
+		if (is_ghcb_mapping_available() && !vp->ghcb_page)
 			return -ENODEV;
 		break;
 	default:
@@ -1330,7 +1341,7 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 			goto unmap_intercept_message_page;
 	}
 
-	if (mshv_partition_encrypted(partition)) {
+	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available()) {
 		ret = hv_call_map_vp_state_page(partition->id, args.vp_index,
 						HV_VP_STATE_PAGE_GHCB,
 						&ghcb_page);
@@ -1377,7 +1388,7 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	if (!mshv_partition_encrypted(partition))
 		vp->register_page = page_to_virt(register_page);
 
-	if (mshv_partition_encrypted(partition))
+	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available())
 		vp->ghcb_page = page_to_virt(ghcb_page);
 
 	if (hv_root_partition())
@@ -1415,7 +1426,7 @@ unmap_stats_page:
 	if (hv_root_partition())
 		hv_call_unmap_stat_page(HV_STATS_OBJECT_VP, &identity);
 unmap_ghcb_page:
-	if (mshv_partition_encrypted(partition))
+	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available())
 		hv_call_unmap_vp_state_page(partition->id, args.vp_index,
 					    HV_VP_STATE_PAGE_GHCB);
 unmap_register_page:
