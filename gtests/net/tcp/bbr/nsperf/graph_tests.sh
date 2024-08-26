@@ -46,7 +46,7 @@ if [[ $tests == *"coexist"* ]]; then
     # graph tput of 1 cubic, 1 BBR at a range of buffer depths:
     # (bw=50M, rtt=30ms, buf={...}xBDP)
     rm -f $outdir/coexist.*
-    for cc_combo in cubic:1,bbr1:1 cubic:1,bbr:1; do
+    for cc_combo in cubic:1,bbr1:1 cubic:1,bbr3:1; do
 	for bdp_of_buf in  0.1  1 2 4 8 16; do
 	    echo -n "$bdp_of_buf " >> $outdir/coexist.${cc_combo}
 	    grep THROUGHPUT $indir/coexist/${cc_combo}/${bdp_of_buf}/netperf.out.1.txt | \
@@ -68,7 +68,7 @@ set output '$OUTPNG'"
         set ylabel 'throughput in Mbit/sec'\n\
 	set yrange [0:50]\n\
 	plot '$outdir/coexist.cubic:1,bbr1:1'  u 1:2 t 'bbr1'  w lp lw 2 pt 7 lt rgb \"#abd9e9\",\
-	     '$outdir/coexist.cubic:1,bbr:1' u 1:2 t 'bbr' w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
+	     '$outdir/coexist.cubic:1,bbr3:1' u 1:2 t 'bbr3' w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
              \n" > $outdir/coexist.gnuplot
 
     gnuplot -persist $outdir/coexist.gnuplot
@@ -84,7 +84,7 @@ if [[ $tests == *"random_loss"* ]]; then
     rm -f $outdir/random_loss.*
     loss_rates="0.00001 0.0001 0.001 0.01 0.1 0.2 0.5 1 2 3 10 15 20"
     for loss_rate in $loss_rates; do
-	for cc_name in cubic bbr1 bbr; do
+	for cc_name in cubic bbr1 bbr3; do
 	    cc="${cc_name}:1"
 	    sumd="$indir/random_loss/${cc}/${loss_rate}/summary/"
 	    mkdir -p $sumd
@@ -110,14 +110,14 @@ set output '$OUTPNG'"
 	set ytics nomirror\n\
 	set grid\n\
         set logscale x\n\
-	set title  'cubic, bbr1, and bbr throughput with random loss'\n\
+	set title  'cubic, bbr1, and bbr3 throughput with random loss'\n\
         set xlabel 'random loss rate, in percent'\n\
         set ylabel 'throughput in Mbit/sec'\n\
 	set yrange [0:1000]\n\
         set xrange [:20]\n\
 	plot '$outdir/random_loss.cubic:1' u 1:2 t 'cubic' w lp lw 2 pt 7 lt rgb \"#d7191c\",\
 	     '$outdir/random_loss.bbr1:1'   u 1:2 t 'bbr1' w lp lw 2 pt 7 lt rgb \"#abd9e9\",\
-	     '$outdir/random_loss.bbr:1'  u 1:2 t 'bbr'  w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
+	     '$outdir/random_loss.bbr3:1'  u 1:2 t 'bbr3'  w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
              \n" > $outdir/random_loss.gnuplot
 
     gnuplot -persist $outdir/random_loss.gnuplot
@@ -133,7 +133,7 @@ if [[ $tests == *"shallow"* ]]; then
     # BDP is 1G*100ms = 8256 packets
     rm -f $outdir/shallow_buf.*
     for num_flows in 1 10 30 60 100; do
-	for cc_name in cubic bbr1 bbr; do
+	for cc_name in cubic bbr1 bbr3; do
 	    echo -n "$num_flows " >> $outdir/shallow_buf.${cc_name}
 	    d="$indir/shallow/${cc_name}:${num_flows}/${num_flows}"
 	    infile=${d}/ss.log outdir=${d}/ ./ss_log_parser.py
@@ -151,14 +151,14 @@ set output '$OUTPNG'"
 	set ytics nomirror\n\
 	set grid\n\
         set logscale x\n\
-	set title  'cubic, bbr1, and bbr retransmit rate in shallow buffers'\n\
+	set title  'cubic, bbr1, and bbr3 retransmit rate in shallow buffers'\n\
         set xlabel 'number of flows'\n\
         set ylabel 'retransmit rate (percent)'\n\
 	set yrange [0:15]\n\
         set xrange [:]\n\
 	plot '$outdir/shallow_buf.cubic' u 1:2 t 'cubic' w lp lw 2 pt 7 lt rgb \"#d7191c\",\
 	     '$outdir/shallow_buf.bbr1'   u 1:2 t 'bbr1' w lp lw 2 pt 7 lt rgb \"#abd9e9\",\
-	     '$outdir/shallow_buf.bbr'  u 1:2 t 'bbr'  w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
+	     '$outdir/shallow_buf.bb3'  u 1:2 t 'bbr3'  w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
              \n" > $outdir/shallow_buf.gnuplot
 
     gnuplot -persist $outdir/shallow_buf.gnuplot
@@ -174,7 +174,7 @@ if [[ $tests == *"bufferbloat"* ]]; then
     # (bw=50M, rtt=30ms, buf={...}xBDP)
     rm -f $outdir/bufferbloat.*
     for bdp_of_buf in 1 10 50 100; do
-	for cc_name in cubic bbr1 bbr; do
+	for cc_name in cubic bbr1 bbr3; do
 	    echo -n "$bdp_of_buf " >> $outdir/bufferbloat.${cc_name}
 	    num_flows=2
 	    d="$indir/bufferbloat/${cc_name}:${num_flows}/${bdp_of_buf}"
@@ -192,14 +192,14 @@ set output '$OUTPNG'"
 	set key top left\n\
 	set ytics nomirror\n\
 	set grid\n\
-	set title  'cubic, bbr1, and bbr median RTT'\n\
+	set title  'cubic, bbr1, and bbr3 median RTT'\n\
         set xlabel 'buffer size (as a multiple of BDP)'\n\
         set ylabel 'median srtt sample (ms)'\n\
 	set yrange [0:]\n\
         set xrange [1:100]\n\
 	plot '$outdir/bufferbloat.cubic' u 1:2 t 'cubic' w lp lw 2 pt 7 lt rgb \"#d7191c\",\
 	     '$outdir/bufferbloat.bbr1'   u 1:2 t 'bbr1' w lp lw 2 pt 7 lt rgb \"#abd9e9\",\
-	     '$outdir/bufferbloat.bbr'  u 1:2 t 'bbr'  w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
+	     '$outdir/bufferbloat.bbr3'  u 1:2 t 'bbr3'  w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
              \n" > $outdir/bufferbloat.gnuplot
 
     gnuplot -persist $outdir/bufferbloat.gnuplot
@@ -214,7 +214,7 @@ if [[ $tests == *"ecn_bulk"* ]]; then
     # graph p50 for range of flow counts.
     # (bw=1G, rtt=1ms, num_flows={...})
     # For each CC and flow count, show the median of the p50 RTT from N trials.
-    for cc_name in dctcp bbr1 bbr; do
+    for cc_name in dctcp bbr1 bbr3; do
 	for num_flows in 1 4 10 40 100; do
 	    sumd="$indir/ecn_bulk/${cc_name}/${num_flows}/summary/"
 	    mkdir -p $sumd
@@ -243,14 +243,14 @@ set output '$OUTPNG'"
 	set ytics nomirror\n\
 	set grid\n\
         set logscale x\n\
-	set title  'dctcp, bbr1, and bbr median RTT'\n\
+	set title  'dctcp, bbr1, and bbr3 median RTT'\n\
         set xlabel 'number of flows'\n\
         set ylabel 'median srtt sample (ms)'\n\
 	set yrange [0:]\n\
         set xrange [1:100]\n\
 	plot '$outdir/ecn_bulk.dctcp'       u 1:2 t 'dctcp'           w lp lw 2 pt 7 lt rgb \"#d7191c\",\
 	     '$outdir/ecn_bulk.bbr1'         u 1:2 t 'bbr1'             w lp lw 2 pt 7 lt rgb \"#abd9e9\",\
-	     '$outdir/ecn_bulk.bbr'  u 1:2 t 'bbr' w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
+	     '$outdir/ecn_bulk.bbr3'  u 1:2 t 'bbr3' w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
              \n" > $outdir/ecn_bulk_rtt.gnuplot
 
     gnuplot -persist $outdir/ecn_bulk_rtt.gnuplot
@@ -260,7 +260,7 @@ set output '$OUTPNG'"
     #######
     # show ECN support can keep queues very low:
     # graph median of retrans rates across N trials:
-    for cc_name in dctcp bbr1 bbr; do
+    for cc_name in dctcp bbr1 bbr3; do
 	for num_flows in 1 4 10 40 100; do
 	    sumd="$indir/ecn_bulk/${cc_name}/${num_flows}/summary/"
 	    mkdir -p $sumd
@@ -287,14 +287,14 @@ set output '$OUTPNG'"
 	set key top left\n\
 	set grid\n\
         set logscale x\n\
-	set title  'dctcp, bbr1, and bbr retransmit rate'\n\
+	set title  'dctcp, bbr1, and bbr3 retransmit rate'\n\
         set xlabel 'number of flows'\n\
         set ylabel 'retransmit rate (percent)'\n\
 	set yrange [:]\n\
         set xrange [1:100]\n\
 	plot '$outdir/ecn_bulk.retrans.dctcp'       u 1:2 t 'dctcp' axis x1y1 w lp lw 2 pt 7 lt rgb \"#d7191c\",\
 	     '$outdir/ecn_bulk.retrans.bbr1'         u 1:2 t 'bbr1'   axis x1y1 w lp lw 2 pt 7 lt rgb \"#abd9e9\",\
-	     '$outdir/ecn_bulk.retrans.bbr'  u 1:2 t 'bbr'  axis x1y1 w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
+	     '$outdir/ecn_bulk.retrans.bbr3'  u 1:2 t 'bbr3'  axis x1y1 w lp lw 2 pt 7 lt rgb \"#2c7bb6\"\
              \n" > $outdir/ecn_bulk_retrans.gnuplot
 
     gnuplot -persist $outdir/ecn_bulk_retrans.gnuplot

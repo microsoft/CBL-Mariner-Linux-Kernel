@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# Run a set of tests with bbr1, bbr, cubic, dctcp.
+# Run a set of tests with bbr1, bbr3, cubic, dctcp.
 # By default, runs all tests:
 #   ./run_tests.sh
 # But you can also run a subset of tests by setting the "tests"
@@ -34,7 +34,7 @@ if [[ $tests == *"coexist"* ]]; then
     # graph tput of 1 cubic, 1 bbr at a range of buffer depths:
     # (bw=50M, rtt=30ms, buf={...}xBDP)
     # [run for a very long time, 10minutes, to find convergence...]
-    for cc_combo in cubic:1,bbr1:1 cubic:1,bbr:1; do
+    for cc_combo in cubic:1,bbr1:1 cubic:1,bbr3:1; do
 	for bdp_of_buf in  0.1  1 2 4 8 16; do
 	    cmd=""
 	    cc=$cc_combo     # mix of CCs in this experiment
@@ -62,7 +62,7 @@ if [[ $tests == *"random_loss"* ]]; then
     # graph tput of cubic, bbr at a range of random loss rates
     # (bw=1G, rtt=100ms, loss={....}
     for rep in `seq 1 10`; do
-	for cc_name in cubic bbr1 bbr; do
+	for cc_name in cubic bbr1 bbr3; do
 	    loss_rates="0.00001 0.0001 0.001 0.01 0.1 0.2 0.5 1 2 3 10 15 20"
 	    for loss_rate in $loss_rates; do
 		cmd=""
@@ -94,7 +94,7 @@ if [[ $tests == *"shallow"* ]]; then
     # graph retransmit rate for range of flow counts
     # (bw=1G, rtt=100ms, buf=1ms, num_flows={...})
     # BDP is 1G*100ms = 8256 packets
-    for cc_name in cubic bbr1 bbr; do
+    for cc_name in cubic bbr1 bbr3; do
 	for num_flows in 1 10 30 60 100; do
 	    cmd=""
 	    cc=${cc_name}:${num_flows}
@@ -123,7 +123,7 @@ if [[ $tests == *"bufferbloat"* ]]; then
     # graph p50 RTT for two flows using either cubic or bbr,
     # at a range of buffer depths.
     # (bw=50M, rtt=30ms, buf={...}xBDP)
-    for cc_name in cubic bbr1 bbr; do
+    for cc_name in cubic bbr1 bbr3; do
 	for bdp_of_buf in 1 10 50 100; do
 	    cmd=""
 	    cc=${cc_name}:2  # 2 flows
@@ -152,7 +152,7 @@ if [[ $tests == *"ecn_bulk"* ]]; then
     # graph p50 and p95 RTT (and retx, tput, fairness) for range of flow counts
     # (bw=1G, rtt=1ms, num_flows={...})
     for rep in `seq 1 10`; do
-	for cc_name in bbr bbr1 dctcp; do
+	for cc_name in bbr3 bbr1 dctcp; do
 	    for num_flows in 1 4 10 40 100; do
 		# Inside the child/test namespaces, enable ECN for
 		# both active and passive connections:
