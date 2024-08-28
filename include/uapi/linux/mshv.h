@@ -434,7 +434,7 @@ struct mshv_root_hvcall {
  *                       MAP_SHARED, vp_fd,
  *                       MSHV_VP_MMAP_OFFSET_REGISTERS * PAGE_SIZE);
  */
-enum mshv_hv_vp_state_page_type {
+enum {
 	MSHV_VP_MMAP_OFFSET_REGISTERS,
 	MSHV_VP_MMAP_OFFSET_INTERCEPT_MESSAGE,
 	MSHV_VP_MMAP_OFFSET_GHCB,
