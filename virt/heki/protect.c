@@ -46,6 +46,11 @@ void heki_init_perm(unsigned long va, unsigned long end, struct heki_args *args)
 	heki_walk(va, end, heki_init_perm_cb, args);
 }
 
+bool __weak heki_protect_pfn(unsigned long pfn)
+{
+	return true;
+}
+
 static void heki_protect_cb(struct heki_args *args)
 {
 	unsigned long va;
@@ -63,6 +68,9 @@ static void heki_protect_cb(struct heki_args *args)
 	     pa += PAGE_SIZE, va += PAGE_SIZE) {
 
 		pfn = pa >> PAGE_SHIFT;
+		if (!heki_protect_pfn(pfn))
+			continue;
+
 		cur_perm = (unsigned long) xa_load(&args->permissions, pfn);
 
 		args->attributes = cur_perm | perm;
