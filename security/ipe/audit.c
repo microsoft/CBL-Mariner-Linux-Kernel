@@ -92,7 +92,7 @@ static void audit_rule(struct audit_buffer *ab, const struct ipe_rule *r)
 {
 	const struct ipe_prop *ptr;
 
-	audit_log_format(ab, " rule=\"%s ", audit_op_names[r->op]);
+	audit_log_format(ab, " rule=\"op=%s ", audit_op_names[r->op]);
 
 	list_for_each_entry(ptr, &r->props, next) {
 		switch (ptr->type) {
