@@ -370,6 +370,9 @@ static int parse_rule(char *line, struct ipe_parsed_policy *p)
 	int rc = 0;
 	char *t;
 
+	if (IS_ERR_OR_NULL(line))
+		return -EBADMSG;
+
 	r = kzalloc(sizeof(*r), GFP_KERNEL);
 	if (!r)
 		return -ENOMEM;
