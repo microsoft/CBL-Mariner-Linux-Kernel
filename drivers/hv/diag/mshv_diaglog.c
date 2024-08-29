@@ -284,6 +284,7 @@ static int unmap_diaglog_pages(int numbufs)
 		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
 		input_page->type = HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS;
 		input_page->buffer_index = i;
+		input_page->partition_id = HV_PARTITION_ID_SELF;
 		status = hv_do_hypercall(HVCALL_UNMAP_EVENT_LOG_BUFFER,
 					 input_page, NULL);
 		local_irq_restore(flags);
@@ -359,6 +360,7 @@ int __init mshv_diaglog_init(void)
 		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
 		input_page->type = HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS;
 		input_page->buffer_index = i;
+		input_page->partition_id = HV_PARTITION_ID_SELF;
 		output_page = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
 		/* Get pfns of all pages in the buffer */
