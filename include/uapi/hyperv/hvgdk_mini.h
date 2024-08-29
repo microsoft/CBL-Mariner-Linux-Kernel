@@ -1828,20 +1828,20 @@ struct hv_input_install_intercept {
 #define HV_HYPERCALL_MMIO_MAX_DATA_LENGTH 64
 
 struct hv_mmio_read_input { /* HV_INPUT_MEMORY_MAPPED_IO_READ */
-	u64 gpa;
-	u32 size;
-	u32 reserved;
+	__u64 gpa;
+	__u32 size;
+	__u32 reserved;
 } __packed;
 
 struct hv_mmio_read_output {
-	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
+	__u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
 } __packed;
 
 struct hv_mmio_write_input {
-	u64 gpa;
-	u32 size;
-	u32 reserved;
-	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
+	__u64 gpa;
+	__u32 size;
+	__u32 reserved;
+	__u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
 } __packed;
 
 enum hv_eventlog_type { /* HV_EVENTLOG_TYPE */

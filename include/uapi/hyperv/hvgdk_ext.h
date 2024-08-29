@@ -37,8 +37,8 @@ enum {		/* HV_EXT_MEMORY_HEAT_HINT_TYPE */
 /* HvExtCallMemoryHeatHint hypercall */
 #define HV_EXT_MEMORY_HEAT_HINT_TYPE_COLD_DISCARD	2
 struct hv_memory_hint {		/* HV_EXT_INPUT_MEMORY_HEAT_HINT */
-	u64 heat_type:2;	/* HV_EXTMEM_HEAT_HINT_* */
-	u64 reserved:62;
+	__u64 heat_type:2;	/* HV_EXTMEM_HEAT_HINT_* */
+	__u64 reserved:62;
 	union hv_gpa_page_range ranges[];
 } __packed;
 

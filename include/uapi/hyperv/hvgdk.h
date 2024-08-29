@@ -46,15 +46,15 @@ struct hv_input_unmap_gpa_pages {
  */
 struct hv_vmcb_enlightenments {
 	struct __packed hv_enlightenments_control {
-		u32 nested_flush_hypercall:1;
-		u32 msr_bitmap:1;
-		u32 enlightened_npt_tlb: 1;
-		u32 reserved:29;
+		__u32 nested_flush_hypercall:1;
+		__u32 msr_bitmap:1;
+		__u32 enlightened_npt_tlb: 1;
+		__u32 reserved:29;
 	} __packed hv_enlightenments_control;
-	u32 hv_vp_id;
-	u64 hv_vm_id;
-	u64 partition_assist_page;
-	u64 reserved;
+	__u32 hv_vp_id;
+	__u64 hv_vm_id;
+	__u64 partition_assist_page;
+	__u64 reserved;
 } __packed;
 
 #endif /* #ifndef _UAPI_HV_HVGDK_H */
