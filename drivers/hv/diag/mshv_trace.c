@@ -100,9 +100,10 @@ static int hv_call_unmap_event_log_buffer(enum hv_eventlog_type type,
 
 	input.type = type;
 	input.buffer_index = index;
+	input.partition_id = HV_PARTITION_ID_SELF;
 
-	status = hv_do_fast_hypercall8(HVCALL_UNMAP_EVENT_LOG_BUFFER,
-			input.as_uint64);
+	status = hv_do_fast_hypercall16(HVCALL_UNMAP_EVENT_LOG_BUFFER,
+			input.as_uint64[0], input.as_uint64[1]);
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall: HVCALL_UNMAP_EVENT_LOG_BUFFER, status %s\n",
@@ -124,6 +125,7 @@ static int hv_call_map_event_log_buffer(enum hv_eventlog_type type, u32 index,
 
 	input->type = type;
 	input->buffer_index = index;
+	input->partition_id = HV_PARTITION_ID_SELF;
 
 	status = hv_do_hypercall(HVCALL_MAP_EVENT_LOG_BUFFER, input, output);
 
