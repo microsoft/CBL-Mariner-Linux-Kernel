@@ -15,6 +15,7 @@
 struct hv_input_map_eventlog_buffer { /* HV_INPUT_MAP_EVENTLOG_BUFFER */
 	__u32 type; /* HV_EVENTLOG_TYPE */
 	__u32 buffer_index;
+	__u64 partition_id;
 } __packed;
 
 struct hv_output_map_eventlog_buffer { /* HV_OUTPUT_MAP_EVENTLOG_BUFFER */
@@ -22,10 +23,11 @@ struct hv_output_map_eventlog_buffer { /* HV_OUTPUT_MAP_EVENTLOG_BUFFER */
 } __packed;
 
 union hv_input_unmap_eventlog_buffer { /* HV_INPUT_UNMAP_EVENTLOG_BUFFER */
-	__u64 as_uint64;
+	__u64 as_uint64[2];
 	struct {
 		__u32 type; /* HV_EVENTLOG_TYPE */
 		__u32 buffer_index;
+		__u64 partition_id;
 	} __packed;
 };
 
