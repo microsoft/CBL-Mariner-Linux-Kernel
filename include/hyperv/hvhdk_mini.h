@@ -37,6 +37,14 @@ enum hv_scheduler_type {
 	HV_SCHEDULER_TYPE_MAX
 };
 
+/* HV_STATS_AREA_TYPE */
+enum hv_stats_area_type {
+	HV_STATS_AREA_SELF = 0,
+	HV_STATS_AREA_PARENT = 1,
+	HV_STATS_AREA_INTERNAL = 2,
+	HV_STATS_AREA_COUNT
+};
+
 enum hv_stats_object_type {
 	HV_STATS_OBJECT_HYPERVISOR		= 0x00000001,
 	HV_STATS_OBJECT_LOGICAL_PROCESSOR	= 0x00000002,
@@ -47,21 +55,22 @@ enum hv_stats_object_type {
 union hv_stats_object_identity {
 	/* hv_stats_hypervisor */
 	struct {
-		__u8 reserved[16];
+		__u8 reserved[15];
+		__u8 stats_area_type;
 	} __packed hv;
 
 	/* hv_stats_logical_processor */
 	struct {
 		__u32 lp_index;
-		__u8 reserved[12];
+		__u8 reserved[11];
+		__u8 stats_area_type;
 	} __packed lp;
 
 	/* hv_stats_partition */
 	struct {
 		__u64 partition_id;
-		__u8  reserved[4];
-		__u16 flags;
-		__u8  reserved1[2];
+		__u8  reserved[7];
+		__u8  stats_area_type;
 	} __packed partition;
 
 	/* hv_stats_vp */
@@ -69,7 +78,8 @@ union hv_stats_object_identity {
 		__u64 partition_id;
 		__u32 vp_index;
 		__u16 flags;
-		__u8  reserved[2];
+		__u8  reserved;
+		__u8  stats_area_type;
 	} __packed vp;
 };
 
