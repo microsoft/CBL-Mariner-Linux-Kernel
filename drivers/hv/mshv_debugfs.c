@@ -831,7 +831,9 @@ DEFINE_SHOW_ATTRIBUTE(hv_stats);
 
 static void mshv_hv_stats_unmap(void)
 {
-	union hv_stats_object_identity identity = { };
+	union hv_stats_object_identity identity = {
+		.hv.stats_area_type = HV_STATS_AREA_SELF,
+	};
 	int err;
 
 	err = hv_call_unmap_stat_page(HV_STATS_OBJECT_HYPERVISOR,
@@ -843,7 +845,9 @@ static void mshv_hv_stats_unmap(void)
 
 static void * __init mshv_hv_stats_map(void)
 {
-	union hv_stats_object_identity identity = { };
+	union hv_stats_object_identity identity = {
+		.hv.stats_area_type = HV_STATS_AREA_SELF,
+	};
 	void *stats;
 	int err;
 
@@ -948,9 +952,11 @@ int __init mshv_debugfs_init(void)
 		return PTR_ERR(mshv_debugfs);
 	}
 
-	err = mshv_debugfs_hv_stats_create(mshv_debugfs);
-	if (err)
-		goto remove_mshv_dir;
+	if (hv_root_partition()) {
+		err = mshv_debugfs_hv_stats_create(mshv_debugfs);
+		if (err)
+			goto remove_mshv_dir;
+	}
 
 	err = mshv_debugfs_root_partition_create();
 	if (err)
@@ -965,7 +971,8 @@ int __init mshv_debugfs_init(void)
 remove_partition_dir:
 	partition_debugfs_remove(hv_current_partition_id, NULL);
 unmap_hv_stats:
-	mshv_hv_stats_unmap();
+	if (hv_root_partition())
+		mshv_hv_stats_unmap();
 remove_mshv_dir:
 	debugfs_remove_recursive(mshv_debugfs);
 	return err;
@@ -979,5 +986,6 @@ void mshv_debugfs_exit(void)
 
 	debugfs_remove_recursive(mshv_debugfs);
 
-	mshv_hv_stats_unmap();
+	if (hv_root_partition())
+		mshv_hv_stats_unmap();
 }
