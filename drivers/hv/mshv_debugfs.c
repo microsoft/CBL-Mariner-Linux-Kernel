@@ -110,6 +110,7 @@ static void mshv_lp_stats_unmap(u32 lp_index)
 {
 	union hv_stats_object_identity identity = {
 		.lp.lp_index = lp_index,
+		.lp.stats_area_type = HV_STATS_AREA_SELF,
 	};
 	int err;
 
@@ -118,12 +119,14 @@ static void mshv_lp_stats_unmap(u32 lp_index)
 	if (err)
 		pr_err("%s: failed to unmap logical processor %u stats, "
 		       "err: %d\n", __func__, lp_index, err);
+
 }
 
 static void __init *mshv_lp_stats_map(u32 lp_index)
 {
 	union hv_stats_object_identity identity = {
 		.lp.lp_index = lp_index,
+		.lp.stats_area_type = HV_STATS_AREA_SELF,
 	};
 	void *stats;
 	int err;
@@ -135,6 +138,7 @@ static void __init *mshv_lp_stats_map(u32 lp_index)
 		       "err: %d\n", __func__, lp_index, err);
 		return ERR_PTR(err);
 	}
+
 	return stats;
 }
 
@@ -956,20 +960,21 @@ int __init mshv_debugfs_init(void)
 		err = mshv_debugfs_hv_stats_create(mshv_debugfs);
 		if (err)
 			goto remove_mshv_dir;
+
+		err = mshv_debugfs_lp_create(mshv_debugfs);
+		if (err)
+			goto unmap_hv_stats;
 	}
 
 	err = mshv_debugfs_root_partition_create();
 	if (err)
-		goto unmap_hv_stats;
-
-	err = mshv_debugfs_lp_create(mshv_debugfs);
-	if (err)
-		goto remove_partition_dir;
+		goto unmap_lp_stats;
 
 	return 0;
 
-remove_partition_dir:
-	partition_debugfs_remove(hv_current_partition_id, NULL);
+unmap_lp_stats:
+	if (hv_root_partition())
+		mshv_debugfs_lp_remove();
 unmap_hv_stats:
 	if (hv_root_partition())
 		mshv_hv_stats_unmap();
@@ -980,7 +985,8 @@ remove_mshv_dir:
 
 void mshv_debugfs_exit(void)
 {
-	mshv_debugfs_lp_remove();
+	if (hv_root_partition())
+		mshv_debugfs_lp_remove();
 
 	mshv_debugfs_root_partition_remove();
 
