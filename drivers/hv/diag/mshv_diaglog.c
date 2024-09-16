@@ -24,7 +24,7 @@
 #include <linux/vmalloc.h>
 
 #include <asm/mshyperv.h>
-#include <uapi/hyperv/hvtrapi.h>
+#include <hyperv/hvtrapi.h>
 
 static size_t MSHV_TICKS_PER_SEC = NSEC_PER_SEC/100; /* 1 tick is 100 ns long in mshv */
 

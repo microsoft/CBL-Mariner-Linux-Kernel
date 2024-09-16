@@ -12,6 +12,7 @@
 #include <linux/sched.h>
 #include <linux/srcu.h>
 #include <linux/wait.h>
+#include <hyperv/hvhdk.h>
 #include <uapi/linux/mshv.h>
 
 #define mshv_field_nonzero(STRUCT, MEMBER) \
