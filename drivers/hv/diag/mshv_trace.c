@@ -13,7 +13,8 @@
 #include <linux/anon_inodes.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
-#include <linux/mshv.h>
+#include <hyperv/hvhdk.h>
+#include <uapi/linux/mshv.h>
 #include <hyperv/hvtrapi.h>
 #include <asm/mshyperv.h>
 
