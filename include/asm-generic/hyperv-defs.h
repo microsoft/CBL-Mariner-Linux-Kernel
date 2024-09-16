@@ -3,7 +3,7 @@
 #define _ASM_GENERIC_HYPERV_DEFS_H
 
 #ifdef CONFIG_HYPERV_NONTLFS_HEADERS
-#include <uapi/hyperv/hvhdk.h>
+#include <hyperv/hvhdk.h>
 #else
 #include <asm/hyperv-tlfs.h>
 #endif

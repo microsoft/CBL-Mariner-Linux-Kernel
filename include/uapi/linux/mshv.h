@@ -19,14 +19,6 @@
 #include <linux/types.h>
 
 /*
- * TODO: Remove this include
- * The goal is for this file to not explicitly depend on hypervisor ABIs.
- * The VMM may still rely on the hypervisor ABI, but not directly via these
- * kernel interfaces.
- */
-#include <hyperv/hvhdk.h>
-
-/*
  * This IOCTL number is reserved for use by mshv drivers in ioctl-number.rst.
  * It is not necessary to use any other IOCTL number in this file.
  */
