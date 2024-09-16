@@ -18,6 +18,7 @@
 #include <linux/errno.h>
 #include <linux/reboot.h>
 #include <linux/crash_dump.h>
+#include <hyperv/hvhdk.h>
 #include <uapi/linux/mshv.h>
 
 #include "mshv_diag.h"
