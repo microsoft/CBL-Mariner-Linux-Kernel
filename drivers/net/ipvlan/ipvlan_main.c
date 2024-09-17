@@ -411,8 +411,8 @@ static int ipvlan_ethtool_get_link_ksettings(struct net_device *dev,
 static void ipvlan_ethtool_get_drvinfo(struct net_device *dev,
 				       struct ethtool_drvinfo *drvinfo)
 {
-	strlcpy(drvinfo->driver, IPVLAN_DRV, sizeof(drvinfo->driver));
-	strlcpy(drvinfo->version, IPV_DRV_VER, sizeof(drvinfo->version));
+	strscpy(drvinfo->driver, IPVLAN_DRV, sizeof(drvinfo->driver));
+	strscpy(drvinfo->version, IPV_DRV_VER, sizeof(drvinfo->version));
 }
 
 static u32 ipvlan_ethtool_get_msglevel(struct net_device *dev)
@@ -580,7 +580,7 @@ int ipvlan_link_new(struct net *src_net, struct net_device *dev,
 	 * world but keep using the physical-dev address for the outgoing
 	 * packets.
 	 */
-	memcpy(dev->dev_addr, phy_dev->dev_addr, ETH_ALEN);
+	eth_hw_addr_set(dev, phy_dev->dev_addr);
 
 	dev->priv_flags |= IFF_NO_RX_HANDLER;
 
