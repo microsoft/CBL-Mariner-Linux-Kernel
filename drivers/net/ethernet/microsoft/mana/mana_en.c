@@ -1062,11 +1062,10 @@ static int mana_cfg_vport_steering(struct mana_port_context *apc,
 	struct mana_cfg_rx_steer_req_v2 *req;
 	struct mana_cfg_rx_steer_resp resp = {};
 	struct net_device *ndev = apc->ndev;
-	mana_handle_t *req_indir_tab;
 	u32 req_buf_size;
 	int err;
 
-	req_buf_size = sizeof(*req) + sizeof(mana_handle_t) * num_entries;
+	req_buf_size = struct_size(req, indir_tab, num_entries);
 	req = kzalloc(req_buf_size, GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
@@ -1078,7 +1077,8 @@ static int mana_cfg_vport_steering(struct mana_port_context *apc,
 
 	req->vport = apc->port_handle;
 	req->num_indir_entries = num_entries;
-	req->indir_tab_offset = sizeof(*req);
+	req->indir_tab_offset = offsetof(struct mana_cfg_rx_steer_req_v2,
+					 indir_tab);
 	req->rx_enable = rx;
 	req->rss_enable = apc->rss_state;
 	req->update_default_rxobj = update_default_rxobj;
@@ -1090,11 +1090,9 @@ static int mana_cfg_vport_steering(struct mana_port_context *apc,
 	if (update_key)
 		memcpy(&req->hashkey, apc->hashkey, MANA_HASH_KEY_SIZE);
 
-	if (update_tab) {
-		req_indir_tab = (mana_handle_t *)(req + 1);
-		memcpy(req_indir_tab, apc->rxobj_table,
-		       req->num_indir_entries * sizeof(mana_handle_t));
-	}
+	if (update_tab)
+		memcpy(req->indir_tab, apc->rxobj_table,
+		       flex_array_size(req, indir_tab, req->num_indir_entries));
 
 	err = mana_send_request(apc->ac, req, req_buf_size, &resp,
 				sizeof(resp));
@@ -1900,10 +1898,10 @@ static int mana_create_txq(struct mana_port_context *apc,
 	 *  to prevent overflow.
 	 */
 	txq_size = MAX_SEND_BUFFERS_PER_QUEUE * 32;
-	BUILD_BUG_ON(!PAGE_ALIGNED(txq_size));
+	BUILD_BUG_ON(!MANA_PAGE_ALIGNED(txq_size));
 
 	cq_size = MAX_SEND_BUFFERS_PER_QUEUE * COMP_ENTRY_SIZE;
-	cq_size = PAGE_ALIGN(cq_size);
+	cq_size = MANA_PAGE_ALIGN(cq_size);
 
 	gc = gd->gdma_context;
 
@@ -2199,8 +2197,8 @@ static struct mana_rxq *mana_create_rxq(struct mana_port_context *apc,
 	if (err)
 		goto out;
 
-	rq_size = PAGE_ALIGN(rq_size);
-	cq_size = PAGE_ALIGN(cq_size);
+	rq_size = MANA_PAGE_ALIGN(rq_size);
+	cq_size = MANA_PAGE_ALIGN(cq_size);
 
 	/* Create RQ */
 	memset(&spec, 0, sizeof(spec));
@@ -2395,13 +2393,33 @@ void mana_query_gf_stats(struct mana_port_context *apc)
 
 	mana_gd_init_req_hdr(&req.hdr, MANA_QUERY_GF_STAT,
 			     sizeof(req), sizeof(resp));
-	req.req_stats = STATISTICS_FLAGS_HC_TX_BYTES |
+	req.req_stats = STATISTICS_FLAGS_RX_DISCARDS_NO_WQE |
+			STATISTICS_FLAGS_RX_ERRORS_VPORT_DISABLED |
+			STATISTICS_FLAGS_HC_RX_BYTES |
+			STATISTICS_FLAGS_HC_RX_UCAST_PACKETS |
+			STATISTICS_FLAGS_HC_RX_UCAST_BYTES |
+			STATISTICS_FLAGS_HC_RX_MCAST_PACKETS |
+			STATISTICS_FLAGS_HC_RX_MCAST_BYTES |
+			STATISTICS_FLAGS_HC_RX_BCAST_PACKETS |
+			STATISTICS_FLAGS_HC_RX_BCAST_BYTES |
+			STATISTICS_FLAGS_TX_ERRORS_GF_DISABLED |
+			STATISTICS_FLAGS_TX_ERRORS_VPORT_DISABLED |
+			STATISTICS_FLAGS_TX_ERRORS_INVAL_VPORT_OFFSET_PACKETS |
+			STATISTICS_FLAGS_TX_ERRORS_VLAN_ENFORCEMENT |
+			STATISTICS_FLAGS_TX_ERRORS_ETH_TYPE_ENFORCEMENT |
+			STATISTICS_FLAGS_TX_ERRORS_SA_ENFORCEMENT |
+			STATISTICS_FLAGS_TX_ERRORS_SQPDID_ENFORCEMENT |
+			STATISTICS_FLAGS_TX_ERRORS_CQPDID_ENFORCEMENT |
+			STATISTICS_FLAGS_TX_ERRORS_MTU_VIOLATION |
+			STATISTICS_FLAGS_TX_ERRORS_INVALID_OOB |
+			STATISTICS_FLAGS_HC_TX_BYTES |
 			STATISTICS_FLAGS_HC_TX_UCAST_PACKETS |
 			STATISTICS_FLAGS_HC_TX_UCAST_BYTES |
 			STATISTICS_FLAGS_HC_TX_MCAST_PACKETS |
 			STATISTICS_FLAGS_HC_TX_MCAST_BYTES |
 			STATISTICS_FLAGS_HC_TX_BCAST_PACKETS |
-			STATISTICS_FLAGS_HC_TX_BCAST_BYTES;
+			STATISTICS_FLAGS_HC_TX_BCAST_BYTES |
+			STATISTICS_FLAGS_TX_ERRORS_GDMA_ERROR;
 
 	err = mana_send_request(apc->ac, &req, sizeof(req), &resp,
 				sizeof(resp));
@@ -2417,6 +2435,30 @@ void mana_query_gf_stats(struct mana_port_context *apc)
 		return;
 	}
 
+	apc->eth_stats.hc_rx_discards_no_wqe = resp.rx_discards_nowqe;
+	apc->eth_stats.hc_rx_err_vport_disabled = resp.rx_err_vport_disabled;
+	apc->eth_stats.hc_rx_bytes = resp.hc_rx_bytes;
+	apc->eth_stats.hc_rx_ucast_pkts = resp.hc_rx_ucast_pkts;
+	apc->eth_stats.hc_rx_ucast_bytes = resp.hc_rx_ucast_bytes;
+	apc->eth_stats.hc_rx_bcast_pkts = resp.hc_rx_bcast_pkts;
+	apc->eth_stats.hc_rx_bcast_bytes = resp.hc_rx_bcast_bytes;
+	apc->eth_stats.hc_rx_mcast_pkts = resp.hc_rx_mcast_pkts;
+	apc->eth_stats.hc_rx_mcast_bytes = resp.hc_rx_mcast_bytes;
+	apc->eth_stats.hc_tx_err_gf_disabled = resp.tx_err_gf_disabled;
+	apc->eth_stats.hc_tx_err_vport_disabled = resp.tx_err_vport_disabled;
+	apc->eth_stats.hc_tx_err_inval_vportoffset_pkt =
+					     resp.tx_err_inval_vport_offset_pkt;
+	apc->eth_stats.hc_tx_err_vlan_enforcement =
+					     resp.tx_err_vlan_enforcement;
+	apc->eth_stats.hc_tx_err_eth_type_enforcement =
+					     resp.tx_err_ethtype_enforcement;
+	apc->eth_stats.hc_tx_err_sa_enforcement = resp.tx_err_SA_enforcement;
+	apc->eth_stats.hc_tx_err_sqpdid_enforecement =
+					     resp.tx_err_SQPDID_enforcement;
+	apc->eth_stats.hc_tx_err_cqpdid_enforcement =
+					     resp.tx_err_CQPDID_enforcement;
+	apc->eth_stats.hc_tx_err_mtu_violation = resp.tx_err_mtu_violation;
+	apc->eth_stats.hc_tx_err_inval_oob = resp.tx_err_inval_oob;
 	apc->eth_stats.hc_tx_bytes = resp.hc_tx_bytes;
 	apc->eth_stats.hc_tx_ucast_pkts = resp.hc_tx_ucast_pkts;
 	apc->eth_stats.hc_tx_ucast_bytes = resp.hc_tx_ucast_bytes;
@@ -2424,6 +2466,7 @@ void mana_query_gf_stats(struct mana_port_context *apc)
 	apc->eth_stats.hc_tx_bcast_bytes = resp.hc_tx_bcast_bytes;
 	apc->eth_stats.hc_tx_mcast_pkts = resp.hc_tx_mcast_pkts;
 	apc->eth_stats.hc_tx_mcast_bytes = resp.hc_tx_mcast_bytes;
+	apc->eth_stats.hc_tx_err_gdma = resp.tx_err_gdma;
 }
 
 static int mana_init_port(struct net_device *ndev)
