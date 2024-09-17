@@ -132,6 +132,10 @@ static int minolduid;
 
 static int ngroups_max = NGROUPS_MAX;
 static const int cap_last_cap = CAP_LAST_CAP;
+#define CORE_FILE_NOTE_SIZE_DEFAULT (4*1024*1024)
+/* Define a reasonable max cap */
+#define CORE_FILE_NOTE_SIZE_MAX (256*1024*1024)
+unsigned int core_file_note_size_limit = CORE_FILE_NOTE_SIZE_DEFAULT;
 
 /*
  * This is needed for proc_doulongvec_minmax of sysctl_hung_task_timeout_secs
@@ -1774,6 +1778,9 @@ int proc_do_static_key(struct ctl_table *table, int write,
 	return ret;
 }
 
+static const unsigned int core_file_note_size_min = CORE_FILE_NOTE_SIZE_DEFAULT;
+static const unsigned int core_file_note_size_max = CORE_FILE_NOTE_SIZE_MAX;
+
 static struct ctl_table kern_table[] = {
 	{
 		.procname	= "sched_child_runs_first",
@@ -1955,6 +1962,15 @@ static struct ctl_table kern_table[] = {
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname       = "core_file_note_size_limit",
+		.data           = &core_file_note_size_limit,
+		.maxlen         = sizeof(unsigned int),
+		.mode           = 0644,
+		.proc_handler	= proc_douintvec_minmax,
+		.extra1		= (unsigned int *)&core_file_note_size_min,
+		.extra2		= (unsigned int *)&core_file_note_size_max,
 	},
 #endif
 #ifdef CONFIG_PROC_SYSCTL
