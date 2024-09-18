@@ -441,7 +441,8 @@ int __init mshv_diaglog_init(void)
 	 * Initialize diagnostic logs with some hv details. Ignore failure and
 	 * continue collecting logs
 	 */
-	get_hv_header_in_diaglog();
+	if (hv_root_partition())
+		get_hv_header_in_diaglog();
 
 out:
 	kfree(ppages);
