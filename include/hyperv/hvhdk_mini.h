@@ -115,6 +115,7 @@ enum hv_partition_property_code {
     HV_PARTITION_PROPERTY_ISOLATION_POLICY			= 0x00050014,
     HV_PARTITION_PROPERTY_UNIMPLEMENTED_MSR_ACTION		= 0x00050017,
     HV_PARTITION_PROPERTY_SEV_VMGEXIT_OFFLOADS			= 0x00050022,
+    HV_PARTITION_PROPERTY_PARTITION_DIAG_BUFFER_CONFIG		= 0x00050026,
 
     /* Compatibility properties */
     HV_PARTITION_PROPERTY_PROCESSOR_VENDOR			= 0x00060000,
@@ -198,6 +199,15 @@ enum hv_dynamic_processor_feature_property {
 	/* Add more values when needed */
 	HV_X64_DYNAMIC_PROCESSOR_FEATURE_MAX_ENCRYPTED_PARTITIONS = 13,
 	HV_X64_DYNAMIC_PROCESSOR_FEATURE_SNP_STATUS = 16,
+};
+
+/* HV_PARTITION_DIAG_LOG_BUFFER_CONFIG */
+union hv_partition_diag_log_buffer_config {
+	struct {
+		__u32 buffer_count;
+		__u32 buffer_size_in_pages;
+	} __packed;
+	__u64 as_uint64;
 };
 
 struct hv_input_get_system_property {
