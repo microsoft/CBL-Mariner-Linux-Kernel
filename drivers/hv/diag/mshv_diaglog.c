@@ -25,6 +25,7 @@
 
 #include <asm/mshyperv.h>
 #include <hyperv/hvtrapi.h>
+#include "../mshv.h"
 
 static size_t MSHV_TICKS_PER_SEC = NSEC_PER_SEC/100; /* 1 tick is 100 ns long in mshv */
 
@@ -307,24 +308,42 @@ static int get_diaglog_info(void)
 	int ret = 0;
 	struct hv_output_get_system_property *output_page = NULL;
 	struct hv_input_get_system_property *input_page = NULL;
+	union hv_partition_diag_log_buffer_config part_buffer_log_conf;
 
 	local_irq_save(flags);
-	input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
-	output_page = *this_cpu_ptr(hyperv_pcpu_output_arg);
+	if (hv_root_partition()) {
+		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
+		output_page = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
-	input_page->property_id = HV_SYSTEM_PROPERTY_DIAGOSTICS_LOG_BUFFERS;
-	status = hv_do_hypercall(HVCALL_GET_SYSTEM_PROPERTY, input_page,
-				 output_page);
-	if (!hv_result_success(status)) {
-		pr_err("%s: hypercall:HVCALL_GET_SYSTEM_PROPERTY, status %s\n",
-		       __func__, hv_status_to_string(status));
-		ret = hv_status_to_errno(status);
-		goto hvcall_fail;
+		input_page->property_id =
+				      HV_SYSTEM_PROPERTY_DIAGOSTICS_LOG_BUFFERS;
+		status = hv_do_hypercall(HVCALL_GET_SYSTEM_PROPERTY, input_page,
+					 output_page);
+		if (!hv_result_success(status)) {
+			pr_err("%s: hypercall:HVCALL_GET_SYSTEM_PROPERTY, status %s\n",
+			       __func__, hv_status_to_string(status));
+			ret = hv_status_to_errno(status);
+			goto hvcall_fail;
+		}
+		hv_logbuf_info.buffer_count =
+				      output_page->hv_diagbuf_info.buffer_count;
+		hv_logbuf_info.buffer_size_in_pages =
+			      output_page->hv_diagbuf_info.buffer_size_in_pages;
+	} else {
+		status = hv_call_get_partition_property(
+			     hv_current_partition_id,
+			     HV_PARTITION_PROPERTY_PARTITION_DIAG_BUFFER_CONFIG,
+			     &part_buffer_log_conf.as_uint64);
+		if (!hv_result_success(status)) {
+			pr_err("%s: hypercall:HV_PARTITION_PROPERTY_PARTITION_DIAG_BUFFER_CONFIG, status %s\n",
+			       __func__, hv_status_to_string(status));
+			ret = hv_status_to_errno(status);
+			goto hvcall_fail;
+		}
+		hv_logbuf_info.buffer_count = part_buffer_log_conf.buffer_count;
+		hv_logbuf_info.buffer_size_in_pages =
+				      part_buffer_log_conf.buffer_size_in_pages;
 	}
-
-	hv_logbuf_info.buffer_count = output_page->hv_diagbuf_info.buffer_count;
-	hv_logbuf_info.buffer_size_in_pages =
-			output_page->hv_diagbuf_info.buffer_size_in_pages;
 
 hvcall_fail:
 	local_irq_restore(flags);
