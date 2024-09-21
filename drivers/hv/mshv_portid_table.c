@@ -32,7 +32,7 @@ mshv_port_table_fini(void)
 	if (!idr_is_empty(&port_table_idr)) {
 		idr_for_each_entry_ul(&port_table_idr, port_info, tmp, i) {
 			port_info = idr_remove(&port_table_idr, i);
-			kfree_rcu(port_info, rcu);
+			kfree_rcu(port_info, portbl_rcu);
 		}
 	}
 	idr_unlock(&port_table_idr);
