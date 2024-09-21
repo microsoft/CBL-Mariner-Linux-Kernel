@@ -40,11 +40,11 @@
 #define HV_GET_GPA_ACCESS_STATES_BATCH_SIZE	\
 	((HV_HYP_PAGE_SIZE - sizeof(union hv_gpa_page_access_state)) \
 		/ sizeof(union hv_gpa_page_access_state))
-#define HV_MODIFY_SPARSE_SPA_PAGE_HOST_ACCESS_MAX_PAGE_COUNT                   \
-	((HV_HYP_PAGE_SIZE -                                                   \
+#define HV_MODIFY_SPARSE_SPA_PAGE_HOST_ACCESS_MAX_PAGE_COUNT		       \
+	((HV_HYP_PAGE_SIZE -						       \
 	  sizeof(struct hv_input_modify_sparse_spa_page_host_access)) /        \
 	 sizeof(u64))
-#define HV_ISOLATED_PAGE_BATCH_SIZE                                            \
+#define HV_ISOLATED_PAGE_BATCH_SIZE					       \
 	((HV_HYP_PAGE_SIZE - sizeof(struct hv_input_import_isolated_pages)) /  \
 	 sizeof(u64))
 
@@ -1254,7 +1254,8 @@ int hv_call_modify_spa_host_access(u64 partition_id, struct page **pages,
 		 * set to zero.
 		 */
 		memset(input_page, 0, sizeof(*input_page));
-		/* Only set the partition id if you are making the pages exclusive */
+		/* Only set the partition id if you are making the pages
+		 * exclusive */
 		if (flags & HV_MODIFY_SPA_PAGE_HOST_ACCESS_MAKE_EXCLUSIVE)
 			input_page->partition_id = partition_id;
 		input_page->flags = flags;

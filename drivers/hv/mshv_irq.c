@@ -68,13 +68,13 @@ int mshv_update_routing_table(struct mshv_partition *partition,
 	}
 
 swap_routes:
-	mutex_lock(&partition->irq_lock);
-	old = rcu_dereference_protected(partition->part_girq_tbl, 1);
-	rcu_assign_pointer(partition->part_girq_tbl, new);
+	mutex_lock(&partition->pt_irq_lock);
+	old = rcu_dereference_protected(partition->pt_girq_tbl, 1);
+	rcu_assign_pointer(partition->pt_girq_tbl, new);
 	mshv_irqfd_routing_update(partition);
-	mutex_unlock(&partition->irq_lock);
+	mutex_unlock(&partition->pt_irq_lock);
 
-	synchronize_srcu_expedited(&partition->irq_srcu);
+	synchronize_srcu_expedited(&partition->pt_irq_srcu);
 	new = old;
 
 out:
@@ -87,7 +87,7 @@ out:
 void mshv_free_routing_table(struct mshv_partition *partition)
 {
 	struct mshv_girq_routing_table *rt =
-				   rcu_access_pointer(partition->part_girq_tbl);
+				   rcu_access_pointer(partition->pt_girq_tbl);
 
 	kfree(rt);
 }
@@ -98,9 +98,9 @@ mshv_ret_girq_entry(struct mshv_partition *partition, u32 irqnum)
 	struct mshv_guest_irq_ent entry = { 0 };
 	struct mshv_girq_routing_table *girq_tbl;
 
-	girq_tbl = srcu_dereference_check(partition->part_girq_tbl,
-					 &partition->irq_srcu,
-					 lockdep_is_held(&partition->irq_lock));
+	girq_tbl = srcu_dereference_check(partition->pt_girq_tbl,
+				     &partition->pt_irq_srcu,
+				     lockdep_is_held(&partition->pt_irq_lock));
 	if (!girq_tbl || irqnum >= girq_tbl->num_rt_entries) {
 		/*
 		 * Premature register_irqfd, setting valid_entry = 0

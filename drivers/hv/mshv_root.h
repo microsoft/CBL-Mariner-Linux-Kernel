@@ -29,48 +29,56 @@
 #define MSHV_PIN_PAGES_BATCH_SIZE	(0x10000000ULL / HV_HYP_PAGE_SIZE)
 
 struct mshv_vp {
-	u32 index;
-	struct mshv_partition *partition;
-	struct mutex mutex;
-	struct hv_vp_register_page *register_page;
-	struct hv_message *intercept_message_page;
-	void *ghcb_page;
-	struct hv_stats_page *stats_page;
-	struct hv_register_assoc *registers;
+	u32 vp_index;
+	struct mshv_partition *vp_partition;
+	struct mutex vp_mutex;
+	struct hv_vp_register_page *vp_register_page;
+	struct hv_message *vp_intercept_msg_page;
+	void *vp_ghcb_page;
+	struct hv_stats_page *vp_stats_page;
+	struct hv_register_assoc *vp_registers;
 	struct {
-		atomic64_t signaled_count;
+		atomic64_t vp_signaled_count;
 		struct {
 			u64 intercept_suspend: 1;
-			u64 blocked: 1; /* root scheduler only */
-			u64 dispatched: 1; /* root scheduler only */
+			u64 root_sched_blocked: 1; /* root scheduler only */
+			u64 root_sched_dispatched: 1; /* root scheduler only */
 			u64 reserved: 62;
 		} flags;
 		unsigned int kicked_by_hv;
-		wait_queue_head_t suspend_queue;
+		wait_queue_head_t vp_suspend_queue;
 	} run;
 #ifdef CONFIG_DEBUG_FS
-	struct dentry *debugfs_dentry;
+	struct dentry *vp_debugfs_dentry;
 #endif
 };
 
 #define vp_fmt(fmt) "p%lluvp%u: " fmt
-#define vp_dev(v) ((v)->partition->module_dev)
+#define vp_dev(v) ((v)->vp_partition->pt_module_dev)
 #define vp_emerg(v, fmt, ...) \
-	dev_emerg(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_emerg(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		  (v)->vp_index, ##__VA_ARGS__)
 #define vp_crit(v, fmt, ...) \
-	dev_crit(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_crit(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		 (v)->vp_index, ##__VA_ARGS__)
 #define vp_alert(v, fmt, ...) \
-	dev_alert(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_alert(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		  (v)->vp_index, ##__VA_ARGS__)
 #define vp_err(v, fmt, ...) \
-	dev_err(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_err(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		(v)->vp_index, ##__VA_ARGS__)
 #define vp_warn(v, fmt, ...) \
-	dev_warn(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_warn(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		 (v)->vp_index, ##__VA_ARGS__)
 #define vp_notice(v, fmt, ...) \
-	dev_notice(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_notice(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		   (v)->vp_index, ##__VA_ARGS__)
 #define vp_info(v, fmt, ...) \
-	dev_info(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_info(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		 (v)->vp_index, ##__VA_ARGS__)
 #define vp_dbg(v, fmt, ...) \
-	dev_dbg(vp_dev(v), vp_fmt(fmt), (v)->partition->id, (v)->index, ##__VA_ARGS__)
+	dev_dbg(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
+		(v)->vp_index, ##__VA_ARGS__)
 
 struct mshv_mem_region {
 	struct hlist_node hnode;
@@ -89,28 +97,27 @@ struct mshv_mem_region {
 
 struct mshv_irq_ack_notifier {
 	struct hlist_node link;
-	unsigned int gsi;
+	unsigned int irq_ack_gsi;
 	void (*irq_acked)(struct mshv_irq_ack_notifier *mian);
 };
 
 struct mshv_partition {
-	struct device *module_dev;
+	struct device *pt_module_dev;
 
-	struct hlist_node hnode;
-	u64 id;
-	refcount_t ref_count;
-	struct mutex mutex;
-	struct hlist_head mem_regions; // not ordered
-	struct {
-		u32 count;
-		struct mshv_vp *array[MSHV_MAX_VPS];
-	} vps;
+	struct hlist_node pt_hnode;
+	u64 pt_id;
+	refcount_t pt_ref_count;
+	struct mutex pt_mutex;
+	struct hlist_head pt_mem_regions; // not ordered
 
-	struct mutex irq_lock;
-	struct srcu_struct irq_srcu;
+	u32 pt_vp_count;
+	struct mshv_vp *pt_vp_array[MSHV_MAX_VPS];
+
+	struct mutex pt_irq_lock;
+	struct srcu_struct pt_irq_srcu;
 	struct hlist_head irq_ack_notifier_list;
 
-	struct hlist_head devices;
+	struct hlist_head pt_devices;
 
 	/*
 	 * Since MSHV does not support more than one async hypercall in flight
@@ -120,43 +127,41 @@ struct mshv_partition {
 	struct completion async_hypercall;
 	u64 async_hypercall_status;
 
-	struct {
-		spinlock_t	  lock;
-		struct hlist_head items;
-		struct mutex resampler_lock;
-		struct hlist_head resampler_list;
-	} irqfds;
-	struct {
-		struct hlist_head items;
-	} ioeventfds;
-	struct mshv_girq_routing_table __rcu *part_girq_tbl;
+	spinlock_t	  pt_irqfds_lock;
+	struct hlist_head pt_irqfds_list;
+	struct mutex	  irqfds_resampler_lock;
+	struct hlist_head irqfds_resampler_list;
+
+	struct hlist_head ioeventfds_list;
+
+	struct mshv_girq_routing_table __rcu *pt_girq_tbl;
 	u64 isolation_type;
 	bool import_completed;
-	bool initialized;
+	bool pt_initialized;
 #ifdef CONFIG_DEBUG_FS
-	struct dentry *debugfs_dentry;
-	struct dentry *debugfs_vp_dentry;
+	struct dentry *pt_debugfs_dentry;
+	struct dentry *pt_debugfs_vp_dentry;
 #endif
 };
 
 #define pt_fmt(fmt) "p%llu: " fmt
-#define pt_dev(p) ((p)->module_dev)
+#define pt_dev(p) ((p)->pt_module_dev)
 #define pt_emerg(p, fmt, ...) \
-	dev_emerg(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_emerg(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 #define pt_crit(p, fmt, ...) \
-	dev_crit(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_crit(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 #define pt_alert(p, fmt, ...) \
-	dev_alert(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_alert(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 #define pt_err(p, fmt, ...) \
-	dev_err(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_err(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 #define pt_warn(p, fmt, ...) \
-	dev_warn(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_warn(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 #define pt_notice(p, fmt, ...) \
-	dev_notice(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_notice(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 #define pt_info(p, fmt, ...) \
-	dev_info(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_info(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 #define pt_dbg(p, fmt, ...) \
-	dev_dbg(pt_dev(p), pt_fmt(fmt), (p)->id, ##__VA_ARGS__)
+	dev_dbg(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
 
 struct mshv_lapic_irq {
 	u32 lapic_vector;
@@ -188,10 +193,8 @@ struct hv_synic_pages {
 
 struct mshv_root {
 	struct hv_synic_pages __percpu *synic_pages;
-	struct {
-		spinlock_t lock;
-		DECLARE_HASHTABLE(items, MSHV_PARTITIONS_HASH_BITS);
-	} partitions;
+	spinlock_t pt_ht_lock;
+	DECLARE_HASHTABLE(pt_htable, MSHV_PARTITIONS_HASH_BITS);
 };
 
 /*
@@ -205,22 +208,22 @@ typedef void (*doorbell_cb_t) (int doorbell_id, void *);
  * port table information
  */
 struct port_table_info {
-	struct rcu_head rcu;
-	enum hv_port_type port_type;
+	struct rcu_head portbl_rcu;
+	enum hv_port_type hv_port_type;
 	union {
 		struct {
 			u64 reserved[2];
-		} port_message;
+		} hv_port_message;
 		struct {
 			u64 reserved[2];
-		} port_event;
+		} hv_port_event;
 		struct {
 			u64 reserved[2];
-		} port_monitor;
+		} hv_port_monitor;
 		struct {
 			doorbell_cb_t doorbell_cb;
 			void *data;
-		} port_doorbell;
+		} hv_port_doorbell;
 	};
 };
 
