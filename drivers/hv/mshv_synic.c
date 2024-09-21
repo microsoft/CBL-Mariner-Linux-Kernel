@@ -112,18 +112,19 @@ mshv_doorbell_isr(struct hv_message *msg)
 		struct port_table_info ptinfo = { 0 };
 
 		if (mshv_portid_lookup(port, &ptinfo)) {
-			pr_err("Failed to get port information from port_table!\n");
+			pr_err("Failed to get port info from port_table!\n");
 			continue;
 		}
 
-		if (ptinfo.port_type != HV_PORT_TYPE_DOORBELL) {
+		if (ptinfo.hv_port_type != HV_PORT_TYPE_DOORBELL) {
 			pr_warn("Not a doorbell port!, port: %d, port_type: %d\n",
-					port, ptinfo.port_type);
+					port, ptinfo.hv_port_type);
 			continue;
 		}
 
 		/* Invoke the callback */
-		ptinfo.port_doorbell.doorbell_cb(port, ptinfo.port_doorbell.data);
+		ptinfo.hv_port_doorbell.doorbell_cb(port,
+						 ptinfo.hv_port_doorbell.data);
 	}
 
 	return true;
@@ -176,9 +177,9 @@ out:
 
 static void kick_vp(struct mshv_vp *vp)
 {
-	atomic64_inc(&vp->run.signaled_count);
+	atomic64_inc(&vp->run.vp_signaled_count);
 	vp->run.kicked_by_hv = 1;
-	wake_up(&vp->run.suspend_queue);
+	wake_up(&vp->run.vp_suspend_queue);
 }
 
 static void
@@ -243,7 +244,7 @@ handle_bitset_message(const struct hv_vp_signal_bitset_scheduler_message *msg)
 				goto unlock_out;
 			}
 
-			vp = partition->vps.array[vp_index];
+			vp = partition->pt_vp_array[vp_index];
 			if (unlikely(!vp)) {
 				pr_err("%s: failed to find vp\n", __func__);
 				goto unlock_out;
@@ -277,7 +278,7 @@ handle_pair_message(const struct hv_vp_signal_pair_scheduler_message *msg)
 		u64 partition_id = msg->partition_ids[idx];
 		u32 vp_index = msg->vp_indexes[idx];
 
-		if (idx == 0 || partition->id != partition_id) {
+		if (idx == 0 || partition->pt_id != partition_id) {
 			partition = mshv_partition_find(partition_id);
 			if (unlikely(!partition)) {
 				pr_err("%s: failed to find partition %llu\n",
@@ -293,7 +294,7 @@ handle_pair_message(const struct hv_vp_signal_pair_scheduler_message *msg)
 			break;
 		}
 
-		vp = partition->vps.array[vp_index];
+		vp = partition->pt_vp_array[vp_index];
 		if (!vp) {
 			pr_err("%s: failed to find VP\n", __func__);
 			break;
@@ -383,8 +384,9 @@ mshv_intercept_isr(struct hv_message *msg)
 	 * (because the vp is only deleted when the partition is), no additional
 	 * locking is needed here
 	 */
-	vp_index = ((struct hv_opaque_intercept_message *)msg->u.payload)->vp_index;
-	vp = partition->vps.array[vp_index];
+	vp_index =
+	       ((struct hv_opaque_intercept_message *)msg->u.payload)->vp_index;
+	vp = partition->pt_vp_array[vp_index];
 	if (unlikely(!vp)) {
 		pr_err("%s: failed to find vp\n", __func__);
 		goto unlock_out;
@@ -630,9 +632,9 @@ mshv_register_doorbell(u64 partition_id, doorbell_cb_t doorbell_cb, void *data,
 	if (!port_table_info)
 		return -ENOMEM;
 
-	port_table_info->port_type = HV_PORT_TYPE_DOORBELL;
-	port_table_info->port_doorbell.doorbell_cb = doorbell_cb;
-	port_table_info->port_doorbell.data = data;
+	port_table_info->hv_port_type = HV_PORT_TYPE_DOORBELL;
+	port_table_info->hv_port_doorbell.doorbell_cb = doorbell_cb;
+	port_table_info->hv_port_doorbell.data = data;
 	ret = mshv_portid_alloc(port_table_info);
 	if (ret < 0) {
 		pr_err("Failed to create the doorbell port!\n");

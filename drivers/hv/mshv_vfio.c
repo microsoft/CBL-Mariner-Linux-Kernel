@@ -239,7 +239,7 @@ static int mshv_vfio_create(struct mshv_device *hvdev, u32 type)
 	struct mshv_vfio *mv;
 
 	/* Only one VFIO "device" per VM */
-	hlist_for_each_entry(tmp, &hvdev->partition->devices, partition_node)
+	hlist_for_each_entry(tmp, &hvdev->partition->pt_devices, partition_node)
 		if (tmp->ops == &mshv_vfio_ops)
 			return -EBUSY;
 
@@ -308,10 +308,10 @@ static int mshv_device_release(struct inode *inode, struct file *filp)
 	struct mshv_partition *partition = dev->partition;
 
 	if (dev->ops->release) {
-		mutex_lock(&partition->mutex);
+		mutex_lock(&partition->pt_mutex);
 		hlist_del(&dev->partition_node);
 		dev->ops->release(dev);
-		mutex_unlock(&partition->mutex);
+		mutex_unlock(&partition->pt_mutex);
 	}
 
 	mshv_partition_put(partition);
@@ -366,13 +366,14 @@ long mshv_partition_ioctl_create_device(struct mshv_partition *partition,
 		goto out;
 	}
 
-	hlist_add_head(&dev->partition_node, &partition->devices);
+	hlist_add_head(&dev->partition_node, &partition->pt_devices);
 
 	if (ops->init)
 		ops->init(dev);
 
 	mshv_partition_get(partition);
-	r = anon_inode_getfd(ops->name, &mshv_device_fops, dev, O_RDWR | O_CLOEXEC);
+	r = anon_inode_getfd(ops->name, &mshv_device_fops, dev,
+			     O_RDWR | O_CLOEXEC);
 	if (r < 0) {
 		mshv_partition_put(partition);
 		hlist_del(&dev->partition_node);
@@ -400,7 +401,8 @@ void mshv_destroy_devices(struct mshv_partition *partition)
 	 * No need to take any lock since at this point nobody else can
 	 * reference this partition.
 	 */
-	hlist_for_each_entry_safe(dev, n, &partition->devices, partition_node) {
+	hlist_for_each_entry_safe(dev, n, &partition->pt_devices,
+				  partition_node) {
 		hlist_del(&dev->partition_node);
 		dev->ops->destroy(dev);
 	}
