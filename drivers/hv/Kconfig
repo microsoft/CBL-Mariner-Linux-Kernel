@@ -101,4 +101,13 @@ config MSHV_DIAG
 
 	  If unsure, say N.
 
+config HYPERV_VSM
+        tristate "Microsoft Hyper-V VSM driver"
+        depends on HYPERV
+        help
+          Select this option to enable Hyper-V Virtual Secure Mode.
+          Enabling this option will load a secure kernel in VTL1 and
+          establish an interface between VTL0 and VTL1 to request for
+          VSM services.
+
 endmenu
