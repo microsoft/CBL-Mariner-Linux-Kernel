@@ -289,6 +289,8 @@ union hv_hypervisor_version_info {
 #define HV_ACCESS_STATS				BIT(8)
 #define HV_DEBUGGING				BIT(11)
 #define HV_CPU_MANAGEMENT			BIT(12)
+#define HV_ACCESS_VSM				BIT(16)
+#define HV_ACCESS_VP_REGS			BIT(17)
 #define HV_ENABLE_EXTENDED_HYPERCALLS		BIT(20)
 #define HV_ISOLATION				BIT(22)
 
@@ -1481,6 +1483,18 @@ union hv_x64_interrupt_state_register {
 	} __packed;
 };
 
+
+union hv_register_vsm_partition_status {
+	__u64 as_uint64;
+	struct {
+		__u64 enabled_vtl_set : 16;
+		__u64 max_vtl : 4;
+		__u64 mbec_enabled_vtl_set: 16;
+		__u64 supervisor_shadow_stack_enabled_vtl_set : 4;
+		__u64 reserved : 24;
+	};
+};
+
 #if defined(__aarch64__)
 /* HvGetVpRegisters returns an array of these output elements */
 struct hv_get_vp_registers_output {
@@ -1612,6 +1626,7 @@ union hv_register_value {
 	union hv_intercept_suspend_register intercept_suspend;
 	union hv_dispatch_suspend_register dispatch_suspend;
 	union hv_internal_activity_register internal_activity;
+	union hv_register_vsm_partition_status vsm_partition_status;
 #if defined(__x86_64__)
 	union hv_x64_interrupt_state_register interrupt_state;
 	union hv_x64_pending_interruption_register pending_interruption;
