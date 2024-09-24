@@ -29,3 +29,5 @@ endif
 
 # root and guest core kernel functions call into this file.
 obj-$(subst m,y,$(CONFIG_HYPERV)) += hv_common.o
+
+obj-$(subst m,y,$(CONFIG_HYPERV_VSM)) += hv_vsm.o

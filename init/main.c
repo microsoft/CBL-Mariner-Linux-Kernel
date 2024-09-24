@@ -102,6 +102,8 @@
 #include <linux/randomize_kstack.h>
 #include <net/net_namespace.h>
 
+#include <hyperv/hv_vsm.h>
+
 #include <asm/io.h>
 #include <asm/setup.h>
 #include <asm/sections.h>
@@ -1551,6 +1553,8 @@ static noinline void __init kernel_init_freeable(void)
 	page_alloc_init_late();
 
 	do_basic_setup();
+
+	vsm_init();
 
 	kunit_run_all_tests();
 
