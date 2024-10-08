@@ -38,6 +38,17 @@ config HYPERV_VTL_MODE
 
 	  If unsure, say N
 
+
+config HV_SECURE_VTL
+	bool "Microsoft Hyper-V VTL1 driver"
+	depends on !MTRR
+	depends on !X86_MPARSE
+	depends on HYPERV_VTL_MODE
+	default n
+	help
+	  Select this option to enable Linux kernel as secure kernel running in VTL1.
+	  If unsure, say N.
+
 config HYPERV_TIMER
 	def_bool HYPERV && X86
 
