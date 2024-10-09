@@ -11218,6 +11218,8 @@ struct net_device *alloc_netdev_mqs(int sizeof_priv, const char *name,
 	hash_init(dev->qdisc_hash);
 #endif
 
+	mutex_init(&dev->lock);
+
 	dev->priv_flags = IFF_XMIT_DST_RELEASE | IFF_XMIT_DST_RELEASE_PERM;
 	setup(dev);
 
@@ -11287,6 +11289,8 @@ void free_netdev(struct net_device *dev)
 		dev->needs_free_netdev = true;
 		return;
 	}
+
+	mutex_destroy(&dev->lock);
 
 	kfree(dev->ethtool);
 	netif_free_tx_queues(dev);
@@ -11496,6 +11500,8 @@ void unregister_netdevice_many_notify(struct list_head *head,
 			dev->netdev_ops->ndo_uninit(dev);
 
 		mutex_destroy(&dev->ethtool->rss_lock);
+
+		net_shaper_flush_netdev(dev);
 
 		if (skb)
 			rtmsg_ifinfo_send(skb, dev, GFP_KERNEL, portid, nlh);
