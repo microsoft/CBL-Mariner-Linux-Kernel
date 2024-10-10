@@ -49,6 +49,15 @@ config HV_SECURE_VTL
 	  Select this option to enable Linux kernel as secure kernel running in VTL1.
 	  If unsure, say N.
 
+config HYPERV_VSM
+	tristate "Microsoft Hyper-V VSM driver"
+	depends on HYPERV
+	help
+	  Select this option to enable Hyper-V Virtual Secure Mode.
+	  Enabling this option will load a secure kernel in VTL1 and
+	  establish an interface between VTL0 and VTL1 to request for
+	  VSM services.
+
 config HYPERV_TIMER
 	def_bool HYPERV && X86
 
