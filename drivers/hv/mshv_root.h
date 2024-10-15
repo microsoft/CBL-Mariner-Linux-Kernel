@@ -49,7 +49,7 @@ struct mshv_vp {
 		wait_queue_head_t vp_suspend_queue;
 	} run;
 #ifdef CONFIG_DEBUG_FS
-	struct dentry *vp_debugfs_dentry;
+	struct dentry *vp_debugfs_stats_dentry;
 #endif
 };
 
