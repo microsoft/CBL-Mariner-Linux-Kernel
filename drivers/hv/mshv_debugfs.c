@@ -595,11 +595,19 @@ static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
 		goto cleanup;
 	}
 
-	pstats[HV_STATS_AREA_PARENT] = mshv_vp_stats_map(partition_id, vp_index,
-							 HV_STATS_AREA_PARENT);
-	if (IS_ERR(pstats[HV_STATS_AREA_PARENT])) {
-		err = PTR_ERR(pstats[HV_STATS_AREA_PARENT]);
-		goto unmap_self;
+	/*
+	 * L1VH partition cannot access its vp stats in parent area.
+	 */
+	if (is_l1vh_parent(partition_id)) {
+		pstats[HV_STATS_AREA_PARENT] = pstats[HV_STATS_AREA_SELF];
+	} else {
+		pstats[HV_STATS_AREA_PARENT] = mshv_vp_stats_map(partition_id,
+							  vp_index,
+							  HV_STATS_AREA_PARENT);
+		if (IS_ERR(pstats[HV_STATS_AREA_PARENT])) {
+			err = PTR_ERR(pstats[HV_STATS_AREA_PARENT]);
+			goto unmap_self;
+		}
 	}
 
 	dentry = debugfs_create_file("stats", 0400, parent,
@@ -613,7 +621,8 @@ static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
 	return 0;
 
 unmap_vp_stats:
-	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_PARENT);
+	if (!is_l1vh_parent(partition_id))
+		mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_PARENT);
 unmap_self:
 	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_SELF);
 cleanup:
@@ -628,7 +637,10 @@ static void vp_debugfs_remove(u64 partition_id, u32 vp_index,
 
 	pstats = vp_stats->d_inode->i_private;
 	debugfs_remove_recursive(vp_stats->d_parent);
-	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_PARENT);
+	if (!is_l1vh_parent(partition_id))
+		mshv_vp_stats_unmap(partition_id, vp_index,
+				    HV_STATS_AREA_PARENT);
+
 	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_SELF);
 	kfree(pstats);
 }
