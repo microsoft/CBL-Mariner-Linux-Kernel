@@ -779,13 +779,20 @@ static int mshv_debugfs_partition_stats_create(u64 partition_id,
 
 	pstats[HV_STATS_AREA_SELF] = stats;
 
-	stats = mshv_partition_stats_map(partition_id, HV_STATS_AREA_PARENT);
-	if (IS_ERR(stats)) {
-		err = PTR_ERR(stats);
-		goto unmap_self;
+	/*
+	 * L1VH partition cannot access its partition stats in parent area.
+	 */
+	if (is_l1vh_parent(partition_id)) {
+		pstats[HV_STATS_AREA_PARENT] = pstats[HV_STATS_AREA_SELF];
+	} else {
+		stats = mshv_partition_stats_map(partition_id,
+						 HV_STATS_AREA_PARENT);
+		if (IS_ERR(stats)) {
+			err = PTR_ERR(stats);
+			goto unmap_self;
+		}
+		pstats[HV_STATS_AREA_PARENT] = stats;
 	}
-
-	pstats[HV_STATS_AREA_PARENT] = stats;
 
 	dentry = debugfs_create_file("stats", 0400, parent,
 				     pstats, &partition_stats_fops);
@@ -799,7 +806,8 @@ static int mshv_debugfs_partition_stats_create(u64 partition_id,
 	return 0;
 
 unmap_partition_stats:
-	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
+	if (!is_l1vh_parent(partition_id))
+		mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
 unmap_self:
 	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_SELF);
 cleanup:
@@ -815,7 +823,9 @@ static void partition_debugfs_remove(u64 partition_id, struct dentry *dentry)
 
 	debugfs_remove_recursive(dentry->d_parent);
 
-	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
+	if (!is_l1vh_parent(partition_id))
+		mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
+
 	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_SELF);
 	kfree(pstats);
 }
