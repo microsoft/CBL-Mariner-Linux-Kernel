@@ -139,7 +139,7 @@ struct mshv_partition {
 	bool import_completed;
 	bool pt_initialized;
 #ifdef CONFIG_DEBUG_FS
-	struct dentry *pt_debugfs_dentry;
+	struct dentry *pt_debugfs_stats_dentry;
 	struct dentry *pt_debugfs_vp_dentry;
 #endif
 };
