@@ -511,7 +511,10 @@ static int dmar_parse_one_rhsa(struct acpi_dmar_header *header, void *arg)
 
 			if (node != NUMA_NO_NODE && !node_online(node))
 				node = NUMA_NO_NODE;
-			drhd->iommu->node = node;
+
+			if (drhd->iommu)
+				drhd->iommu->node = node;
+
 			return 0;
 		}
 	}
