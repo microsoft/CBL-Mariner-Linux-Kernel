@@ -690,11 +690,12 @@ static void *mshv_partition_stats_map(u64 partition_id)
 	return stats;
 }
 
-static int mshv_debugfs_partition_stats_create(u64 partition_id, struct dentry *parent)
+static int mshv_debugfs_partition_stats_create(u64 partition_id,
+					    struct dentry **partition_stats_ptr,
+					    struct dentry *parent)
 {
 	struct dentry *dentry;
 	void *stats;
-	int err;
 
 	stats = mshv_partition_stats_map(partition_id);
 	if (IS_ERR(stats))
@@ -702,28 +703,29 @@ static int mshv_debugfs_partition_stats_create(u64 partition_id, struct dentry *
 
 	dentry = debugfs_create_file("stats", 0400, parent,
 				     stats, &partition_stats_fops);
-	if (IS_ERR(dentry)) {
-		err = PTR_ERR(dentry);
+	if (IS_ERR(dentry))
 		goto unmap_partition_stats;
-	}
+
+	*partition_stats_ptr = dentry;
 
 	return 0;
 
 unmap_partition_stats:
 	mshv_partition_stats_unmap(partition_id);
-	return err;
+	return PTR_ERR(dentry);
 }
 
 static void partition_debugfs_remove(u64 partition_id, struct dentry *dentry)
 {
-	debugfs_remove_recursive(dentry);
+	debugfs_remove_recursive(dentry->d_parent);
 
 	mshv_partition_stats_unmap(partition_id);
 }
 
-static struct dentry *partition_debugfs_create(u64 partition_id,
-					       struct dentry **vp_dir_ptr,
-					       struct dentry *parent)
+static int partition_debugfs_create(u64 partition_id,
+				    struct dentry **vp_dir_ptr,
+				    struct dentry **partition_stats_ptr,
+				    struct dentry *parent)
 {
 	char part_id_str[21]; /* sizeof(u64) + 1 */
 	struct dentry *part_id_dir, *vp_dir;
@@ -733,7 +735,7 @@ static struct dentry *partition_debugfs_create(u64 partition_id,
 
 	part_id_dir = debugfs_create_dir(part_id_str, parent);
 	if (IS_ERR(part_id_dir))
-		return part_id_dir;
+		return PTR_ERR(part_id_dir);
 
 	vp_dir = debugfs_create_dir("vp", part_id_dir);
 	if (IS_ERR(vp_dir)) {
@@ -741,17 +743,19 @@ static struct dentry *partition_debugfs_create(u64 partition_id,
 		goto remove_debugfs_partition_id;
 	}
 
-	err = mshv_debugfs_partition_stats_create(partition_id, part_id_dir);
+	err = mshv_debugfs_partition_stats_create(partition_id,
+						  partition_stats_ptr,
+						  part_id_dir);
 	if (err)
 		goto remove_debugfs_partition_id;
 
 	*vp_dir_ptr = vp_dir;
 
-	return part_id_dir;
+	return 0;
 
 remove_debugfs_partition_id:
 	debugfs_remove_recursive(part_id_dir);
-	return ERR_PTR(err);
+	return err;
 }
 
 static void mshv_debugfs_root_partition_remove(void)
@@ -766,7 +770,7 @@ static void mshv_debugfs_root_partition_remove(void)
 
 static int __init mshv_debugfs_root_partition_create(void)
 {
-	struct dentry *part_id_dir, *vp_dir;
+	struct dentry *partition_stats, *vp_dir;
 	int err, idx, i;
 
 	mshv_debugfs_partition = debugfs_create_dir("partition",
@@ -774,13 +778,12 @@ static int __init mshv_debugfs_root_partition_create(void)
 	if (IS_ERR(mshv_debugfs_partition))
 		return PTR_ERR(mshv_debugfs_partition);
 
-	part_id_dir = partition_debugfs_create(hv_current_partition_id,
-					       &vp_dir,
-					       mshv_debugfs_partition);
-	if (IS_ERR(part_id_dir)) {
-		err = PTR_ERR(part_id_dir);
+	err = partition_debugfs_create(hv_current_partition_id,
+				       &vp_dir,
+				       &partition_stats,
+				       mshv_debugfs_partition);
+	if (err)
 		goto remove_debugfs_partition;
-	}
 
 	for_each_online_cpu(idx) {
 		struct dentry *d;
@@ -921,18 +924,17 @@ void mshv_debugfs_vp_remove(struct mshv_vp *vp)
 
 int mshv_debugfs_partition_create(struct mshv_partition *partition)
 {
-	struct dentry *part_id_dir;
+	int err;
 
 	if (!mshv_debugfs)
 		return 0;
 
-	part_id_dir = partition_debugfs_create(partition->pt_id,
-					       &partition->pt_debugfs_vp_dentry,
-					       mshv_debugfs_partition);
-	if (IS_ERR(part_id_dir))
-		return PTR_ERR(part_id_dir);
-
-	partition->pt_debugfs_dentry = part_id_dir;
+	err = partition_debugfs_create(partition->pt_id,
+				       &partition->pt_debugfs_vp_dentry,
+				       &partition->pt_debugfs_stats_dentry,
+				       mshv_debugfs_partition);
+	if (err)
+		return err;
 
 	return 0;
 }
@@ -943,7 +945,7 @@ void mshv_debugfs_partition_remove(struct mshv_partition *partition)
 		return;
 
 	partition_debugfs_remove(partition->pt_id,
-				 partition->pt_debugfs_dentry);
+				 partition->pt_debugfs_stats_dentry);
 }
 
 int __init mshv_debugfs_init(void)
