@@ -230,10 +230,17 @@ remove_debugfs_lps:
 
 static int vp_stats_show(struct seq_file *m, void *v)
 {
-	const struct hv_stats_page *stats = m->private;
+	const struct hv_stats_page **pstats = m->private;
 
-#define VP_SEQ_PRINTF(cnt)		\
-	seq_printf(m, "%-41s: %llu\n", __stringify(cnt), stats->vp_cntrs[Vp##cnt])
+#define VP_SEQ_PRINTF(cnt)				 \
+do {								 \
+	if (pstats[HV_STATS_AREA_SELF]->vp_cntrs[Vp##cnt]) \
+		seq_printf(m, "%-30s: %llu\n", __stringify(cnt), \
+			pstats[HV_STATS_AREA_SELF]->vp_cntrs[Vp##cnt]); \
+	else \
+		seq_printf(m, "%-30s: %llu\n", __stringify(cnt), \
+			pstats[HV_STATS_AREA_PARENT]->vp_cntrs[Vp##cnt]); \
+} while (0)
 
 	VP_SEQ_PRINTF(TotalRunTime);
 	VP_SEQ_PRINTF(HypervisorRunTime);
@@ -529,33 +536,41 @@ static int vp_stats_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(vp_stats);
 
-static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index)
+static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index,
+				enum hv_stats_area_type stats_area_type)
 {
 	union hv_stats_object_identity identity = {
 		.vp.partition_id = partition_id,
 		.vp.vp_index = vp_index,
+		.vp.stats_area_type = stats_area_type,
 	};
 	int err;
 
 	err = hv_call_unmap_stat_page(HV_STATS_OBJECT_VP, &identity);
 	if (err)
-		pr_err("%s: failed to unmap partition %llu vp %u stats, err: %d\n",
-		       __func__, partition_id, vp_index, err);
+		pr_err("%s: failed to unmap partition %llu vp %u %s stats, err: %d\n",
+		       __func__, partition_id, vp_index,
+		       (stats_area_type == HV_STATS_AREA_SELF) ? "self" : "parent",
+		       err);
 }
 
-static void *mshv_vp_stats_map(u64 partition_id, u32 vp_index)
+static void *mshv_vp_stats_map(u64 partition_id, u32 vp_index,
+			       enum hv_stats_area_type stats_area_type)
 {
 	union hv_stats_object_identity identity = {
 		.vp.partition_id = partition_id,
 		.vp.vp_index = vp_index,
+		.vp.stats_area_type = stats_area_type,
 	};
 	void *stats;
 	int err;
 
 	err = hv_call_map_stat_page(HV_STATS_OBJECT_VP, &identity, &stats);
 	if (err) {
-		pr_err("%s: failed to map partition %llu vp %u stats, err: %d\n",
-		       __func__, partition_id, vp_index, err);
+		pr_err("%s: failed to map partition %llu vp %u %s stats, err: %d\n",
+		       __func__, partition_id, vp_index,
+		       (stats_area_type == HV_STATS_AREA_SELF) ? "self" : "parent",
+		       err);
 		return ERR_PTR(err);
 	}
 	return stats;
@@ -566,27 +581,56 @@ static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
 				   struct dentry *parent)
 {
 	struct dentry *dentry;
-	void *stats;
+	struct hv_stats_page **pstats;
+	int err;
 
-	stats = mshv_vp_stats_map(partition_id, vp_index);
-	if (IS_ERR(stats))
-		return PTR_ERR(stats);
+	pstats = kcalloc(2, sizeof(struct hv_stats_page *), GFP_KERNEL_ACCOUNT);
+	if (!pstats)
+		return -ENOMEM;
+
+	pstats[HV_STATS_AREA_SELF] = mshv_vp_stats_map(partition_id, vp_index,
+						       HV_STATS_AREA_SELF);
+	if (IS_ERR(pstats[HV_STATS_AREA_SELF])) {
+		err = PTR_ERR(pstats[HV_STATS_AREA_SELF]);
+		goto cleanup;
+	}
+
+	pstats[HV_STATS_AREA_PARENT] = mshv_vp_stats_map(partition_id, vp_index,
+							 HV_STATS_AREA_PARENT);
+	if (IS_ERR(pstats[HV_STATS_AREA_PARENT])) {
+		err = PTR_ERR(pstats[HV_STATS_AREA_PARENT]);
+		goto unmap_self;
+	}
 
 	dentry = debugfs_create_file("stats", 0400, parent,
-				     stats, &vp_stats_fops);
+				     pstats, &vp_stats_fops);
 	if (IS_ERR(dentry)) {
-		mshv_vp_stats_unmap(partition_id, vp_index);
-		return PTR_ERR(dentry);
+		err = PTR_ERR(dentry);
+		goto unmap_vp_stats;
 	}
+
 	*vp_stats_ptr = dentry;
 	return 0;
+
+unmap_vp_stats:
+	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_PARENT);
+unmap_self:
+	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_SELF);
+cleanup:
+	kfree(pstats);
+	return err;
 }
 
 static void vp_debugfs_remove(u64 partition_id, u32 vp_index,
 			      struct dentry *vp_stats)
 {
+	struct hv_stats_page **pstats = NULL;
+
+	pstats = vp_stats->d_inode->i_private;
 	debugfs_remove_recursive(vp_stats->d_parent);
-	mshv_vp_stats_unmap(partition_id, vp_index);
+	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_PARENT);
+	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_SELF);
+	kfree(pstats);
 }
 
 static int vp_debugfs_create(u64 partition_id, u32 vp_index,
