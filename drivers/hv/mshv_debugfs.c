@@ -12,6 +12,7 @@
 #include <linux/debugfs.h>
 #include <linux/stringify.h>
 #include <asm/mshyperv.h>
+#include <linux/slab.h>
 
 #include "mshv.h"
 #include "mshv_root.h"
@@ -21,6 +22,11 @@ static struct dentry *mshv_debugfs_partition;
 static struct dentry *mshv_debugfs_lp;
 
 static u64 mshv_lps_count;
+
+static bool is_l1vh_parent(u64 partition_id)
+{
+	return hv_l1vh_partition() && (partition_id == HV_PARTITION_ID_SELF);
+}
 
 static int lp_stats_show(struct seq_file *m, void *v)
 {
@@ -611,10 +617,18 @@ remove_debugfs_vp_idx:
 
 static int partition_stats_show(struct seq_file *m, void *v)
 {
-	const struct hv_stats_page *stats = m->private;
+	const struct hv_stats_page **pstats = m->private;
 
-#define PARTITION_SEQ_PRINTF(cnt)		\
-	seq_printf(m, "%-30s: %llu\n", __stringify(cnt), stats->pt_cntrs[Partition##cnt])
+#define PARTITION_SEQ_PRINTF(cnt)				 \
+do {								 \
+	if (pstats[HV_STATS_AREA_SELF]->pt_cntrs[Partition##cnt]) \
+		seq_printf(m, "%-30s: %llu\n", __stringify(cnt), \
+			pstats[HV_STATS_AREA_SELF]->pt_cntrs[Partition##cnt]); \
+	else \
+		seq_printf(m, "%-30s: %llu\n", __stringify(cnt), \
+			pstats[HV_STATS_AREA_PARENT]->pt_cntrs[Partition##cnt]); \
+} while (0)
+
 
 	PARTITION_SEQ_PRINTF(VirtualProcessors);
 	PARTITION_SEQ_PRINTF(TlbSize);
@@ -659,24 +673,31 @@ static int partition_stats_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(partition_stats);
 
-static void mshv_partition_stats_unmap(u64 partition_id)
+static void mshv_partition_stats_unmap(u64 partition_id,
+				       enum hv_stats_area_type stats_area_type)
 {
 	union hv_stats_object_identity identity = {
 		.partition.partition_id = partition_id,
+		.partition.stats_area_type = stats_area_type,
 	};
 	int err;
 
 	err = hv_call_unmap_stat_page(HV_STATS_OBJECT_PARTITION,
 				      &identity);
-	if (err)
-		pr_err("%s: failed to unmap partition %lld stats, err: %d\n",
-			__func__, partition_id, err);
+	if (err) {
+		pr_err("%s: failed to unmap partition %lld %s stats, err: %d\n",
+			__func__, partition_id,
+			(stats_area_type == HV_STATS_AREA_SELF) ? "self" : "parent",
+			err);
+	}
 }
 
-static void *mshv_partition_stats_map(u64 partition_id)
+static void *mshv_partition_stats_map(u64 partition_id,
+				      enum hv_stats_area_type stats_area_type)
 {
 	union hv_stats_object_identity identity = {
 		.partition.partition_id = partition_id,
+		.partition.stats_area_type = stats_area_type,
 	};
 	void *stats;
 	int err;
@@ -684,8 +705,10 @@ static void *mshv_partition_stats_map(u64 partition_id)
 	err = hv_call_map_stat_page(HV_STATS_OBJECT_PARTITION,
 				    &identity, &stats);
 	if (err) {
-		pr_err("%s: failed to map partition %lld stats, err: %d\n",
-				__func__, partition_id, err);
+		pr_err("%s: failed to map partition %lld %s stats, err: %d\n",
+			__func__, partition_id,
+			(stats_area_type == HV_STATS_AREA_SELF) ? "self" : "parent",
+			err);
 		return ERR_PTR(err);
 	}
 	return stats;
@@ -696,31 +719,61 @@ static int mshv_debugfs_partition_stats_create(u64 partition_id,
 					    struct dentry *parent)
 {
 	struct dentry *dentry;
+	struct hv_stats_page **pstats;
 	void *stats;
+	int err;
 
-	stats = mshv_partition_stats_map(partition_id);
-	if (IS_ERR(stats))
-		return PTR_ERR(stats);
+	pstats = kcalloc(2, sizeof(struct hv_stats_page *), GFP_KERNEL_ACCOUNT);
+	if (!pstats)
+		return -ENOMEM;
+
+	stats = mshv_partition_stats_map(partition_id, HV_STATS_AREA_SELF);
+	if (IS_ERR(stats)) {
+		err = PTR_ERR(stats);
+		goto cleanup;
+	}
+
+	pstats[HV_STATS_AREA_SELF] = stats;
+
+	stats = mshv_partition_stats_map(partition_id, HV_STATS_AREA_PARENT);
+	if (IS_ERR(stats)) {
+		err = PTR_ERR(stats);
+		goto unmap_self;
+	}
+
+	pstats[HV_STATS_AREA_PARENT] = stats;
 
 	dentry = debugfs_create_file("stats", 0400, parent,
-				     stats, &partition_stats_fops);
-	if (IS_ERR(dentry))
+				     pstats, &partition_stats_fops);
+	if (IS_ERR(dentry)) {
+		err = PTR_ERR(dentry);
 		goto unmap_partition_stats;
+	}
 
 	*partition_stats_ptr = dentry;
 
 	return 0;
 
 unmap_partition_stats:
-	mshv_partition_stats_unmap(partition_id);
-	return PTR_ERR(dentry);
+	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
+unmap_self:
+	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_SELF);
+cleanup:
+	kfree(pstats);
+	return err;
 }
 
 static void partition_debugfs_remove(u64 partition_id, struct dentry *dentry)
 {
+	struct hv_stats_page **pstats = NULL;
+
+	pstats = dentry->d_inode->i_private;
+
 	debugfs_remove_recursive(dentry->d_parent);
 
-	mshv_partition_stats_unmap(partition_id);
+	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
+	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_SELF);
+	kfree(pstats);
 }
 
 static int partition_debugfs_create(u64 partition_id,
@@ -732,7 +785,10 @@ static int partition_debugfs_create(u64 partition_id,
 	struct dentry *part_id_dir, *vp_dir;
 	int err;
 
-	sprintf(part_id_str, "%llu", partition_id);
+	if (is_l1vh_parent(partition_id))
+		sprintf(part_id_str, "self");
+	else
+		sprintf(part_id_str, "%llu", partition_id);
 
 	part_id_dir = debugfs_create_dir(part_id_str, parent);
 	if (IS_ERR(part_id_dir))
