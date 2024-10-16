@@ -29,6 +29,22 @@ const char *kunit_action(void)
 	return action_param;
 }
 
+/*
+ * Run KUnit tests after initialization
+ */
+#ifdef CONFIG_KUNIT_AUTORUN_ENABLED
+static bool autorun_param = true;
+#else
+static bool autorun_param;
+#endif
+module_param_named(autorun, autorun_param, bool, 0);
+MODULE_PARM_DESC(autorun, "Run KUnit tests after initialization");
+
+bool kunit_autorun(void)
+{
+	return autorun_param;
+}
+
 static char *filter_glob_param;
 static char *filter_param;
 static char *filter_action_param;
@@ -272,7 +288,7 @@ void kunit_exec_run_tests(struct kunit_suite_set *suite_set, bool builtin)
 		pr_info("1..%zu\n", num_suites);
 	}
 
-	__kunit_test_suites_init(suite_set->start, num_suites);
+	__kunit_test_suites_init(suite_set->start, num_suites, kunit_autorun());
 }
 
 void kunit_exec_list_tests(struct kunit_suite_set *suite_set, bool include_attr)
