@@ -21,7 +21,7 @@
  * to guarantee compatibility
  */
 #define MSHV_HV_MIN_VERSION		(25905)
-#define MSHV_HV_MAX_VERSION		(27695)
+#define MSHV_HV_MAX_VERSION		(27718)
 
 #define MSHV_PARTITIONS_HASH_BITS	9
 #define MSHV_MAX_VPS			256
