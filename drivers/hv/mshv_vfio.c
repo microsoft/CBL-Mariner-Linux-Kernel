@@ -17,10 +17,8 @@
 #include <linux/vfio.h>
 #include <linux/anon_inodes.h>
 #include <linux/nospec.h>
-
 #include "mshv.h"
 #include "mshv_root.h"
-#include "mshv_vfio.h"
 
 struct mshv_device {
 	const struct mshv_device_ops *ops;
