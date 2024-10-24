@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023, Microsoft Corporation.
+ * Copyright (c) 2024, Microsoft Corporation.
  *
- * Hypercall helper functions shared between mshv modules.
+ * This file contains functions that are called from one or more modules: ROOT,
+ * DIAG, or VTL. If any of these modules are configured to build, this file is
+ * built and just statically linked in.
  *
- * Authors:
- *   Nuno Das Neves <nunodasneves@linux.microsoft.com>
+ * Authors: Microsoft Linux virtualization team
  */
 
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <asm/mshyperv.h>
+#include <linux/resume_user_mode.h>
 
 #define HV_GET_REGISTER_BATCH_SIZE	\
 	(HV_HYP_PAGE_SIZE / sizeof(union hv_register_value))
@@ -69,6 +71,7 @@ int hv_call_get_vp_registers(
 
 	return hv_status_to_errno(status);
 }
+EXPORT_SYMBOL_GPL(hv_call_get_vp_registers);
 
 int hv_call_set_vp_registers(
 		u32 vp_index,
@@ -116,3 +119,20 @@ int hv_call_set_vp_registers(
 
 	return hv_status_to_errno(status);
 }
+EXPORT_SYMBOL_GPL(hv_call_set_vp_registers);
+
+/* Invoke with preemption and interrupt enabled */
+int mshv_xfer_to_guest_mode_handle_work(unsigned long ti_work)
+{
+	if (ti_work & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
+		return -EINTR;
+
+	if (ti_work & _TIF_NEED_RESCHED)
+		schedule();
+
+	if (ti_work & _TIF_NOTIFY_RESUME)
+		resume_user_mode_work(NULL);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(mshv_xfer_to_guest_mode_handle_work);
