@@ -293,4 +293,10 @@ static inline int mshv_debugfs_vp_create(struct mshv_vp *vp)
 static inline void mshv_debugfs_vp_remove(struct mshv_vp *vp) { }
 #endif
 
+int mshv_vfio_ops_init(void);
+void mshv_vfio_ops_exit(void);
+long mshv_partition_ioctl_create_device(struct mshv_partition *partition,
+					void __user *user_args);
+void mshv_destroy_devices(struct mshv_partition *partition);
+
 #endif /* _MSHV_ROOT_H_ */

@@ -1,19 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2023, Microsoft Corporation.
+ * Copyright (c) 2024, Microsoft Corporation.
  *
  * The main part of the mshv_root module, providing APIs to create
  * and manage guest partitions.
  *
- * Authors:
- *   Nuno Das Neves <nunodasneves@linux.microsoft.com>
- *   Lillian Grassin-Drake <ligrassi@microsoft.com>
- *   Wei Liu <wei.liu@kernel.org>
- *   Vineeth Remanan Pillai <viremana@linux.microsoft.com>
- *   Stanislav Kinsburskii <skinsburskii@linux.microsoft.com>
- *   Asher Kariv <askariv@microsoft.com>
- *   Muminul Islam <Muminul.Islam@microsoft.com>
- *   Anatol Belski <anbelski@linux.microsoft.com>
+ * Authors: Microsoft Linux virtualization team
  */
 
 #include <linux/kernel.h>
@@ -41,7 +33,6 @@
 #include "mshv_eventfd.h"
 #include "mshv.h"
 #include "mshv_root.h"
-#include "mshv_vfio.h"
 
 struct mshv_root mshv_root = {};
 
@@ -2355,11 +2346,9 @@ mshv_partition_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 	case MSHV_ROOT_HVCALL:
 		ret = mshv_ioctl_passthru_hvcall(partition, true, uarg);
 		break;
-#ifdef CONFIG_MSHV_VFIO
 	case MSHV_CREATE_DEVICE:
 		ret = mshv_partition_ioctl_create_device(partition, uarg);
 		break;
-#endif
 #ifdef HV_SUPPORTS_SEV_SNP_GUESTS
 	case MSHV_MODIFY_GPA_HOST_ACCESS:
 	case MSHV_IMPORT_ISOLATED_PAGES:
