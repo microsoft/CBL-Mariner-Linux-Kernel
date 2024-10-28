@@ -121,6 +121,36 @@ int hv_call_set_vp_registers(
 }
 EXPORT_SYMBOL_GPL(hv_call_set_vp_registers);
 
+int hv_call_get_partition_property(u64 partition_id,
+				   u64 property_code,
+				   u64 *property_value)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_get_partition_property *input;
+	struct hv_output_get_partition_property *output;
+
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+	memset(input, 0, sizeof(*input));
+	input->partition_id = partition_id;
+	input->property_code = property_code;
+	status = hv_do_hypercall(HVCALL_GET_PARTITION_PROPERTY, input, output);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: error %s\n", __func__, hv_status_to_string(status));
+		local_irq_restore(flags);
+		return hv_status_to_errno(status);
+	}
+	*property_value = output->property_value;
+
+	local_irq_restore(flags);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hv_call_get_partition_property);
+
 /* Invoke with preemption and interrupt enabled */
 int mshv_xfer_to_guest_mode_handle_work(unsigned long ti_work)
 {
