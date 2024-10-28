@@ -532,7 +532,13 @@ static inline u64 mshv_vp_injected_interrupt_vectors(struct mshv_vp *vp)
 
 static bool mshv_vp_dispatch_thread_blocked(struct mshv_vp *vp)
 {
-	return vp->vp_stats_page->vp_cntrs[VpRootDispatchThreadBlocked];
+	struct hv_stats_page **stats = vp->vp_stats_pages;
+	u64 *self_vp_cntrs = stats[HV_STATS_AREA_SELF]->vp_cntrs;
+	u64 *parent_vp_cntrs = stats[HV_STATS_AREA_PARENT]->vp_cntrs;
+
+	if (self_vp_cntrs[VpRootDispatchThreadBlocked])
+		return self_vp_cntrs[VpRootDispatchThreadBlocked];
+	return parent_vp_cntrs[VpRootDispatchThreadBlocked];
 }
 
 static int
@@ -1285,6 +1291,49 @@ mshv_vp_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index)
+{
+	union hv_stats_object_identity identity = {
+		.vp.partition_id = partition_id,
+		.vp.vp_index = vp_index,
+	};
+
+	identity.vp.stats_area_type = HV_STATS_AREA_SELF;
+	hv_call_unmap_stat_page(HV_STATS_OBJECT_VP, &identity);
+
+	identity.vp.stats_area_type = HV_STATS_AREA_PARENT;
+	hv_call_unmap_stat_page(HV_STATS_OBJECT_VP, &identity);
+}
+
+static int mshv_vp_stats_map(u64 partition_id, u32 vp_index,
+			     void *stats_pages[])
+{
+	union hv_stats_object_identity identity = {
+		.vp.partition_id = partition_id,
+		.vp.vp_index = vp_index,
+	};
+	int err;
+
+	identity.vp.stats_area_type = HV_STATS_AREA_SELF;
+	err = hv_call_map_stat_page(HV_STATS_OBJECT_VP, &identity,
+				    &stats_pages[HV_STATS_AREA_SELF]);
+	if (err)
+		return err;
+
+	identity.vp.stats_area_type = HV_STATS_AREA_PARENT;
+	err = hv_call_map_stat_page(HV_STATS_OBJECT_VP, &identity,
+				    &stats_pages[HV_STATS_AREA_PARENT]);
+	if (err)
+		goto unmap_self;
+
+	return 0;
+
+unmap_self:
+	identity.vp.stats_area_type = HV_STATS_AREA_SELF;
+	hv_call_unmap_stat_page(HV_STATS_OBJECT_VP, &identity);
+	return err;
+}
+
 static long
 mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 			       void __user *arg)
@@ -1292,8 +1341,7 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	struct mshv_create_vp args;
 	struct mshv_vp *vp;
 	struct page *intercept_message_page, *register_page, *ghcb_page;
-	union hv_stats_object_identity identity;
-	void *stats_page;
+	void *stats_pages[2];
 	long ret;
 
 	if (copy_from_user(&args, arg, sizeof(args)))
@@ -1334,21 +1382,16 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	}
 
 	/* L1VH partitions are not allowed to map the stats page. Yet. */
-	if (hv_root_partition()) {
-		memset(&identity, 0, sizeof(identity));
-		identity.vp.partition_id = partition->pt_id;
-		identity.vp.vp_index = args.vp_index;
-		identity.vp.flags = 0;
-
-		ret = hv_call_map_stat_page(HV_STATS_OBJECT_VP, &identity,
-					&stats_page);
+	if (hv_parent_partition()) {
+		ret = mshv_vp_stats_map(partition->pt_id, args.vp_index,
+					stats_pages);
 		if (ret)
 			goto unmap_ghcb_page;
 	}
 
 	vp = kzalloc(sizeof(*vp), GFP_KERNEL);
 	if (!vp)
-		goto unmap_stats_page;
+		goto unmap_stats_pages;
 
 	vp->vp_registers = kmalloc_array(MSHV_VP_MAX_REGISTERS,
 					 sizeof(*vp->vp_registers), GFP_KERNEL);
@@ -1375,8 +1418,8 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available())
 		vp->vp_ghcb_page = page_to_virt(ghcb_page);
 
-	if (hv_root_partition())
-		vp->vp_stats_page = stats_page;
+	if (hv_parent_partition())
+		memcpy(vp->vp_stats_pages, stats_pages, sizeof(stats_pages));
 
 	ret = mshv_debugfs_vp_create(vp);
 	if (ret)
@@ -1407,9 +1450,9 @@ free_registers:
 	kfree(vp->vp_registers);
 free_vp:
 	kfree(vp);
-unmap_stats_page:
-	if (hv_root_partition())
-		hv_call_unmap_stat_page(HV_STATS_OBJECT_VP, &identity);
+unmap_stats_pages:
+	if (hv_parent_partition())
+		mshv_vp_stats_unmap(partition->pt_id, args.vp_index);
 unmap_ghcb_page:
 	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available())
 		hv_call_unmap_vp_state_page(partition->pt_id, args.vp_index,
@@ -2618,25 +2661,14 @@ static void destroy_partition(struct mshv_partition *partition)
 
 		/* Remove vps */
 		for (i = 0; i < MSHV_MAX_VPS; ++i) {
-			union hv_stats_object_identity identity;
-
 			vp = partition->pt_vp_array[i];
 			if (!vp)
 				continue;
 
 			mshv_debugfs_vp_remove(vp);
 
-			if (vp->vp_stats_page) {
-				memset(&identity, 0, sizeof(identity));
-				identity.vp.partition_id = partition->pt_id;
-				identity.vp.vp_index = vp->vp_index;
-				identity.vp.flags = 0;
-
-				(void)hv_call_unmap_stat_page(HV_STATS_OBJECT_VP,
-							&identity);
-
-				vp->vp_stats_page = NULL;
-			}
+			if (hv_parent_partition())
+				mshv_vp_stats_unmap(partition->pt_id, vp->vp_index);
 
 			if (vp->vp_register_page) {
 				(void)hv_call_unmap_vp_state_page(

@@ -35,7 +35,7 @@ struct mshv_vp {
 	struct hv_vp_register_page *vp_register_page;
 	struct hv_message *vp_intercept_msg_page;
 	void *vp_ghcb_page;
-	struct hv_stats_page *vp_stats_page;
+	struct hv_stats_page *vp_stats_pages[2];
 	struct hv_register_assoc *vp_registers;
 	struct {
 		atomic64_t vp_signaled_count;
