@@ -935,16 +935,6 @@ static void __init ms_hyperv_init_platform(void)
 
 	hv_max_functions_eax = cpuid_eax(HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS);
 
-	/*
-	 * FIXME: remove this change once VP stats page layout is fixed.
-	 * New (27xxx+) MSHV versions ABI isn't backward compatible with
-	 * the previous versions, and therefore fast interruption check
-	 * starts racing with the hypervisor state machine.
-	 * Disable this feature for now until support for the new ABI has
-	 * integrated.
-	 */
-	ms_hyperv.ext_features &= ~HV_VP_DISPATCH_INTERRUPT_INJECTION_AVAILABLE;
-
 	pr_info("Hyper-V: privilege flags low 0x%x, high 0x%x, ext 0x%x, hints 0x%x, misc 0x%x\n",
 		ms_hyperv.features, ms_hyperv.priv_high,
 		ms_hyperv.ext_features, ms_hyperv.hints,
