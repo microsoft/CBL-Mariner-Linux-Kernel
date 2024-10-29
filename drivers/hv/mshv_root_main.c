@@ -530,6 +530,11 @@ static inline u64 mshv_vp_injected_interrupt_vectors(struct mshv_vp *vp)
 }
 #endif
 
+static bool mshv_vp_dispatch_thread_blocked(struct mshv_vp *vp)
+{
+	return vp->vp_stats_page->vp_cntrs[VpRootDispatchThreadBlocked];
+}
+
 static int
 mshv_vp_wait_for_hv_kick(struct mshv_vp *vp)
 {
@@ -537,7 +542,7 @@ mshv_vp_wait_for_hv_kick(struct mshv_vp *vp)
 
 	ret = wait_event_interruptible(vp->run.vp_suspend_queue,
 		(vp->run.kicked_by_hv == 1 &&
-		 !vp->vp_stats_page->vp_cntrs[VpRootDispatchThreadBlocked])
+		 !mshv_vp_dispatch_thread_blocked(vp))
 		|| mshv_vp_injected_interrupt_vectors(vp)
 		);
 	if (ret)
