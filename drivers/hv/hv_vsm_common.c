@@ -12,7 +12,7 @@
 
 union hv_register_vsm_code_page_offsets vsm_code_page_offsets;
 
-int hv_vsm_get_register(u32 reg_name, u64 *result)
+int __hv_vsm_get_register(u32 reg_name, u64 *result, u8 input_vtl)
 {
 	u64 status;
 	unsigned long flags;
@@ -26,7 +26,7 @@ int hv_vsm_get_register(u32 reg_name, u64 *result)
 
 	hvin->header.partitionid = HV_PARTITION_ID_SELF;
 	hvin->header.vpindex = HV_VP_INDEX_SELF;
-	hvin->header.inputvtl = 0;
+	hvin->header.inputvtl = input_vtl;
 	hvin->element[0].name0 = reg_name;
 
 	status = hv_do_rep_hypercall(HVCALL_GET_VP_REGISTERS, 1, 0, hvin, hvout);
@@ -39,7 +39,7 @@ int hv_vsm_get_register(u32 reg_name, u64 *result)
 	return 0;
 }
 
-int hv_vsm_set_register(u32 reg_name, u64 value)
+int __hv_vsm_set_register(u32 reg_name, u64 value, u8 input_vtl)
 {
 	u64 status;
 	unsigned long flags;
@@ -51,7 +51,7 @@ int hv_vsm_set_register(u32 reg_name, u64 value)
 
 	hvin->header.partitionid = HV_PARTITION_ID_SELF;
 	hvin->header.vpindex = HV_VP_INDEX_SELF;
-	hvin->header.inputvtl = 0;
+	hvin->header.inputvtl = input_vtl;
 	hvin->element[0].name = reg_name;
 	hvin->element[0].valuelow = value;
 
@@ -62,6 +62,16 @@ int hv_vsm_set_register(u32 reg_name, u64 value)
 		return -EFAULT;
 
 	return 0;
+}
+
+int hv_vsm_get_register(u32 reg_name, u64 *result)
+{
+	return __hv_vsm_get_register(reg_name, result, 0);
+}
+
+int hv_vsm_set_register(u32 reg_name, u64 value)
+{
+	return __hv_vsm_set_register(reg_name, value, 0);
 }
 
 int hv_vsm_get_code_page_offsets(void)
