@@ -158,15 +158,15 @@ EXPORT_SYMBOL_GPL(hv_call_get_partition_property);
  *
  * Returns: 0 on success, -errno on error.
  */
-int mshv_do_pre_guest_mode_work(void)
+int mshv_do_pre_guest_mode_work(ulong th_flags)
 {
-	if (ti_work & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
+	if (th_flags & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
 		return -EINTR;
 
-	if (ti_work & _TIF_NEED_RESCHED)
+	if (th_flags & _TIF_NEED_RESCHED)
 		schedule();
 
-	if (ti_work & _TIF_NOTIFY_RESUME)
+	if (th_flags & _TIF_NOTIFY_RESUME)
 		resume_user_mode_work(NULL);
 
 	return 0;

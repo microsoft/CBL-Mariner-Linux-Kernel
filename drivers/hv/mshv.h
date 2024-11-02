@@ -190,7 +190,7 @@ int hv_call_issue_psp_guest_request(
 	void *completion_data);
 #endif /* HV_SUPPORTS_SEV_SNP_GUESTS */
 
-int mshv_do_pre_guest_mode_work(void);
+int mshv_do_pre_guest_mode_work(ulong th_flags);
 
 typedef long (*mshv_ioctl_func_t)(struct file *filp,
 				  unsigned int ioctl,

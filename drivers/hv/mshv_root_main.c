@@ -442,14 +442,14 @@ static long mshv_run_vp_with_hyp_scheduler(struct mshv_vp *vp)
 }
 
 static int
-hv_call_vp_dispatch(struct mshv_vp *vp, u32 flags,
-		    struct hv_output_dispatch_vp *res)
+mshv_vp_dispatch(struct mshv_vp *vp, u32 flags,
+		 struct hv_output_dispatch_vp *res)
 {
 	struct hv_input_dispatch_vp *input;
 	struct hv_output_dispatch_vp *output;
 	u64 status;
 
-	/* Preemption must be disabled at this point */
+	preempt_disable();
 	input = *this_cpu_ptr(root_scheduler_input);
 	output = *this_cpu_ptr(root_scheduler_output);
 
@@ -462,7 +462,9 @@ hv_call_vp_dispatch(struct mshv_vp *vp, u32 flags,
 	input->spec_ctrl = 0; /* TODO: set sensible flags */
 	input->flags = flags;
 
+	vp->run.flags.root_sched_dispatched = 1;
 	status = hv_do_hypercall(HVCALL_DISPATCH_VP, input, output);
+	vp->run.flags.root_sched_dispatched = 0;
 
 	trace_mshv_hvcall_dispatch_vp(status, vp->vp_partition->pt_id,
 				      vp->vp_index, flags,
@@ -470,27 +472,13 @@ hv_call_vp_dispatch(struct mshv_vp *vp, u32 flags,
 				      output->dispatch_event);
 
 	*res = *output;
+	preempt_enable();
 
 	if (!hv_result_success(status))
 		vp_err(vp, "%s: status %s\n", __func__,
 		       hv_status_to_string(status));
 
 	return hv_status_to_errno(status);
-}
-
-static int
-mshv_vp_dispatch(struct mshv_vp *vp, u32 flags,
-		 struct hv_output_dispatch_vp *output)
-{
-	int ret;
-
-	vp->run.flags.root_sched_dispatched = 1;
-
-	ret = hv_call_vp_dispatch(vp, flags, output);
-
-	vp->run.flags.root_sched_dispatched = 0;
-
-	return ret;
 }
 
 static int
@@ -562,25 +550,27 @@ static int mshv_pre_guest_mode_work(struct mshv_vp *vp)
 {
 	const ulong work_flags = _TIF_NOTIFY_SIGNAL | _TIF_SIGPENDING |
 				 _TIF_NEED_RESCHED  | _TIF_NOTIFY_RESUME;
-	ulong ti_work;
+	ulong th_flags;
 
-	ti_work = read_thread_flags();
-	while (ti_work & work_flags) {
+	th_flags = read_thread_flags();
+	while (th_flags & work_flags) {
 		int ret;
 
 		trace_mshv_root_sched_handle_work(ret, vp->vp_partition->pt_id,
-						  vp->vp_index, ti_work);
+						  vp->vp_index, th_flags);
 
-		ret = mshv_do_pre_guest_mode_work();   /* calls schedule() */
+		/* nb: following will call schedule */
+		ret = mshv_do_pre_guest_mode_work(th_flags);
 		if (ret)
 			return ret;
 
-		ti_work = read_thread_flags();
+		th_flags = read_thread_flags();
 	}
 
 	return 0;
 }
 
+/* Must be called with interrupts enabled */
 static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 {
 	long ret;
@@ -596,29 +586,13 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 			return ret;
 	}
 
-	preempt_disable();
-
 	do {
 		u32 flags = 0;
 		struct hv_output_dispatch_vp output;
-		unsigned long irq_flags;
 
 		ret = mshv_pre_guest_mode_work(vp);
 		if (ret)
 			break;
-
-		local_irq_save(irq_flags);
-
-		/*
-		 * Note the lack of local_irq_restore after the dispatch
-		 * call. We rely on the hypervisor to do that for us.
-		 *
-		 * Thread context should always have interrupt enabled,
-		 * but we try to be defensive here by testing what it
-		 * truly was before we disabled interrupt.
-		 */
-		if (!irqs_disabled_flags(irq_flags))
-			flags |= HV_DISPATCH_VP_FLAG_ENABLE_CALLER_INTERRUPTS;
 
 		if (vp->run.flags.intercept_suspend)
 			flags |= HV_DISPATCH_VP_FLAG_CLEAR_INTERCEPT_SUSPEND;
@@ -670,8 +644,6 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 				vp->run.flags.intercept_suspend = 1;
 		}
 	} while (!vp->run.flags.intercept_suspend);
-
-	preempt_enable();
 
 	return ret;
 }
