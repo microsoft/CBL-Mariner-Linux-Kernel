@@ -151,8 +151,14 @@ int hv_call_get_partition_property(u64 partition_id,
 }
 EXPORT_SYMBOL_GPL(hv_call_get_partition_property);
 
-/* Invoke with preemption and interrupt enabled */
-int mshv_xfer_to_guest_mode_handle_work(unsigned long ti_work)
+/*
+ * Handle any pre-processing before going into the guest mode on this cpu, most
+ * notably call schedule(). Must be invoked with both preemption and
+ * interrupts enabled.
+ *
+ * Returns: 0 on success, -errno on error.
+ */
+int mshv_do_pre_guest_mode_work(void)
 {
 	if (ti_work & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
 		return -EINTR;
@@ -165,4 +171,4 @@ int mshv_xfer_to_guest_mode_handle_work(unsigned long ti_work)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(mshv_xfer_to_guest_mode_handle_work);
+EXPORT_SYMBOL_GPL(mshv_do_pre_guest_mode_work);
