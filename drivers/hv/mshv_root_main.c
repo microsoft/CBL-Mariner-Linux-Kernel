@@ -515,14 +515,14 @@ mshv_vp_clear_explicit_suspend(struct mshv_vp *vp)
 }
 
 #if defined(__x86_64__)
-static inline u64 mshv_vp_injected_interrupt_vectors(struct mshv_vp *vp)
+static u64 mshv_vp_interrupt_pending(struct mshv_vp *vp)
 {
 	if (!vp->vp_register_page)
 		return 0;
 	return vp->vp_register_page->interrupt_vectors.as_uint64;
 }
 #else
-static inline u64 mshv_vp_injected_interrupt_vectors(struct mshv_vp *vp)
+static u64 mshv_vp_interrupt_pending(struct mshv_vp *vp)
 {
 	return 0;
 }
@@ -547,7 +547,7 @@ mshv_vp_wait_for_hv_kick(struct mshv_vp *vp)
 	ret = wait_event_interruptible(vp->run.vp_suspend_queue,
 		(vp->run.kicked_by_hv == 1 &&
 		 !mshv_vp_dispatch_thread_blocked(vp))
-		|| mshv_vp_injected_interrupt_vectors(vp)
+		|| mshv_vp_interrupt_pending(vp)
 		);
 	if (ret)
 		return -EINTR;
@@ -558,26 +558,22 @@ mshv_vp_wait_for_hv_kick(struct mshv_vp *vp)
 	return 0;
 }
 
-static int
-mshv_vp_xfer_to_guest_mode(struct mshv_vp *vp)
+static int mshv_pre_guest_mode_work(struct mshv_vp *vp)
 {
-	const unsigned long work_flags = _TIF_NEED_RESCHED |
-					 _TIF_SIGPENDING |
-					 _TIF_NOTIFY_SIGNAL |
-					 _TIF_NOTIFY_RESUME;
-	unsigned long ti_work;
+	const ulong work_flags = _TIF_NOTIFY_SIGNAL | _TIF_SIGPENDING |
+				 _TIF_NEED_RESCHED  | _TIF_NOTIFY_RESUME;
+	ulong ti_work;
 
 	ti_work = read_thread_flags();
 	while (ti_work & work_flags) {
 		int ret;
 
-		ret = mshv_xfer_to_guest_mode_handle_work(ti_work);
+		trace_mshv_root_sched_handle_work(ret, vp->vp_partition->pt_id,
+						  vp->vp_index, ti_work);
+
+		ret = mshv_do_pre_guest_mode_work();   /* calls schedule() */
 		if (ret)
 			return ret;
-
-		trace_mshv_root_sched_handle_work(ret,
-				vp->vp_partition->pt_id, vp->vp_index,
-				ti_work);
 
 		ti_work = read_thread_flags();
 	}
@@ -585,8 +581,7 @@ mshv_vp_xfer_to_guest_mode(struct mshv_vp *vp)
 	return 0;
 }
 
-static long
-mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
+static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 {
 	long ret;
 
@@ -608,7 +603,7 @@ mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 		struct hv_output_dispatch_vp output;
 		unsigned long irq_flags;
 
-		ret = mshv_vp_xfer_to_guest_mode(vp);
+		ret = mshv_pre_guest_mode_work(vp);
 		if (ret)
 			break;
 
@@ -628,7 +623,7 @@ mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 		if (vp->run.flags.intercept_suspend)
 			flags |= HV_DISPATCH_VP_FLAG_CLEAR_INTERCEPT_SUSPEND;
 
-		if (mshv_vp_injected_interrupt_vectors(vp))
+		if (mshv_vp_interrupt_pending(vp))
 			flags |= HV_DISPATCH_VP_FLAG_SCAN_INTERRUPT_INJECTION;
 
 		ret = mshv_vp_dispatch(vp, flags, &output);
