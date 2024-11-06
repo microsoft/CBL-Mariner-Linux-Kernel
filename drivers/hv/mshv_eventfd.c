@@ -102,7 +102,7 @@ mshv_vp_irq_vector_injected(union hv_vp_register_page_interrupt_vectors iv,
 	return false;
 }
 
-static int mshv_vp_irq_try_inject_vector(struct mshv_vp *vp, u32 vector)
+static int mshv_vp_irq_try_set_vector(struct mshv_vp *vp, u32 vector)
 {
 	union hv_vp_register_page_interrupt_vectors iv, new_iv;
 
@@ -123,18 +123,22 @@ static int mshv_vp_irq_try_inject_vector(struct mshv_vp *vp, u32 vector)
 	return 0;
 }
 
-static int mshv_vp_irq_inject_vector(struct mshv_vp *vp, u32 vector)
+static int mshv_vp_irq_set_vector(struct mshv_vp *vp, u32 vector)
 {
 	int ret;
 
 	do {
-		ret = mshv_vp_irq_try_inject_vector(vp, vector);
+		ret = mshv_vp_irq_try_set_vector(vp, vector);
 	} while (ret == -EAGAIN && !need_resched());
 
 	return ret;
 }
 
-static int irq_inject_fast(struct mshv_irqfd *irqfd)
+/*
+ * Try to raise irq for guest via shared vector array. hyp does the actual
+ * inject of the interrupt.
+ */
+static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd)
 {
 	struct mshv_partition *partition = irqfd->irqfd_partn;
 	struct mshv_lapic_irq *irq = &irqfd->irqfd_lapic_irq;
@@ -155,7 +159,7 @@ static int irq_inject_fast(struct mshv_irqfd *irqfd)
 	if (!vp->vp_register_page)
 		return -EOPNOTSUPP;
 
-	if (mshv_vp_irq_inject_vector(vp, irq->lapic_vector))
+	if (mshv_vp_irq_set_vector(vp, irq->lapic_vector))
 		return -EINVAL;
 
 	if (vp->run.flags.root_sched_dispatched &&
@@ -167,13 +171,13 @@ static int irq_inject_fast(struct mshv_irqfd *irqfd)
 	return 0;
 }
 #else /* !__x86_64__ */
-static int irq_inject_fast(struct mshv_irqfd *irqfd)
+static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd)
 {
 	return -EOPNOTSUPP;
 }
 #endif
 
-static void mshv_irqfd_inject(struct mshv_irqfd *irqfd)
+static void mshv_assert_irq_slow(struct mshv_irqfd *irqfd)
 {
 	struct mshv_partition *partition = irqfd->irqfd_partn;
 	struct mshv_lapic_irq *irq = &irqfd->irqfd_lapic_irq;
@@ -292,9 +296,10 @@ static int mshv_irqfd_wakeup(wait_queue_entry_t *wait, unsigned int mode,
 			seq = read_seqcount_begin(&irqfd->irqfd_irqe_sc);
 		} while (read_seqcount_retry(&irqfd->irqfd_irqe_sc, seq));
 
-		/* An event has been signaled, inject an interrupt */
-		if (irq_inject_fast(irqfd))
-			mshv_irqfd_inject(irqfd);
+		/* An event has been signaled, raise an interrupt */
+		ret = mshv_try_assert_irq_fast(irqfd);
+		if (ret)
+			mshv_assert_irq_slow(irqfd);
 
 		srcu_read_unlock(&pt->pt_irq_srcu, idx);
 
@@ -478,7 +483,7 @@ static int mshv_irqfd_assign(struct mshv_partition *pt,
 	events = vfs_poll(f.file, &irqfd->irqfd_polltbl);
 
 	if (events & POLLIN)
-		mshv_irqfd_inject(irqfd);
+		mshv_assert_irq_slow(irqfd);
 
 	srcu_read_unlock(&pt->pt_irq_srcu, idx);
 	/*

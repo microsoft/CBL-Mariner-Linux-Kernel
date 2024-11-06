@@ -394,19 +394,20 @@ mshv_suspend_vp(const struct mshv_vp *vp, bool *message_in_flight)
  * after VP is released from HV_REGISTER_EXPLICIT_SUSPEND in case of the
  * opposite order.
  */
-static long
-mshv_run_vp_with_hv_scheduler(struct mshv_vp *vp, void __user *ret_message,
-	    struct hv_register_assoc *registers, size_t count)
-
+static long mshv_run_vp_with_hyp_scheduler(struct mshv_vp *vp)
 {
-	struct hv_message *msg = vp->vp_intercept_msg_page;
 	long ret;
+	struct hv_register_assoc suspend_regs[2] = {
+			{ .name = HV_REGISTER_INTERCEPT_SUSPEND },
+			{ .name = HV_REGISTER_EXPLICIT_SUSPEND }
+	};
+	size_t count = ARRAY_SIZE(suspend_regs);
 
 	/* Resume VP execution */
 	ret = mshv_set_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
-				    count, registers);
+				    count, suspend_regs);
 	if (ret) {
-		vp_err(vp, "Failed to resume vp execution\n");
+		vp_err(vp, "Failed to resume vp execution. %lx\n", ret);
 		return ret;
 	}
 
@@ -430,9 +431,6 @@ mshv_run_vp_with_hv_scheduler(struct mshv_vp *vp, void __user *ret_message,
 		/* Wait for the message in flight. */
 		wait_event(vp->run.vp_suspend_queue, vp->run.kicked_by_hv == 1);
 	}
-
-	if (copy_to_user(ret_message, msg, sizeof(struct hv_message)))
-		return -EFAULT;
 
 	/*
 	 * Reset the flag to make the wait_event call above work
@@ -588,7 +586,7 @@ mshv_vp_xfer_to_guest_mode(struct mshv_vp *vp)
 }
 
 static long
-mshv_run_vp_with_root_scheduler(struct mshv_vp *vp, void __user *ret_message)
+mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 {
 	long ret;
 
@@ -640,9 +638,10 @@ mshv_run_vp_with_root_scheduler(struct mshv_vp *vp, void __user *ret_message)
 		vp->run.flags.intercept_suspend = 0;
 
 		if (output.dispatch_state == HV_VP_DISPATCH_STATE_BLOCKED) {
-			if (output.dispatch_event == HV_VP_DISPATCH_EVENT_SUSPEND) {
+			if (output.dispatch_event ==
+						HV_VP_DISPATCH_EVENT_SUSPEND) {
 				/* TODO: remove the warning once VP canceling
-				 * is supported */
+				 *	 is supported */
 				WARN_ONCE(
 				     atomic64_read(&vp->run.vp_signaled_count),
 				     "%s: vp#%d: unexpected explicit suspend\n",
@@ -671,42 +670,44 @@ mshv_run_vp_with_root_scheduler(struct mshv_vp *vp, void __user *ret_message)
 			}
 		} else {
 			/* HV_VP_DISPATCH_STATE_READY */
-			if (output.dispatch_event == HV_VP_DISPATCH_EVENT_INTERCEPT)
+			if (output.dispatch_event ==
+						HV_VP_DISPATCH_EVENT_INTERCEPT)
 				vp->run.flags.intercept_suspend = 1;
 		}
 	} while (!vp->run.flags.intercept_suspend);
 
 	preempt_enable();
 
-	if (ret)
-		return ret;
-
-	if (copy_to_user(ret_message, vp->vp_intercept_msg_page,
-			 sizeof(struct hv_message)))
-		return -EFAULT;
-
-	return 0;
+	return ret;
 }
 
 static_assert(sizeof(struct hv_message) <= MSHV_RUN_VP_BUF_SZ,
 	      "sizeof(struct hv_message) must not exceed MSHV_RUN_VP_BUF_SZ");
-static long
-mshv_vp_ioctl_run_vp(struct mshv_vp *vp, void __user *ret_message)
+
+static long mshv_vp_ioctl_run_vp(struct mshv_vp *vp, void __user *ret_msg)
 {
-	trace_mshv_run_vp_entry(vp->vp_partition->pt_id, vp->vp_index,
-				hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT ? "root" : "hv");
+	long rc;
+	char *schednm;
 
-	if (hv_scheduler_type != HV_SCHEDULER_TYPE_ROOT) {
-		struct hv_register_assoc suspend_registers[2] = {
-			{ .name = HV_REGISTER_INTERCEPT_SUSPEND },
-			{ .name = HV_REGISTER_EXPLICIT_SUSPEND }
-		};
+	schednm = hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT ? "root" : "hv";
+	trace_mshv_run_vp_entry(vp->vp_partition->pt_id, vp->vp_index, schednm);
 
-		return mshv_run_vp_with_hv_scheduler(vp, ret_message,
-				suspend_registers, ARRAY_SIZE(suspend_registers));
-	}
+	if (hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT)
+		rc = mshv_run_vp_with_root_scheduler(vp);
+	else
+		rc = mshv_run_vp_with_hyp_scheduler(vp);
 
-	return mshv_run_vp_with_root_scheduler(vp, ret_message);
+	trace_mshv_run_vp_exit(rc, vp->vp_partition->pt_id, vp->vp_index,
+			       vp->vp_intercept_msg_page->header.message_type);
+
+	if (rc)
+		return rc;
+
+	if (copy_to_user(ret_msg, vp->vp_intercept_msg_page,
+			 sizeof(struct hv_message)))
+		rc = -EFAULT;
+
+	return rc;
 }
 
 #ifdef HV_SUPPORTS_VP_STATE
@@ -1027,8 +1028,6 @@ mshv_vp_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 	switch (ioctl) {
 	case MSHV_RUN_VP:
 		r = mshv_vp_ioctl_run_vp(vp, (void __user *)arg);
-		trace_mshv_run_vp_exit(r, vp->vp_partition->pt_id, vp->vp_index,
-			       vp->vp_intercept_msg_page->header.message_type);
 		break;
 	case MSHV_GET_VP_REGISTERS:
 		r = mshv_vp_ioctl_get_regs(vp, (void __user *)arg);
