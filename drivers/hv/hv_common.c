@@ -440,10 +440,11 @@ int __init hv_common_init(void)
 	hyperv_pcpu_input_arg = alloc_percpu(void  *);
 	BUG_ON(!hyperv_pcpu_input_arg);
 
+	hyperv_pcpu_output_arg = alloc_percpu(void *);
+	BUG_ON(!hyperv_pcpu_output_arg);
+
 	/* Allocate the per-CPU state for parent partitions*/
 	if (hv_parent_partition()) {
-		hyperv_pcpu_output_arg = alloc_percpu(void *);
-		BUG_ON(!hyperv_pcpu_output_arg);
 		hv_synic_eventring_tail = alloc_percpu(u8 *);
 		BUG_ON(hv_synic_eventring_tail == NULL);
 	}
@@ -473,7 +474,7 @@ int hv_common_cpu_init(unsigned int cpu)
 	u8 **synic_eventring_tail;
 	u64 msr_vp_index;
 	gfp_t flags;
-	int pgcount = hv_parent_partition() ? 2 : 1;
+	const int pgcount = 2;
 	void *mem;
 	int ret;
 
@@ -491,9 +492,10 @@ int hv_common_cpu_init(unsigned int cpu)
 		if (!mem)
 			return -ENOMEM;
 
+		outputarg = (void **)this_cpu_ptr(hyperv_pcpu_output_arg);
+		*outputarg = (char *)mem + HV_HYP_PAGE_SIZE;
+
 		if (hv_parent_partition()) {
-			outputarg = (void **)this_cpu_ptr(hyperv_pcpu_output_arg);
-			*outputarg = (char *)mem + HV_HYP_PAGE_SIZE;
 			synic_eventring_tail = (u8 **)this_cpu_ptr(hv_synic_eventring_tail);
 			*synic_eventring_tail = kcalloc(HV_SYNIC_SINT_COUNT, sizeof(u8),
 							flags);
