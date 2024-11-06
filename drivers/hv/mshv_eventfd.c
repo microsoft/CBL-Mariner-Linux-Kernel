@@ -152,6 +152,9 @@ static int irq_inject_fast(struct mshv_irqfd *irqfd)
 
 	vp = partition->pt_vp_array[irq->lapic_apic_id];
 
+	if (!vp->vp_register_page)
+		return -EOPNOTSUPP;
+
 	if (mshv_vp_irq_inject_vector(vp, irq->lapic_vector))
 		return -EINVAL;
 
