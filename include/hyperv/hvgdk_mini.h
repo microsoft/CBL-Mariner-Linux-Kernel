@@ -388,6 +388,7 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_GET_LOGICAL_PROCESSOR_RUN_TIME	0x0004
 #define HVCALL_NOTIFY_LONG_SPIN_WAIT		0x0008
 #define HVCALL_SEND_IPI				0x000b
+#define HVCALL_ENABLE_VP_VTL			0x000f
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX	0x0013
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX	0x0014
 #define HVCALL_SEND_IPI_EX			0x0015
@@ -444,6 +445,8 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_ASSERT_VIRTUAL_INTERRUPT		0x0094
 #define HVCALL_CREATE_PORT			0x0095
 #define HVCALL_CONNECT_PORT			0x0096
+#define HVCALL_START_VP				0x0099
+#define HVCALL_GET_VP_ID_FROM_APIC_ID		0x009a
 #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_SPACE 0x00af
 #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_LIST 0x00b0
 #define HVCALL_CREATE_DEVICE_DOMAIN		0x00b1
@@ -889,6 +892,50 @@ union hv_input_vtl {
 		__u8 use_target_vtl : 1;
 		__u8 reserved_z : 3;
 	};
+} __packed;
+
+struct hv_init_vp_context {
+#if defined(CONFIG_ARM64)
+	u64 rsvd[9];
+#else /* CONFIG_ARM64 */
+	u64 rip;
+	u64 rsp;
+	u64 rflags;
+
+	struct hv_x64_segment_register cs;
+	struct hv_x64_segment_register ds;
+	struct hv_x64_segment_register es;
+	struct hv_x64_segment_register fs;
+	struct hv_x64_segment_register gs;
+	struct hv_x64_segment_register ss;
+	struct hv_x64_segment_register tr;
+	struct hv_x64_segment_register ldtr;
+
+	struct hv_x64_table_register idtr;
+	struct hv_x64_table_register gdtr;
+
+	u64 efer;
+	u64 cr0;
+	u64 cr3;
+	u64 cr4;
+	u64 msr_cr_pat;
+#endif /* !CONFIG_ARM64 */
+} __packed;
+
+struct hv_enable_vp_vtl {
+	u64				partition_id;
+	u32				vp_index;
+	union hv_input_vtl		target_vtl;
+	u8				mbz0;
+	u16				mbz1;
+	struct hv_init_vp_context	vp_context;
+} __packed;
+
+struct hv_get_vp_from_apic_id_in {
+	u64 partition_id;
+	union hv_input_vtl target_vtl;
+	u8 res[7];
+	u32 apic_ids[];
 } __packed;
 
 /* Note: not in hvgdk_mini.h */
@@ -1681,6 +1728,8 @@ struct hv_send_ipi {	 /* HV_INPUT_SEND_SYNTHETIC_CLUSTER_IPI */
 	__u32 reserved;
 	__u64 cpu_mask;
 } __packed;
+
+#define HV_X64_VTL_MASK			GENMASK(3, 0)
 
 #if defined(__KERNEL__)
 #if defined(__x86_64__)
