@@ -660,6 +660,7 @@ int hv_call_set_vp_state(
 #endif
 
 int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
+				union hv_input_vtl input_vtl,
 				struct page **state_page)
 {
 	struct hv_input_map_vp_state_page *input;
@@ -677,6 +678,7 @@ int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 		input->partition_id = partition_id;
 		input->vp_index = vp_index;
 		input->type = type;
+		input->input_vtl = input_vtl;
 
 		status = hv_do_hypercall(HVCALL_MAP_VP_STATE_PAGE, input, output);
 
@@ -684,7 +686,11 @@ int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 			if (hv_result_success(status))
 				*state_page = pfn_to_page(output->map_location);
 			else
-				pr_err("%s: %s\n", __func__,
+				pr_err("%s: page_type=%u vp_index=%u partition_id=%llu %s\n",
+				       __func__,
+				       type,
+				       vp_index,
+				       partition_id,
 				       hv_status_to_string(status));
 			local_irq_restore(flags);
 			ret = hv_status_to_errno(status);
@@ -701,7 +707,8 @@ int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 	return ret;
 }
 
-int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type)
+int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
+				union hv_input_vtl input_vtl)
 {
 	unsigned long flags;
 	u64 status;
@@ -716,6 +723,7 @@ int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type)
 	input->partition_id = partition_id;
 	input->vp_index = vp_index;
 	input->type = type;
+	input->input_vtl = input_vtl;
 
 	status = hv_do_hypercall(HVCALL_UNMAP_VP_STATE_PAGE, input, NULL);
 
