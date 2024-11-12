@@ -1106,7 +1106,16 @@ enum hv_vp_state_page_type {
 struct hv_input_map_vp_state_page {
 	__u64 partition_id;
 	__u32 vp_index;
-	__u32 type; /* enum hv_vp_state_page_type */
+	__u16 type; /* enum hv_vp_state_page_type */
+	union hv_input_vtl input_vtl;
+	union {
+		__u8 as_uint8;
+		struct {
+			__u8 map_location_provided: 1;
+			__u8: 7;
+		};
+	} flags;
+	__u64 requested_map_location;
 } __packed;
 
 struct hv_output_map_vp_state_page {
@@ -1116,7 +1125,9 @@ struct hv_output_map_vp_state_page {
 struct hv_input_unmap_vp_state_page {
 	__u64 partition_id;
 	__u32 vp_index;
-	__u32 type; /* enum hv_vp_state_page_type */
+	__u16 type; /* enum hv_vp_state_page_type */
+	union hv_input_vtl input_vtl;
+	__u8 reserved0;
 } __packed;
 
 struct hv_cpuid_leaf_info {
