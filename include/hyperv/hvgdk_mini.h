@@ -877,6 +877,11 @@ union hv_x64_msr_npiep_config_contents {
 	} __packed;
 };
 
+#define HV_NUM_VTLS 3
+#define HV_NUM_VTLS_ROOT 2
+#define HV_NORMAL_VTL 0
+#define HV_VTL_ALL 0xF
+
 union hv_input_vtl {
 	__u8 as_uint8;
 	struct {

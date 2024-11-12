@@ -94,8 +94,10 @@ int hv_call_set_vp_state(
 #endif
 
 int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
+				union hv_input_vtl input_vtl,
 				struct page **state_page);
-int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type);
+int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
+				union hv_input_vtl input_vtl);
 int hv_call_get_partition_property(
 		u64 partition_id,
 		u64 property_code,
