@@ -2673,6 +2673,16 @@ static void destroy_partition(struct mshv_partition *partition)
 					    input_vtl);
 			vp->vp_intercept_msg_page = NULL;
 
+			if (vp->vp_ghcb_page) {
+				input_vtl.use_target_vtl = 1;
+				input_vtl.target_vtl = HV_NORMAL_VTL;
+				(void)hv_call_unmap_vp_state_page(partition->pt_id,
+								  vp->vp_index,
+								  HV_VP_STATE_PAGE_GHCB,
+								  input_vtl);
+				vp->vp_ghcb_page = NULL;
+			}
+
 			kfree(vp->vp_registers);
 			kfree(vp);
 
