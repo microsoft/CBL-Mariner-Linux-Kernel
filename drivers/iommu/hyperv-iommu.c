@@ -772,13 +772,18 @@ static int hv_iommu_map(struct iommu_domain *immdom, unsigned long iova,
 	}
 
 	if (!hv_result_success(status)) {
+		size_t done_size = done << HV_HYP_PAGE_SHIFT;
+
 		pr_err("%s: iommu map failed. pgs:%lx/%lx iova:%lx st:%llx\n",
 		       __func__, done, npages, iova, status);
 
-		size = done << HV_HYP_PAGE_SHIFT;
-
-		/* following will call hv_iommu_del_mappings() */
-		hv_iommu_unmap(immdom, iova - size, size, NULL);
+		/*
+		 * lookup tree has all mappings [0 - size-1]. Below unmap will
+		 * only remove from [0 - done], we need to remove second chunk
+		 * [done+1 - size-1].
+		 */
+		hv_iommu_del_mappings(hvdom, iova, size - done_size);
+		hv_iommu_unmap(immdom, iova - done_size, done_size, NULL);
 	}
 
 	return hv_status_to_errno(status);
@@ -795,7 +800,8 @@ static size_t hv_iommu_unmap(struct iommu_domain *immdom, unsigned long iova,
 
 	unmapped = hv_iommu_del_mappings(hvdom, iova, size);
 	if (unmapped < size)
-		return 0;
+		pr_err("%s: could not delete all mappings (%lx:%lx/%lx)\n",
+		       __func__, iova, unmapped, size);
 
 	npages = size >> HV_HYP_PAGE_SHIFT;
 
@@ -940,7 +946,7 @@ static void hv_iommu_get_resv_regions(struct device *dev,
 		intel_iommu_get_resv_regions(dev, head);
 		break;
 	default:
-		break;  /* Do nothing */;
+		break;	/* Do nothing */;
 	}
 }
 
@@ -952,22 +958,22 @@ static int hv_iommu_def_domain_type(struct device *dev)
 
 static struct iommu_ops hv_iommu_ops = {
 	.capable	    = hv_iommu_capable,
-	.domain_alloc       = hv_iommu_domain_alloc,
-	.probe_device       = hv_iommu_probe_device,
+	.domain_alloc	    = hv_iommu_domain_alloc,
+	.probe_device	    = hv_iommu_probe_device,
 	.probe_finalize     = hv_iommu_probe_finalize,
 	.release_device     = hv_iommu_release_device,
 	.def_domain_type    = hv_iommu_def_domain_type,
-	.device_group       = hv_iommu_device_group,
+	.device_group	    = hv_iommu_device_group,
 	.get_resv_regions   = hv_iommu_get_resv_regions,
 	.default_domain_ops = &(const struct iommu_domain_ops) {
-		.attach_dev = hv_iommu_attach_dev,
-		.map          = hv_iommu_map,
-		.unmap        = hv_iommu_unmap,
+		.attach_dev   = hv_iommu_attach_dev,
+		.map	      = hv_iommu_map,
+		.unmap	      = hv_iommu_unmap,
 		.iova_to_phys = hv_iommu_iova_to_phys,
-		.free         = hv_iommu_domain_free,
+		.free	      = hv_iommu_domain_free,
 	},
-	.pgsize_bitmap      = HV_IOMMU_PGSIZES,
-	.owner              = THIS_MODULE,
+	.pgsize_bitmap	    = HV_IOMMU_PGSIZES,
+	.owner		    = THIS_MODULE,
 };
 
 static void __init hv_initalize_resv_regions_intel(void)
@@ -1060,8 +1066,6 @@ void __init hv_iommu_detect(void)
 	x86_init.iommu.iommu_init = hv_iommu_init;
 
 	pci_request_acs();
-
-	return;
 }
 
 #endif /* CONFIG_HYPERV_ROOT_PVIOMMU */
