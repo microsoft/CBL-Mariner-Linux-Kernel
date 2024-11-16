@@ -500,6 +500,11 @@ struct mshv_get_set_vp_state {
 
 #define MSHV_CREATE_DEVICE_TEST		1
 
+enum {
+	MSHV_DEV_TYPE_VFIO,
+	MSHV_DEV_TYPE_MAX,
+};
+
 struct mshv_create_device {
 	__u32	type;	/* in: MSHV_DEV_TYPE_xxx */
 	__u32	fd;	/* out: device handle */
@@ -509,12 +514,6 @@ struct mshv_create_device {
 #define MSHV_DEV_VFIO_FILE		1
 #define MSHV_DEV_VFIO_FILE_ADD	1
 #define MSHV_DEV_VFIO_FILE_DEL	2
-
-enum mshv_device_type {
-	MSHV_DEV_TYPE_VFIO,
-#define MSHV_DEV_TYPE_VFIO		MSHV_DEV_TYPE_VFIO
-	MSHV_DEV_TYPE_MAX,
-};
 
 struct mshv_device_attr {
 	__u32	flags;		/* no flags currently defined */
