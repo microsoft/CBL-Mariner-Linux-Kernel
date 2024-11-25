@@ -21,6 +21,7 @@
 #include <linux/crash_dump.h>
 #include <asm/processor.h>
 #include <asm/hypervisor.h>
+#include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
 #include <asm/desc.h>
 #include <asm/idtentry.h>

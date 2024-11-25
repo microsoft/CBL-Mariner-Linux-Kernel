@@ -11,6 +11,7 @@
 
 
 #include <linux/types.h>
+#include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
 #include <asm/tlbflush.h>
 
