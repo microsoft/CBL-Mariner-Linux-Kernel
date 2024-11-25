@@ -15,6 +15,7 @@
 #include <linux/arm-smccc.h>
 #include <linux/module.h>
 #include <asm-generic/bug.h>
+#include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
 
 /*

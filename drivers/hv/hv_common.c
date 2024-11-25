@@ -27,6 +27,7 @@
 #include <linux/set_memory.h>
 #include <linux/reboot.h>
 #include <linux/notifier.h>
+#include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
 
 /*
