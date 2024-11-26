@@ -12,9 +12,9 @@
 #include <linux/irq.h>
 #include <asm/mshyperv.h>
 
-static int hv_map_interrupt(union hv_device_id device_id, bool level,
-			    int cpu, int vector,
-			    struct hv_interrupt_entry *ret_entry)
+static int hv_map_interrupt_hcall(u64 ptid, union hv_device_id device_id,
+				  bool level, int cpu, int vector,
+				  struct hv_interrupt_entry *ret_entry)
 {
 	struct hv_input_map_device_interrupt *input;
 	struct hv_output_map_device_interrupt *output;
@@ -28,10 +28,11 @@ static int hv_map_interrupt(union hv_device_id device_id, bool level,
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
-	intr_desc = &input->interrupt_descriptor;
 	memset(input, 0, sizeof(*input));
-	input->partition_id = hv_current_partition_id;
+	input->partition_id = ptid;
 	input->device_id = device_id.as_uint64;
+
+	intr_desc = &input->interrupt_descriptor;
 	intr_desc->interrupt_type = HV_X64_INTERRUPT_TYPE_FIXED;
 	intr_desc->vector_count = 1;
 	intr_desc->target.vector = vector;
@@ -63,6 +64,33 @@ static int hv_map_interrupt(union hv_device_id device_id, bool level,
 	*ret_entry = output->interrupt_entry;
 
 	local_irq_restore(flags);
+
+	return status;
+}
+
+static int hv_map_interrupt(u64 ptid, union hv_device_id device_id, bool level,
+			    int cpu, int vector,
+			    struct hv_interrupt_entry *ret_entry)
+{
+	u64 status;
+	int deposit_pgs = 16;		/* don't loop forever */
+
+	while (deposit_pgs--) {
+		status = hv_map_interrupt_hcall(ptid, device_id, level, cpu,
+						vector, ret_entry);
+
+		if (hv_result(status) == HV_STATUS_INSUFFICIENT_MEMORY) {
+			status = hv_call_deposit_pages(NUMA_NO_NODE, ptid, 1);
+			if (!hv_result_success(status)) {
+				pr_err("%s deposit pages failed:%llx\n",
+				       __func__, status);
+				break;
+			}
+			continue;
+		}
+
+		break;
+	};
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
@@ -195,7 +223,7 @@ int hv_map_msi_interrupt(struct irq_data *data,
 	struct irq_cfg *cfg = irqd_cfg(data);
 	const cpumask_t *affinity;
 	int cpu;
-	u64 res;
+	u64 res, ptid;
 
 	msidesc = irq_data_get_msi_desc(data);
 	pdev = msi_desc_to_pci_dev(msidesc);
@@ -203,8 +231,10 @@ int hv_map_msi_interrupt(struct irq_data *data,
 	affinity = irq_data_get_effective_affinity_mask(data);
 	cpu = cpumask_first_and(affinity, cpu_online_mask);
 
+	ptid = hv_current_partition_id;
+
 	/* prints error in case of failure */
-	res = hv_map_interrupt(hv_devid, false, cpu, cfg->vector,
+	res = hv_map_interrupt(ptid, hv_devid, false, cpu, cfg->vector,
 			       out_entry ? out_entry : &dummy);
 
 	return hv_status_to_errno(res);
@@ -395,6 +425,7 @@ int hv_map_ioapic_interrupt(int ioapic_id, bool level, int cpu, int vector,
 	hv_devid.device_type = HV_DEVICE_TYPE_IOAPIC;
 	hv_devid.ioapic.ioapic_id = (u8)ioapic_id;
 
-	return hv_map_interrupt(hv_devid, level, cpu, vector, entry);
+	return hv_map_interrupt(hv_current_partition_id, hv_devid, level, cpu,
+				vector, entry);
 }
 EXPORT_SYMBOL_GPL(hv_map_ioapic_interrupt);
