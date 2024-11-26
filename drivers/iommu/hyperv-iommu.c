@@ -152,7 +152,8 @@ static int __init hyperv_prepare_irq_remapping(void)
 
 	ioapic_ir_domain =
 		irq_domain_create_hierarchy(arch_get_ir_parent_domain(),
-				0, IOAPIC_REMAPPING_ENTRY, fn, ops, NULL);
+					    0, IOAPIC_REMAPPING_ENTRY, fn,
+					    ops, NULL);
 
 	if (!ioapic_ir_domain) {
 		irq_domain_free_fwnode(fn);
@@ -225,8 +226,8 @@ hyperv_root_ir_compose_msi_msg(struct irq_data *irq_data, struct msi_msg *msg)
 		status = hv_unmap_ioapic_interrupt(ioapic_id, &entry);
 
 		if (status != HV_STATUS_SUCCESS)
-			pr_debug("%s: unexpected unmap status %lld\n", __func__,
-				 status);
+			pr_debug("%s: unexpected unmap status 0x%llx\n",
+				 __func__, status);
 
 		data->entry.ioapic_rte.as_uint64 = 0;
 		data->entry.source = 0; /* Invalid source */
@@ -237,7 +238,7 @@ hyperv_root_ir_compose_msi_msg(struct irq_data *irq_data, struct msi_msg *msg)
 					vector, &entry);
 
 	if (status != HV_STATUS_SUCCESS) {
-		pr_err("%s: map hypercall failed, status %lld\n", __func__,
+		pr_err("%s: map hypercall failed, status 0x%llx\n", __func__,
 		       status);
 		return;
 	}
@@ -372,8 +373,8 @@ struct hv_iommu_domain {
 
 	struct hv_input_device_domain device_domain;
 
-	spinlock_t mappings_lock;
-	struct rb_root_cached mappings;
+	spinlock_t mappings_lock;	       /* protects mappings_tree */
+	struct rb_root_cached mappings_tree;   /* iova to pa interval tree */
 
 	u32 map_flags;
 	u64 pgsize_bitmap;
@@ -485,7 +486,7 @@ static struct iommu_domain *hv_iommu_domain_alloc(unsigned int type)
 		goto out;
 
 	spin_lock_init(&hvdom->mappings_lock);
-	hvdom->mappings = RB_ROOT_CACHED;
+	hvdom->mappings_tree = RB_ROOT_CACHED;
 
 	if (type == IOMMU_DOMAIN_DMA &&
 		iommu_get_dma_cookie(&hvdom->immdom)) {
@@ -520,7 +521,8 @@ static struct iommu_domain *hv_iommu_domain_alloc(unsigned int type)
 	local_irq_restore(flags);
 
 	if (!hv_result_success(status)) {
-		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
+		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
+		       status);
 		goto out_free_id;
 	}
 
@@ -561,7 +563,8 @@ static void hv_iommu_domain_free(struct iommu_domain *immdom)
 	local_irq_restore(flags);
 
 	if (!hv_result_success(status))
-		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
+		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
+		       status);
 
 	ida_free(&hvdom->hv_iommu->domain_ids,
 		 hvdom->device_domain.domain_id.id);
@@ -598,7 +601,8 @@ static int hv_iommu_attach_dev(struct iommu_domain *immdom, struct device *dev)
 	local_irq_restore(flags);
 
 	if (!hv_result_success(status))
-		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
+		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
+		       status);
 	else
 		vdev->hvdom = hvdom;
 
@@ -633,14 +637,15 @@ static void hv_iommu_detach_dev(struct iommu_domain *immdom, struct device *dev)
 	local_irq_restore(flags);
 
 	if (!hv_result_success(status))
-		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
+		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
+		       status);
 
 	vdev->hvdom = NULL;
 }
 
-static int hv_iommu_add_mapping(struct hv_iommu_domain *hvdom,
-				unsigned long iova, phys_addr_t paddr,
-				size_t size, u32 flags)
+static int hv_iommu_add_tree_mapping(struct hv_iommu_domain *hvdom,
+				     unsigned long iova, phys_addr_t paddr,
+				     size_t size, u32 flags)
 {
 	unsigned long irqflags;
 	struct hv_iommu_mapping *mapping;
@@ -655,14 +660,14 @@ static int hv_iommu_add_mapping(struct hv_iommu_domain *hvdom,
 	mapping->flags = flags;
 
 	spin_lock_irqsave(&hvdom->mappings_lock, irqflags);
-	interval_tree_insert(&mapping->iova, &hvdom->mappings);
+	interval_tree_insert(&mapping->iova, &hvdom->mappings_tree);
 	spin_unlock_irqrestore(&hvdom->mappings_lock, irqflags);
 
 	return 0;
 }
 
-static size_t hv_iommu_del_mappings(struct hv_iommu_domain *hvdom,
-				    unsigned long iova, size_t size)
+static size_t hv_iommu_del_tree_mappings(struct hv_iommu_domain *hvdom,
+					 unsigned long iova, size_t size)
 {
 	unsigned long flags;
 	size_t unmapped = 0;
@@ -671,7 +676,7 @@ static size_t hv_iommu_del_mappings(struct hv_iommu_domain *hvdom,
 	struct interval_tree_node *node, *next;
 
 	spin_lock_irqsave(&hvdom->mappings_lock, flags);
-	next = interval_tree_iter_first(&hvdom->mappings, iova, last);
+	next = interval_tree_iter_first(&hvdom->mappings_tree, iova, last);
 	while (next) {
 		node = next;
 		mapping = container_of(node, struct hv_iommu_mapping, iova);
@@ -683,7 +688,7 @@ static size_t hv_iommu_del_mappings(struct hv_iommu_domain *hvdom,
 
 		unmapped += mapping->iova.last - mapping->iova.start + 1;
 
-		interval_tree_remove(node, &hvdom->mappings);
+		interval_tree_remove(node, &hvdom->mappings_tree);
 		kfree(mapping);
 	}
 	spin_unlock_irqrestore(&hvdom->mappings_lock, flags);
@@ -741,7 +746,7 @@ static int hv_iommu_map(struct iommu_domain *immdom, unsigned long iova,
 	map_flags = HV_MAP_GPA_READABLE; /* Always required */
 	map_flags |= prot & IOMMU_WRITE ? HV_MAP_GPA_WRITABLE : 0;
 
-	ret = hv_iommu_add_mapping(hvdom, iova, paddr, size, map_flags);
+	ret = hv_iommu_add_tree_mapping(hvdom, iova, paddr, size, map_flags);
 	if (ret)
 		return ret;
 
@@ -782,7 +787,7 @@ static int hv_iommu_map(struct iommu_domain *immdom, unsigned long iova,
 		 * only remove from [0 - done], we need to remove second chunk
 		 * [done+1 - size-1].
 		 */
-		hv_iommu_del_mappings(hvdom, iova, size - done_size);
+		hv_iommu_del_tree_mappings(hvdom, iova, size - done_size);
 		hv_iommu_unmap(immdom, iova - done_size, done_size, NULL);
 	}
 
@@ -798,7 +803,7 @@ static size_t hv_iommu_unmap(struct iommu_domain *immdom, unsigned long iova,
 	struct hv_input_unmap_device_gpa_pages *input;
 	u64 status;
 
-	unmapped = hv_iommu_del_mappings(hvdom, iova, size);
+	unmapped = hv_iommu_del_tree_mappings(hvdom, iova, size);
 	if (unmapped < size)
 		pr_err("%s: could not delete all mappings (%lx:%lx/%lx)\n",
 		       __func__, iova, unmapped, size);
@@ -819,7 +824,8 @@ static size_t hv_iommu_unmap(struct iommu_domain *immdom, unsigned long iova,
 	local_irq_restore(flags);
 
 	if (!hv_result_success(status))
-		pr_err("%s: hypercall failed, status %lld\n", __func__, status);
+		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
+		       status);
 
 	return hv_result_success(status) ? unmapped : 0;
 }
@@ -834,7 +840,7 @@ static phys_addr_t hv_iommu_iova_to_phys(struct iommu_domain *immdom,
 	struct hv_iommu_domain *hvdom = to_hv_iommu_domain(immdom);
 
 	spin_lock_irqsave(&hvdom->mappings_lock, flags);
-	node = interval_tree_iter_first(&hvdom->mappings, iova, iova);
+	node = interval_tree_iter_first(&hvdom->mappings_tree, iova, iova);
 	if (node) {
 		mapping = container_of(node, struct hv_iommu_mapping, iova);
 		paddr = mapping->paddr + (iova - mapping->iova.start);
@@ -866,17 +872,17 @@ static struct iommu_device *hv_iommu_probe_device(struct device *dev)
 			parsed = 0;
 
 			sscanf(pci_devs_to_skip + pos, " (%x:%x:%x.%x) %n",
-				&segment, &bus, &slot, &func, &parsed);
+			       &segment, &bus, &slot, &func, &parsed);
 
 			if (parsed <= 0)
 				break;
 
 			if (pci_domain_nr(pdev->bus) == segment &&
-				pdev->bus->number == bus &&
-				PCI_SLOT(pdev->devfn) == slot &&
-				PCI_FUNC(pdev->devfn) == func) {
+			    pdev->bus->number == bus &&
+			    PCI_SLOT(pdev->devfn) == slot &&
+			    PCI_FUNC(pdev->devfn) == func) {
 
-				dev_info(dev, "skipped by MSHV IOMMU\n");
+				dev_info(dev, "skipped by Hyper-V IOMMU\n");
 				return ERR_PTR(-ENODEV);
 			}
 
@@ -952,7 +958,7 @@ static void hv_iommu_get_resv_regions(struct device *dev,
 
 static int hv_iommu_def_domain_type(struct device *dev)
 {
-	/* The hypervisor has created a default passthrough domain */
+	/* hypervisor always creates this by default during boot */
 	return IOMMU_DOMAIN_IDENTITY;
 }
 
@@ -1043,7 +1049,7 @@ int __init hv_iommu_init(void)
 		pr_err("iommu_device_register failed: %d\n", ret);
 		goto err_sysfs_remove;
 	}
-	pr_info("Microsoft Hypervisor IOMMU initialized\n");
+	pr_info("Hyper-V IOMMU initialized\n");
 
 	return 0;
 
