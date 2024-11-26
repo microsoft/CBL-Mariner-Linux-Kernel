@@ -2142,8 +2142,6 @@ enum hv_vp_dispatch_event {
 };
 
 #define HV_ROOT_SCHEDULER_MAX_VPS_PER_CHILD_PARTITION	1024
-/* The maximum array size of HV_GENERIC_SET (vp_set) buffer */
-#define HV_GENERIC_SET_QWORD_COUNT(max) (((((max) - 1) >> 6) + 1) + 2)
 
 struct hv_vp_signal_bitset_scheduler_message {
 	__u64 partition_id;
