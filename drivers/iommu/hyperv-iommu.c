@@ -459,6 +459,32 @@ static bool is_null_hvdomain(struct hv_iommu_domain *d)
  */
 #define HV_IOMMU_PGSIZES (SZ_4K | SZ_1M)
 
+/*
+ * If the current thread is a VMM thread, return the partition id of the vm it
+ * is managing, other wise return HV_PARTITION_ID_INVALID.
+ */
+u64 hv_iommu_get_curr_partid(void)
+{
+	u64 (*fn)(pid_t pid);
+	u64 partid;
+
+	fn = symbol_get(mshv_pid_to_partid);
+	if (!fn)
+		return HV_PARTITION_ID_INVALID;
+
+	partid = fn(current->tgid);
+	symbol_put(mshv_pid_to_partid);
+
+	return partid;
+
+}
+
+/* If this is a VMM thread, then this domain is for a guest vm */
+static bool hv_curr_thread_is_vmm(void)
+{
+	return hv_iommu_get_curr_partid() != HV_PARTITION_ID_INVALID;
+}
+
 bool hv_iommu_capable(struct device *dev, enum iommu_cap cap)
 {
 	switch (cap) {

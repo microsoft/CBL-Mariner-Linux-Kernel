@@ -120,7 +120,7 @@ struct mshv_partition {
 
 	/*
 	 * Since MSHV does not support more than one async hypercall in flight
-	 * for a single partition. Thus, it is okay to define per partition
+	 * for a single partition, it is okay to define per partition
 	 * async hypercall status.
 	 */
 	struct completion async_hypercall;
@@ -135,6 +135,7 @@ struct mshv_partition {
 
 	struct mshv_girq_routing_table __rcu *pt_girq_tbl;
 	u64 isolation_type;
+	pid_t pt_vmm_tgid;
 	bool import_completed;
 	bool pt_initialized;
 #ifdef CONFIG_DEBUG_FS
