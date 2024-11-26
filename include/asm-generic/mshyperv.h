@@ -350,6 +350,7 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
 int hv_sleep_notifiers_register(void);
 int hv_retrieve_scheduler_type(enum hv_scheduler_type *out);
 void hv_identify_partition_type(void);
+u64 mshv_pid_to_partid(pid_t tgid);
 
 #if IS_ENABLED(CONFIG_MSHV_ROOT) && defined(CONFIG_KEXEC_CORE)
 void hv_root_crash_init(void);
