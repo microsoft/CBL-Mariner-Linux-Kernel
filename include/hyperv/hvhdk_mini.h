@@ -669,8 +669,7 @@ union hv_device_id {		/* HV_DEVICE_ID */
 	} acpi;
 } __packed;
 
-/* HV_INPUT_ATTACH_DEVICE */
-struct hv_input_attach_device {
+struct hv_input_attach_device {         /* HV_INPUT_ATTACH_DEVICE */
 	__u64 partition_id;
 	union hv_device_id device_id;
 	union hv_attdev_flags attdev_flags;
@@ -691,9 +690,10 @@ struct hv_input_detach_device {		/* HV_INPUT_DETACH_DEVICE */
 } __packed;
 
 
-#define HV_DEVICE_DOMAIN_TYPE_S2  0 /* Stage 2 domain */
-#define HV_DEVICE_DOMAIN_TYPE_S1  1 /* Stage 1 domain */
-#define HV_DEVICE_DOMAIN_TYPE_SOC 2 /* SOC domain */
+/* 3 domain types: stage 1, stage 2, and SOC */
+#define HV_DEVICE_DOMAIN_TYPE_S2  0 /* HV_DEVICE_DOMAIN_ID_TYPE_S2 */
+#define HV_DEVICE_DOMAIN_TYPE_S1  1 /* HV_DEVICE_DOMAIN_ID_TYPE_S1 */
+#define HV_DEVICE_DOMAIN_TYPE_SOC 2 /* HV_DEVICE_DOMAIN_ID_TYPE_SOC */
 
 /* ID for stage 2 default domain and NULL domain */
 #define HV_DEVICE_DOMAIN_ID_S2_DEFAULT 0
