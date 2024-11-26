@@ -41,8 +41,6 @@
 
 static cpumask_t ioapic_max_cpumask = { CPU_BITS_NONE };
 static struct irq_domain *ioapic_ir_domain;
-static size_t hv_iommu_unmap(struct iommu_domain *d, unsigned long iova,
-			     size_t size, struct iommu_iotlb_gather *gather);
 
 static int hyperv_ir_set_affinity(struct irq_data *data,
 		const struct cpumask *mask, bool force)
@@ -355,16 +353,19 @@ static const struct irq_domain_ops hyperv_root_ir_domain_ops = {
 
 #ifdef CONFIG_HYPERV_ROOT_PVIOMMU
 
+static size_t hv_iommu_unmap(struct iommu_domain *d, unsigned long iova,
+			     size_t size, struct iommu_iotlb_gather *gather);
+
 /* The IOMMU will not claim these PCI devices. */
 static char *pci_devs_to_skip;
-static int __init mshv_iommu_setup_skip(char *str)
+static int __init hv_iommu_setup_skip(char *str)
 {
 	pci_devs_to_skip = str;
 
 	return 0;
 }
-/* mshv_iommu_skip=(SSSS:BB:DD.F)(SSSS:BB:DD.F) */
-__setup("mshv_iommu_skip=", mshv_iommu_setup_skip);
+/* hv_iommu_skip=(SSSS:BB:DD.F)(SSSS:BB:DD.F) */
+__setup("hv_iommu_skip=", hv_iommu_setup_skip);
 
 /* DMA remapping support */
 struct hv_iommu_domain {
@@ -379,12 +380,6 @@ struct hv_iommu_domain {
 	u32 map_flags;
 	u64 pgsize_bitmap;
 };
-
-/* What hardware IOMMU? */
-enum {
-	INVALID = 0,
-	INTEL, /* Only Intel for now */
-} hw_iommu_type = { INVALID };
 
 static struct hv_iommu_domain hv_identity_domain, hv_null_domain;
 
@@ -455,6 +450,14 @@ static bool is_null_hvdomain(struct hv_iommu_domain *d)
 {
 	return d->device_domain.domain_id.id == HV_DEVICE_DOMAIN_ID_S2_NULL;
 }
+
+/*
+ * We are required to report the contiguous ram chunks or page sizes (.map vs
+ * .map_pages in iommu_ops) that our virtual iommu device can handle. Since the
+ * relevant hypercalls can only fit less than 512 PFNs in the pfn array, we
+ * report 1M max.
+ */
+#define HV_IOMMU_PGSIZES (SZ_4K | SZ_1M)
 
 bool hv_iommu_capable(struct device *dev, enum iommu_cap cap)
 {
@@ -934,21 +937,14 @@ static struct iommu_group *hv_iommu_device_group(struct device *dev)
 		return generic_device_group(dev);
 }
 
-/*
- * This bitmap is used to advertise the page sizes our hardware support to the
- * IOMMU core, which will then use this information to split physically
- * contiguous memory regions it is mapping into page sizes that we support.
- *
- * SZ_1M because at present we can only fit less than 512 PFNs in a page for
- * hypercalls.
- */
-#define HV_IOMMU_PGSIZES (SZ_4K | SZ_1M)
-
 static void hv_iommu_get_resv_regions(struct device *dev,
 		struct list_head *head)
 {
-	switch (hw_iommu_type) {
-	case INTEL:
+	if (hv_l1vh_partition())
+		return;
+
+	switch (boot_cpu_data.x86_vendor) {
+	case X86_VENDOR_INTEL:
 		intel_iommu_get_resv_regions(dev, head);
 		break;
 	default:
@@ -988,23 +984,24 @@ static void __init hv_initalize_resv_regions_intel(void)
 
 	down_write(&dmar_global_lock);
 	if (dmar_table_init(false, true)) {
-		pr_err("Failed to initialize DMAR table\n");
+		pr_err("Hyper-V: Failed to initialize DMAR table\n");
 		up_write(&dmar_global_lock);
 		return;
 	}
 
 	ret = dmar_dev_scope_init();
 	if (ret)
-		pr_err("Failed to initialize device scope\n");
+		pr_err("Hyper-V: Failed to initialize device scope\n");
 
 	up_write(&dmar_global_lock);
-
-	hw_iommu_type = INTEL;
 }
 
 static void __init hv_initialize_resv_regions(void)
 {
-	hv_initalize_resv_regions_intel();
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
+		hv_initalize_resv_regions_intel();
+	else
+		pr_err("Hyper-V: No PV-iommu support for this platform\n");
 }
 
 int __init hv_iommu_init(void)
