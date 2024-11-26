@@ -579,11 +579,11 @@ union hv_attdev_flags {		/* HV_ATTACH_DEVICE_FLAGS */
 
 union hv_dev_pci_caps {		/* HV_DEVICE_PCI_CAPABILITIES */
 	struct {
-		__u32 max_pasid_width : 1;
-		__u32 invalidate_qdepth : 1;
+		__u32 max_pasid_width : 5;
+		__u32 invalidate_qdepth : 5;
 		__u32 global_inval : 1;
 		__u32 prg_response_req : 1;
-		__u32 resvd : 24;
+		__u32 resvd : 20;
 	} __packed;
 	__u32 as_uint32;
 };

@@ -70,6 +70,11 @@ struct hv_u128 {
 #define HV_PARTITION_ID_INVALID		((__u64) 0)
 #define HV_PARTITION_ID_SELF		((__u64)-1)
 
+#define MSHV_MAX_VPS    256       /* HV_MAXIMUM_PROCESSORS */
+
+/* The maximum array size of HV_GENERIC_SET (vp_set) buffer */
+#define HV_GENERIC_SET_QWORD_COUNT(max) (((((max) - 1) >> 6) + 1) + 2)
+
 
 /* Hyper-V specific model specific registers (MSRs) */
 
