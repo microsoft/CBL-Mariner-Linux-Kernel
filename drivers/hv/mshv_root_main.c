@@ -2773,6 +2773,20 @@ mshv_partition_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+/* Given a process id, return partition id if it is a partition vmm process */
+u64 mshv_pid_to_partid(pid_t tgid)
+{
+	struct mshv_partition *pt;
+	int i;
+
+	hash_for_each_rcu(mshv_root.pt_htable, i, pt, pt_hnode)
+		if (pt->pt_vmm_tgid == tgid)
+			return pt->pt_id;
+
+	return HV_PARTITION_ID_INVALID;
+}
+EXPORT_SYMBOL_GPL(mshv_pid_to_partid);
+
 static int
 add_partition(struct mshv_partition *partition)
 {
@@ -2883,6 +2897,8 @@ mshv_ioctl_create_partition(void __user *user_arg, struct device *module_dev)
 	}
 
 	fd_install(fd, file);
+
+	partition->pt_vmm_tgid = current->tgid;
 
 	trace_mshv_create_partition(ret, partition->pt_id, fd);
 
