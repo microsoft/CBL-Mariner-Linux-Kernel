@@ -613,8 +613,13 @@ enum hv_interrupt_type {
 union hv_synic_sint {
 	__u64 as_uint64;
 	struct {
+#if defined(__aarch64__)
+		__u64 vector : 5;
+		__u64 reserved1 : 11;
+#else
 		__u64 vector : 8;
 		__u64 reserved1 : 8;
+#endif
 		__u64 masked : 1;
 		__u64 auto_eoi : 1;
 		__u64 polling : 1;
