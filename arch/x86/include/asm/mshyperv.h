@@ -275,12 +275,16 @@ struct irq_domain *hv_create_pci_msi_domain(void);
 
 int hv_map_msi_interrupt(struct irq_data *data,
 			 struct hv_interrupt_entry *out_entry);
+int hv_unmap_msi_interrupt(struct pci_dev *dev,
+			   struct hv_interrupt_entry *hvirqe);
 int hv_map_ioapic_interrupt(int ioapic_id, bool level, int vcpu, int vector,
 		struct hv_interrupt_entry *entry);
 int hv_unmap_ioapic_interrupt(int ioapic_id, struct hv_interrupt_entry *entry);
 u64 hv_build_devid_oftype(struct pci_dev *pdev, enum hv_device_type type);
 u64 hv_pci_vmbus_device_id(struct pci_dev *pdev);
 bool hv_pcidev_is_attached_dev(struct pci_dev *pdev);
+u64 hv_iommu_get_curr_partid(void);
+void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg);
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 bool hv_ghcb_negotiate_protocol(void);

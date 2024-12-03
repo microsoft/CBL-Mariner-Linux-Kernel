@@ -663,16 +663,18 @@ static void hv_irq_retarget_interrupt(struct irq_data *data)
 
 	params = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	memset(params, 0, sizeof(*params));
-	params->partition_id = HV_PARTITION_ID_SELF;
+
+	if (hv_pcidev_is_attached_dev(pdev))
+		params->partition_id = hv_iommu_get_curr_partid();
+	else
+		params->partition_id = HV_PARTITION_ID_SELF;
+
 	params->int_entry.source = HV_INTERRUPT_SOURCE_MSI;
 	params->int_entry.msi_entry.address.as_uint32 =
 						int_desc->address & 0xffffffff;
 	params->int_entry.msi_entry.data.as_uint32 = int_desc->data;
-	params->device_id = (hbus->hdev->dev_instance.b[5] << 24) |
-			   (hbus->hdev->dev_instance.b[4] << 16) |
-			   (hbus->hdev->dev_instance.b[7] << 8) |
-			   (hbus->hdev->dev_instance.b[6] & 0xf8) |
-			   PCI_FUNC(pdev->devfn);
+
+	params->device_id = hv_pci_vmbus_device_id(pdev);
 	params->int_target.vector = hv_msi_get_int_vector(data);
 
 	/*
@@ -1387,10 +1389,12 @@ static struct pci_ops hv_pcifront_ops = {
 	.write = hv_pcifront_write_config,
 };
 
+#ifdef CONFIG_X86
 static bool hv_vmbus_pci_device(struct pci_bus *pbus)
 {
 	return pbus->ops == &hv_pcifront_ops;
 }
+#endif /* CONFIG_X86 */
 
 /*
  * Paravirtual backchannel
@@ -1692,14 +1696,22 @@ static void hv_msi_free(struct irq_domain *domain, struct msi_domain_info *info,
 	if (!int_desc)
 		return;
 
-	irq_data->chip_data = NULL;
 	hpdev = get_pcichild_wslot(hbus, devfn_to_wslot(pdev->devfn));
 	if (!hpdev) {
+		irq_data->chip_data = NULL;
 		kfree(int_desc);
 		return;
 	}
 
-	hv_int_desc_free(hpdev, int_desc);
+	if (hv_pcidev_is_attached_dev(pdev)) {
+		hv_unmap_msi_interrupt(pdev, irq_data->chip_data);
+		kfree(irq_data->chip_data);
+		irq_data->chip_data = NULL;
+	} else {
+		irq_data->chip_data = NULL;
+		hv_int_desc_free(hpdev, int_desc);
+	}
+
 	put_pcichild(hpdev);
 }
 
@@ -1853,6 +1865,42 @@ static u32 hv_compose_msi_req_v3(
 	int_pkt->int_desc.processor_count = 1;
 
 	return sizeof(*int_pkt);
+}
+
+/* Compose an msi message for a directly attached device */
+static void hv_dda_compose_msi_msg(struct irq_data *irq_data,
+				   struct msi_desc *msi_desc,
+				   struct msi_msg *msg)
+{
+	bool multi_msi;
+	struct hv_pcibus_device *hbus;
+	struct hv_pci_dev *hpdev;
+	struct pci_dev *pdev = msi_desc_to_pci_dev(msi_desc);
+
+	multi_msi = !msi_desc->pci.msi_attrib.is_msix &&
+		    msi_desc->nvec_used > 1;
+
+	if (multi_msi) {
+		dev_err(&hbus->hdev->device,
+			"Passthru direct attach does not support multi msi\n");
+		goto outerr;
+	}
+
+	hbus = container_of(pdev->bus->sysdata, struct hv_pcibus_device,
+			    sysdata);
+
+	hpdev = get_pcichild_wslot(hbus, devfn_to_wslot(pdev->devfn));
+	if (!hpdev)
+		goto outerr;
+
+	/* will unmap if needed, and also update irq_data->chip_data */
+	hv_irq_compose_msi_msg(irq_data, msg);
+
+	put_pcichild(hpdev);
+	return;
+
+outerr:
+	memset(msg, 0, sizeof(*msg));
 }
 
 /**
@@ -2102,6 +2150,21 @@ return_null_message:
 	msg->data = 0;
 }
 
+static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
+{
+	struct pci_dev *pdev;
+	struct msi_desc *msi_desc;
+
+	msi_desc = irq_data_get_msi_desc(data);
+	pdev = msi_desc_to_pci_dev(msi_desc);
+
+	if (hv_pcidev_is_attached_dev(pdev))
+		hv_dda_compose_msi_msg(data, msi_desc, msg);
+	else
+		hv_vmbus_compose_msi_msg(data, msg);
+}
+
+
 static int hv_irq_set_affinity(struct irq_data *data,
 			       const struct cpumask *dest, bool force)
 {
@@ -2117,7 +2180,7 @@ static int hv_irq_set_affinity(struct irq_data *data,
 /* HW Interrupt Chip Descriptor */
 static struct irq_chip hv_msi_irq_chip = {
 	.name			= "Hyper-V PCIe MSI",
-	.irq_compose_msi_msg	= hv_vmbus_compose_msi_msg,
+	.irq_compose_msi_msg	= hv_compose_msi_msg,
 	.irq_set_affinity	= hv_irq_set_affinity,
 #ifdef CONFIG_X86
 	.irq_ack		= irq_chip_ack_parent,
@@ -4056,7 +4119,7 @@ static int hv_pci_restore_msi_msg(struct pci_dev *pdev, void *arg)
 			break;
 		}
 
-		hv_vmbus_compose_msi_msg(irq_data, &entry->msg);
+		hv_compose_msi_msg(irq_data, &entry->msg);
 	}
 	msi_unlock_descs(&pdev->dev);
 

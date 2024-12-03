@@ -20,6 +20,7 @@
 
 #include <linux/types.h>
 #include <linux/arm-smccc.h>
+#include <linux/errno.h>
 #include <asm-generic/hyperv-defs.h>
 
 extern u64 hv_current_partition_id;
@@ -60,7 +61,16 @@ static inline bool hv_should_clear_interrupt(enum hv_interrupt_type type)
 	return 0;
 }
 
+struct irq_data;
+struct msi_msg;
 struct pci_dev;
+static inline void hv_irq_compose_msi_msg(struct irq_data *data,
+					  struct msi_msg *msg) {};
+static inline int hv_unmap_msi_interrupt(struct pci_dev *pdev,
+					struct hv_interrupt_entry *hvirqe)
+{
+	return -EOPNOTSUPP;
+}
 static inline bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
 {
 	return false;
