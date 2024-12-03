@@ -12,6 +12,15 @@
 #include <linux/irq.h>
 #include <asm/mshyperv.h>
 
+/*
+ * Currently, direct attach must use logical device type and vice versa. Since
+ * vfio needs to bind irq at the very start before we know guest cpu/irq, we
+ * pick some default cpu/irq, and after the VM starts retarget will move it
+ * to relevant cpu and irq.
+ */
+#define HV_LOGDEV_DEF_CPU 0
+#define HV_LOGDEV_DEF_IRQ 32
+
 static int hv_map_interrupt_hcall(u64 ptid, union hv_device_id device_id,
 				  bool level, int cpu, int vector,
 				  struct hv_interrupt_entry *ret_entry)
@@ -27,6 +36,11 @@ static int hv_map_interrupt_hcall(u64 ptid, union hv_device_id device_id,
 
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	if (device_id.device_type == HV_DEVICE_TYPE_LOGICAL) {
+		cpu = HV_LOGDEV_DEF_CPU;
+		vector = HV_LOGDEV_DEF_IRQ;
+	}
 
 	memset(input, 0, sizeof(*input));
 	input->partition_id = ptid;
@@ -112,7 +126,12 @@ static int hv_unmap_interrupt(union hv_device_id hv_devid,
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
 	memset(input, 0, sizeof(*input));
-	input->partition_id = hv_current_partition_id;
+
+	if (hv_devid.device_type == HV_DEVICE_TYPE_LOGICAL)
+		input->partition_id = hv_iommu_get_curr_partid();
+	else
+		input->partition_id = hv_current_partition_id;
+
 	input->device_id = hv_devid.as_uint64;
 	intr_entry = &input->interrupt_entry;
 	*intr_entry = *hvirqe;
@@ -280,7 +299,14 @@ int hv_map_msi_interrupt(struct irq_data *data,
 	cpu = cpumask_first_and(affinity, cpu_online_mask);
 	hv_devid.as_uint64 = hv_build_irq_devid(pdev);
 
-	ptid = hv_current_partition_id;
+	if (hv_devid.device_type == HV_DEVICE_TYPE_LOGICAL)
+		if (hv_pcidev_is_attached_dev(pdev))
+			ptid = hv_iommu_get_curr_partid();
+		else
+			/* Device actually on l1vh dom0, not passthru'd to vm */
+			ptid = hv_current_partition_id;
+	else
+		ptid = hv_current_partition_id;
 
 	/* prints error in case of failure */
 	res = hv_map_interrupt(ptid, hv_devid, false, cpu, cfg->vector,
@@ -290,8 +316,8 @@ int hv_map_msi_interrupt(struct irq_data *data,
 }
 EXPORT_SYMBOL_GPL(hv_map_msi_interrupt);
 
-static inline void entry_to_msi_msg(struct hv_interrupt_entry *hvirqe,
-				    struct msi_msg *msi)
+static void entry_to_msi_msg(struct hv_interrupt_entry *hvirqe,
+			     struct msi_msg *msi)
 {
 	/* High address is always 0 */
 	msi->address_hi = 0;
@@ -299,10 +325,7 @@ static inline void entry_to_msi_msg(struct hv_interrupt_entry *hvirqe,
 	msi->data = hvirqe->msi_entry.data.as_uint32;
 }
 
-static int hv_unmap_msi_interrupt(struct pci_dev *pdev,
-				  struct hv_interrupt_entry *hvirqe);
-
-static void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
+void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 {
 	struct msi_desc *msidesc;
 	struct pci_dev *pdev;
@@ -356,9 +379,10 @@ static void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	data->chip_data = stored_entry;
 	entry_to_msi_msg(data->chip_data, msg);
 }
+EXPORT_SYMBOL_GPL(hv_irq_compose_msi_msg);
 
-static int hv_unmap_msi_interrupt(struct pci_dev *pdev,
-				  struct hv_interrupt_entry *hvirqe)
+int hv_unmap_msi_interrupt(struct pci_dev *pdev,
+			   struct hv_interrupt_entry *hvirqe)
 {
 	union hv_device_id hv_devid;
 
@@ -386,7 +410,7 @@ static void hv_teardown_msi_irq(struct pci_dev *pdev, struct irq_data *irqd)
 	status = hv_unmap_msi_interrupt(pdev, &old_entry);
 
 	if (status != HV_STATUS_SUCCESS)
-		pr_err("%s: hypercall failed, status 0x%llx irq:%d\n",
+		pr_err("%s: hypercall failed, status:0x%llx irq:%d\n",
 		       __func__, status, irqd->irq);
 }
 
