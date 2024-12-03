@@ -1423,7 +1423,7 @@ static void
 mshv_region_evict_pages(struct mshv_mem_region *region,
 			u64 page_offset, u64 page_count)
 {
-	if (region->flags.range_pinned)
+	if (region->flags.memreg_isram)
 		unpin_user_pages(region->pages + page_offset, page_count);
 
 	memset(region->pages + page_offset, 0,
@@ -1436,6 +1436,7 @@ mshv_region_evict(struct mshv_mem_region *region)
 	mshv_region_evict_pages(region, 0, region->nr_pages);
 }
 
+/* Note: at present, entire guest ram is pinned */
 static int
 mshv_region_populate_pages(struct mshv_mem_region *region,
 			   u64 page_offset, u64 page_count)
@@ -1464,7 +1465,7 @@ mshv_region_populate_pages(struct mshv_mem_region *region,
 		 * with the FOLL_LONGTERM flag does a large temporary
 		 * allocation of contiguous memory.
 		 */
-		if (region->flags.range_pinned)
+		if (region->flags.memreg_isram)
 			ret = pin_user_pages_fast(userspace_addr,
 						  nr_pages,
 						  FOLL_WRITE | FOLL_LONGTERM,
@@ -1555,7 +1556,7 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 
 	/* Note: large_pages flag populated when we pin the pages */
 	if (!is_mmio)
-		region->flags.range_pinned = true;
+		region->flags.memreg_isram = true;
 
 	region->partition = partition;
 

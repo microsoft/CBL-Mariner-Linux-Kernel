@@ -87,7 +87,7 @@ struct mshv_mem_region {
 	u32 hv_map_flags;
 	struct {
 		u64 large_pages:  1; /* 2MiB */
-		u64 range_pinned: 1;
+		u64 memreg_isram: 1; /* mem region can be ram or mmio */
 		u64 reserved:	 62;
 	} flags;
 	struct mshv_partition *partition;
