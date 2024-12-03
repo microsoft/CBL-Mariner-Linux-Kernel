@@ -34,6 +34,14 @@
 #include "mshv.h"
 #include "mshv_root.h"
 
+bool hv_nofull_mmio;	 /* don't map entire mmio region upon fault */
+static int __init setup_hv_full_mmio(char *str)
+{
+	hv_nofull_mmio = true;
+	return 0;
+}
+__setup("hv_nofull_mmio", setup_hv_full_mmio);
+
 struct mshv_root mshv_root = {};
 
 enum hv_scheduler_type hv_scheduler_type;
@@ -50,6 +58,8 @@ static int mshv_vp_mmap(struct file *file, struct vm_area_struct *vma);
 static vm_fault_t mshv_vp_fault(struct vm_fault *vmf);
 static int mshv_init_async_handler(struct mshv_partition *partition);
 static void mshv_async_hvcall_handler(void *data, u64 *status);
+static struct mshv_mem_region
+	*mshv_partition_region_by_gfn(struct mshv_partition *pt, u64 gfn);
 
 static const struct vm_operations_struct mshv_vp_vm_ops = {
 	.fault = mshv_vp_fault,
@@ -331,6 +341,85 @@ free_return:
 	kfree(registers);
 	return ret;
 }
+
+/*
+ * Check if uaddr is for mmio range. If yes, return 0 with mmio_pfn filled in
+ * else return -errno.
+ */
+static int mshv_chk_get_mmio_start_pfn(u64 uaddr, u64 *mmio_pfnp)
+{
+	struct vm_area_struct *vma;
+	bool is_mmio;
+	ulong mmio_pfn;
+
+	mmap_read_lock(current->mm);
+	vma = vma_lookup(current->mm, uaddr);
+	is_mmio = vma ? !!(vma->vm_flags & (VM_IO | VM_PFNMAP)) : 0;
+	mmio_pfn = is_mmio ? vma->vm_pgoff : 0;
+	mmap_read_unlock(current->mm);
+
+	if (vma == NULL)
+		return -EINVAL;
+
+	*mmio_pfnp = mmio_pfn;
+	return 0;
+}
+
+#ifdef CONFIG_X86
+
+/* Returns: True if valid mmio intercept and it was handled, else false */
+static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
+{
+	struct hv_message *hvmsg = vp->vp_intercept_msg_page;
+	struct hv_x64_memory_intercept_message *msg;
+	union hv_x64_memory_access_info accinfo;
+	u64 gfn, mmio_spa, numpgs;
+	struct mshv_mem_region *reg;
+	struct mshv_partition *pt = vp->vp_partition;
+	int rc;
+
+	msg = (struct hv_x64_memory_intercept_message *)hvmsg->u.payload;
+	accinfo = msg->memory_access_info;
+
+	if (!accinfo.gva_gpa_valid)
+		return false;
+
+	gfn = msg->guest_physical_address >> HV_HYP_PAGE_SHIFT;
+	reg = mshv_partition_region_by_gfn(pt, gfn);
+	if (reg == NULL || reg->flags.memreg_isram)
+		return false;
+
+	rc = mshv_chk_get_mmio_start_pfn(reg->start_uaddr, &mmio_spa);
+	if (rc)
+		return false;
+
+	if (!hv_nofull_mmio) {
+		gfn = reg->start_gfn;
+		numpgs = reg->nr_pages;
+	} else {
+		mmio_spa += gfn - reg->start_gfn; /* offset into the region */
+		numpgs = 1;
+	}
+
+	/* mapping happens upfront for non attached, ie, mapped devices */
+	if (hv_no_attdev)
+		vp_err(vp, "warn: delayed mmio fault for hv_no_attdev\n");
+
+	rc = hv_call_map_mmio_pages(pt->pt_id, gfn, mmio_spa, numpgs);
+
+	return rc == 0;
+}
+
+#else   /* CONFIG_X86 */
+
+bool hv_no_attdev = true;       /* no direct attach on arm */
+
+static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
+{
+	return false;
+}
+
+#endif  /* CONFIG_X86 */
 
 /*
  * Explicit guest vCPU suspend is asynchronous by nature (as it is requested by
@@ -654,24 +743,30 @@ static_assert(sizeof(struct hv_message) <= MSHV_RUN_VP_BUF_SZ,
 static long mshv_vp_ioctl_run_vp(struct mshv_vp *vp, void __user *ret_msg)
 {
 	long rc;
+	u32 msg_type;
 	char *schednm;
 
 	schednm = hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT ? "root" : "hv";
 	trace_mshv_run_vp_entry(vp->vp_partition->pt_id, vp->vp_index, schednm);
 
-	if (hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT)
-		rc = mshv_run_vp_with_root_scheduler(vp);
-	else
-		rc = mshv_run_vp_with_hyp_scheduler(vp);
+	while (true) {
+		if (hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT)
+			rc = mshv_run_vp_with_root_scheduler(vp);
+		else
+			rc = mshv_run_vp_with_hyp_scheduler(vp);
+
+		msg_type = vp->vp_intercept_msg_page->header.message_type;
+		if (rc == 0 && msg_type == HVMSG_UNMAPPED_GPA)
+			if (mshv_handle_gpa_intercept(vp))
+				continue;
+		break;
+	}
 
 	trace_mshv_run_vp_exit(rc, vp->vp_partition->pt_id, vp->vp_index,
 			       vp->vp_intercept_msg_page->header.message_type);
 
-	if (rc)
-		return rc;
-
-	if (copy_to_user(ret_msg, vp->vp_intercept_msg_page,
-			 sizeof(struct hv_message)))
+	if (rc == 0 && copy_to_user(ret_msg, vp->vp_intercept_msg_page,
+				    sizeof(struct hv_message)))
 		rc = -EFAULT;
 
 	return rc;
@@ -1642,33 +1737,29 @@ mshv_map_user_memory(struct mshv_partition *partition,
 		     struct mshv_user_mem_region mem)
 {
 	struct mshv_mem_region *region;
-	struct vm_area_struct *vma;
-	bool is_mmio;
-	ulong mmio_pfn;
+	u64 mmio_pfn;
 	long ret;
 
 	if (mem.flags & BIT(MSHV_SET_MEM_BIT_UNMAP) ||
 	    !access_ok((const void *)mem.userspace_addr, mem.size))
 		return -EINVAL;
 
-	mmap_read_lock(current->mm);
-	vma = vma_lookup(current->mm, mem.userspace_addr);
-	is_mmio = vma ? !!(vma->vm_flags & (VM_IO | VM_PFNMAP)) : 0;
-	mmio_pfn = is_mmio ? vma->vm_pgoff : 0;
-	mmap_read_unlock(current->mm);
-
-	if (vma == NULL)
-		return -EINVAL;
-
-	ret = mshv_partition_create_region(partition, &mem, &region,
-					   is_mmio);
+	ret = mshv_chk_get_mmio_start_pfn(mem.userspace_addr, &mmio_pfn);
 	if (ret)
 		return ret;
 
-	if (is_mmio)
-		ret = hv_call_map_mmio_pages(partition->pt_id, mem.guest_pfn,
-					     mmio_pfn, HVPFN_DOWN(mem.size));
-	else
+	ret = mshv_partition_create_region(partition, &mem, &region,
+					   !!mmio_pfn);
+	if (ret)
+		return ret;
+
+	if (mmio_pfn) {
+		/* for attached devices, mapping happens on demand */
+		if (hv_no_attdev)
+			ret = hv_call_map_mmio_pages(partition->pt_id,
+						     mem.guest_pfn, mmio_pfn,
+						     HVPFN_DOWN(mem.size));
+	} else
 		ret = mshv_partition_mem_region_map(region);
 
 	if (ret)
