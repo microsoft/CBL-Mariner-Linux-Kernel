@@ -8,6 +8,7 @@
 #ifndef __LINUX_MSHV_EVENTFD_H
 #define __LINUX_MSHV_EVENTFD_H
 
+#include <linux/irqbypass.h>
 #include <linux/poll.h>
 
 #include "mshv.h"
@@ -37,6 +38,9 @@ struct mshv_irqfd {
 	struct mshv_irqfd_resampler	    *irqfd_resampler;
 	struct eventfd_ctx		    *irqfd_resamplefd;
 	struct hlist_node		     irqfd_resampler_hnode;
+	struct irq_bypass_consumer	     irqfd_bypass_cons;
+	struct irq_bypass_producer	    *irqfd_bypass_prod;
+	bool				     irqfd_passthru_dev;
 };
 
 void mshv_eventfd_init(struct mshv_partition *partition);

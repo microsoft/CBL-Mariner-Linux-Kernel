@@ -67,6 +67,7 @@ config MSHV
 	tristate "Microsoft Hypervisor VMM interfaces: /dev/mshv"
 	depends on HYPERV
 	select EVENTFD
+	select IRQ_BYPASS_MANAGER
 	default n
 	help
 	  Select this option to enable core functionality for managing guest
