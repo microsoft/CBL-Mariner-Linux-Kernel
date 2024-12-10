@@ -2096,6 +2096,20 @@ struct hv_input_set_vp_state {
 	union hv_input_set_vp_state_data data[];
 } __packed;
 
+struct hv_input_get_vp_set_from_mda {   /* HV_OUTPUT_GET_VP_SET_FROM_MDA */
+	__u64 target_partid;
+	__u64 dest_address;
+	__u8  input_vtl;
+	__u8  destmode_logical;         /* true => mode is logical */
+	__u16 reserved0;                /* mbz */
+	__u32 reserved1;                /* mbz */
+} __packed;
+
+union hv_output_get_vp_set_from_mda {  /* HV_OUTPUT_GET_VP_SET_FROM_MDA */
+	struct hv_vpset target_vpset;
+	__u64 bitset_buffer[HV_GENERIC_SET_QWORD_COUNT(MSHV_MAX_VPS)];
+} __packed;
+
 #endif /* __x86_64__ */
 
 /*

@@ -285,6 +285,7 @@ u64 hv_pci_vmbus_device_id(struct pci_dev *pdev);
 bool hv_pcidev_is_attached_dev(struct pci_dev *pdev);
 u64 hv_iommu_get_curr_partid(void);
 void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg);
+extern bool hv_no_attdev;
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 bool hv_ghcb_negotiate_protocol(void);
