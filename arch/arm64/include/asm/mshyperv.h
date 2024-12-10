@@ -76,6 +76,8 @@ static inline bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
 	return false;
 }
 
+extern bool hv_no_attdev;
+
 /* SMCCC hypercall parameters */
 #define HV_SMCCC_FUNC_NUMBER	1
 #define HV_FUNC_ID	ARM_SMCCC_CALL_VAL(			\
