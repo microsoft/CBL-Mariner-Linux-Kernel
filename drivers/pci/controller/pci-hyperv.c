@@ -581,6 +581,8 @@ static void hv_pci_onchannelcallback(void *context);
 #define FLOW_HANDLER	handle_edge_irq
 #define FLOW_NAME	"edge"
 
+static bool hv_vmbus_pci_device(struct pci_bus *pbus);
+
 static int hv_pci_irqchip_init(void)
 {
 	return 0;
@@ -599,6 +601,26 @@ static unsigned int hv_msi_get_int_vector(struct irq_data *data)
 }
 
 #define hv_msi_prepare		pci_msi_prepare
+
+u64 hv_pci_vmbus_device_id(struct pci_dev *pdev)
+{
+	u64 u64val;
+	struct hv_pcibus_device *hbus;
+	struct pci_bus *pbus = pdev->bus;
+
+	if (!hv_vmbus_pci_device(pbus))
+		return 0;
+
+	hbus = container_of(pbus->sysdata, struct hv_pcibus_device, sysdata);
+	u64val = (hbus->hdev->dev_instance.b[5] << 24) |
+		 (hbus->hdev->dev_instance.b[4] << 16) |
+		 (hbus->hdev->dev_instance.b[7] << 8) |
+		 (hbus->hdev->dev_instance.b[6] & 0xf8) |
+		 PCI_FUNC(pdev->devfn);
+
+	return u64val;
+}
+EXPORT_SYMBOL_GPL(hv_pci_vmbus_device_id);
 
 /**
  * hv_irq_retarget_interrupt() - "Unmask" the IRQ by setting its current
@@ -1364,6 +1386,11 @@ static struct pci_ops hv_pcifront_ops = {
 	.read  = hv_pcifront_read_config,
 	.write = hv_pcifront_write_config,
 };
+
+static bool hv_vmbus_pci_device(struct pci_bus *pbus)
+{
+	return pbus->ops == &hv_pcifront_ops;
+}
 
 /*
  * Paravirtual backchannel
