@@ -142,7 +142,7 @@ static int get_rid_cb(struct pci_dev *pdev, u16 alias, void *data)
 	return 0;
 }
 
-union hv_device_id hv_build_pci_dev_id(struct pci_dev *pdev)
+static u64 hv_build_devid_type_pci(struct pci_dev *pdev)
 {
 	int pos;
 	union hv_device_id dev_id;
@@ -190,8 +190,7 @@ union hv_device_id hv_build_pci_dev_id(struct pci_dev *pdev)
 			u8 sec_bus, sub_bus;
 
 			dev_id.pci.source_shadow =
-					     HV_SOURCE_SHADOW_BRIDGE_BUS_RANGE;
-
+					      HV_SOURCE_SHADOW_BRIDGE_BUS_RANGE;
 			pci_read_config_byte(data.bridge, PCI_SECONDARY_BUS,
 					     &sec_bus);
 			dev_id.pci.shadow_bus_range.secondary_bus = sec_bus;
@@ -202,9 +201,59 @@ union hv_device_id hv_build_pci_dev_id(struct pci_dev *pdev)
 	}
 
 out:
-	return dev_id;
+	return dev_id.as_uint64;
 }
-EXPORT_SYMBOL_GPL(hv_build_pci_dev_id);
+
+/* Build device id for direct attached devices */
+static u64 hv_build_devid_type_logical(struct pci_dev *pdev)
+{
+	hv_pci_segment segment;
+	union hv_device_id hv_devid;
+	union hv_pci_bdf bdf = {.as_uint16 = 0};
+	struct rid_data data = {
+		.bridge = NULL,
+		.rid = PCI_DEVID(pdev->bus->number, pdev->devfn)
+	};
+
+	segment = pci_domain_nr(pdev->bus);
+	bdf.bus = PCI_BUS_NUM(data.rid);
+	bdf.device = PCI_SLOT(data.rid);
+	bdf.function = PCI_FUNC(data.rid);
+
+	hv_devid.as_uint64 = 0;
+	hv_devid.device_type = HV_DEVICE_TYPE_LOGICAL;
+	hv_devid.logical.id = (u64)segment << 16 | bdf.as_uint16;
+
+	return hv_devid.as_uint64;
+}
+
+/* Build device id after the device has been attached */
+u64 hv_build_devid_oftype(struct pci_dev *pdev, enum hv_device_type type)
+{
+	if (type == HV_DEVICE_TYPE_LOGICAL) {
+		if (hv_l1vh_partition())
+			return hv_pci_vmbus_device_id(pdev);
+		else
+			return hv_build_devid_type_logical(pdev);
+	} else if (type == HV_DEVICE_TYPE_PCI)
+		return hv_build_devid_type_pci(pdev);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hv_build_devid_oftype);
+
+/* Build device id for the interrupt path */
+static u64 hv_build_irq_devid(struct pci_dev *pdev)
+{
+	enum hv_device_type dev_type;
+
+	if (hv_pcidev_is_attached_dev(pdev) || hv_l1vh_partition())
+		dev_type = HV_DEVICE_TYPE_LOGICAL;
+	else
+		dev_type = HV_DEVICE_TYPE_PCI;
+
+	return hv_build_devid_oftype(pdev, dev_type);
+}
 
 /**
  * hv_map_msi_interrupt() - "Map" the MSI IRQ in the hypervisor.
@@ -227,9 +276,9 @@ int hv_map_msi_interrupt(struct irq_data *data,
 
 	msidesc = irq_data_get_msi_desc(data);
 	pdev = msi_desc_to_pci_dev(msidesc);
-	hv_devid = hv_build_pci_dev_id(pdev);
 	affinity = irq_data_get_effective_affinity_mask(data);
 	cpu = cpumask_first_and(affinity, cpu_online_mask);
+	hv_devid.as_uint64 = hv_build_irq_devid(pdev);
 
 	ptid = hv_current_partition_id;
 
@@ -313,7 +362,7 @@ static int hv_unmap_msi_interrupt(struct pci_dev *pdev,
 {
 	union hv_device_id hv_devid;
 
-	hv_devid = hv_build_pci_dev_id(pdev);
+	hv_devid.as_uint64 = hv_build_irq_devid(pdev);
 
 	return hv_unmap_interrupt(hv_devid, hvirqe);
 }
