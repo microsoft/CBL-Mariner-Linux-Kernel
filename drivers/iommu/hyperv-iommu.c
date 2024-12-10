@@ -464,6 +464,16 @@ static bool hv_iommu_capable(struct device *dev, enum iommu_cap cap)
 	}
 }
 
+/*
+ * Check if given pci device is a direct attached device. caller must have
+ * verified pdev is a valid pci device
+ */
+bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
+{
+	return false;
+}
+EXPORT_SYMBOL_GPL(hv_pcidev_is_attached_dev);
+
 /* Create a new device domain in the hypervisor */
 static int hv_iommu_create_hyp_devdom(struct hv_domain *hvdom)
 {
@@ -584,6 +594,7 @@ static int hv_iommu_att_dev2dom(struct hv_domain *hvdom, struct pci_dev *pdev)
 {
 	unsigned long flags;
 	u64 status;
+	enum hv_device_type dev_type;
 	struct hv_input_attach_device_domain *input;
 
 	local_irq_save(flags);
@@ -594,7 +605,8 @@ static int hv_iommu_att_dev2dom(struct hv_domain *hvdom, struct pci_dev *pdev)
 	input->device_domain.domain_id.type = HV_DEVICE_DOMAIN_TYPE_S2;
 	input->device_domain.domain_id.id = hvdom->domid_num;
 
-	input->device_id = hv_build_pci_dev_id(pdev);
+	dev_type = HV_DEVICE_TYPE_PCI;
+	input->device_id.as_uint64 = hv_build_devid_oftype(pdev, dev_type);
 
 	status = hv_do_hypercall(HVCALL_ATTACH_DEVICE_DOMAIN, input, NULL);
 	local_irq_restore(flags);
@@ -659,7 +671,7 @@ static void hv_iommu_det_dev_from_dom(struct hv_domain *hvdom,
 	unsigned long flags;
 	struct hv_input_detach_device_domain *input;
 
-	devid = hv_build_pci_dev_id(pdev).as_uint64;
+	devid = hv_build_devid_oftype(pdev, HV_DEVICE_TYPE_PCI);
 
 	local_irq_save(flags);
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
