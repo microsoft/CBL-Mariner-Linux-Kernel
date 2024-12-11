@@ -134,16 +134,24 @@ static inline unsigned long get_trans_granule(void)
  * [BADDR, BADDR + (NUM + 1) * 2^(5*SCALE + 1) * PAGESIZE)
  *
  */
-#define __TLBI_VADDR_RANGE(addr, asid, scale, num, ttl)		\
-	({							\
-		unsigned long __ta = (addr) >> PAGE_SHIFT;	\
-		__ta &= GENMASK_ULL(36, 0);			\
-		__ta |= (unsigned long)(ttl) << 37;		\
-		__ta |= (unsigned long)(num) << 39;		\
-		__ta |= (unsigned long)(scale) << 44;		\
-		__ta |= get_trans_granule() << 46;		\
-		__ta |= (unsigned long)(asid) << 48;		\
-		__ta;						\
+#define TLBIR_ASID_MASK		GENMASK_ULL(63, 48)
+#define TLBIR_TG_MASK		GENMASK_ULL(47, 46)
+#define TLBIR_SCALE_MASK	GENMASK_ULL(45, 44)
+#define TLBIR_NUM_MASK		GENMASK_ULL(43, 39)
+#define TLBIR_TTL_MASK		GENMASK_ULL(38, 37)
+#define TLBIR_BADDR_MASK	GENMASK_ULL(36,  0)
+
+#define __TLBI_VADDR_RANGE(baddr, asid, scale, num, ttl)		\
+	({								\
+		unsigned long __ta = 0;					\
+		unsigned long __ttl = (ttl >= 1 && ttl <= 3) ? ttl : 0;	\
+		__ta |= FIELD_PREP(TLBIR_BADDR_MASK, baddr);		\
+		__ta |= FIELD_PREP(TLBIR_TTL_MASK, __ttl);		\
+		__ta |= FIELD_PREP(TLBIR_NUM_MASK, num);		\
+		__ta |= FIELD_PREP(TLBIR_SCALE_MASK, scale);		\
+		__ta |= FIELD_PREP(TLBIR_TG_MASK, get_trans_granule());	\
+		__ta |= FIELD_PREP(TLBIR_ASID_MASK, asid);		\
+		__ta;							\
 	})
 
 /* These macros are used by the TLBI RANGE feature. */
@@ -402,7 +410,7 @@ do {									\
 #define __flush_s2_tlb_range_op(op, start, pages, stride, tlb_level) \
 	__flush_tlb_range_op(op, start, pages, stride, 0, tlb_level, false)
 
-static inline void __flush_tlb_range(struct vm_area_struct *vma,
+static inline void __flush_tlb_range_nosync(struct vm_area_struct *vma,
 				     unsigned long start, unsigned long end,
 				     unsigned long stride, bool last_level,
 				     int tlb_level)
@@ -417,11 +425,11 @@ static inline void __flush_tlb_range(struct vm_area_struct *vma,
 	 * When not uses TLB range ops, we can handle up to
 	 * (MAX_TLBI_OPS - 1) pages;
 	 * When uses TLB range ops, we can handle up to
-	 * (MAX_TLBI_RANGE_PAGES - 1) pages.
+	 * MAX_TLBI_RANGE_PAGES pages.
 	 */
 	if ((!system_supports_tlb_range() &&
 	     (end - start) >= (MAX_TLBI_OPS * stride)) ||
-	    pages >= MAX_TLBI_RANGE_PAGES) {
+	    pages > MAX_TLBI_RANGE_PAGES) {
 		flush_tlb_mm(vma->vm_mm);
 		return;
 	}
@@ -434,8 +442,17 @@ static inline void __flush_tlb_range(struct vm_area_struct *vma,
 	else
 		__flush_tlb_range_op(vae1is, start, pages, stride, asid, tlb_level, true);
 
-	dsb(ish);
 	mmu_notifier_arch_invalidate_secondary_tlbs(vma->vm_mm, start, end);
+}
+
+static inline void __flush_tlb_range(struct vm_area_struct *vma,
+				     unsigned long start, unsigned long end,
+				     unsigned long stride, bool last_level,
+				     int tlb_level)
+{
+	__flush_tlb_range_nosync(vma, start, end, stride,
+				 last_level, tlb_level);
+	dsb(ish);
 }
 
 static inline void flush_tlb_range(struct vm_area_struct *vma,
