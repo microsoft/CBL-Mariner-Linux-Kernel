@@ -18,6 +18,7 @@
 #include <linux/mmu_context.h>
 #include <linux/bsearch.h>
 #include <linux/sync_core.h>
+#include <linux/heki.h>
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -586,9 +587,13 @@ static int patch_retpoline(void *addr, struct insn *insn, u8 *bytes)
 	retpoline_thunk_t *target;
 	int reg, ret, i = 0;
 	u8 op, cc;
+	struct heki_kinfo *kinfo = current->kinfo;
 
 	target = addr + insn->length + insn->immediate.value;
-	reg = target - __x86_indirect_thunk_array;
+	if (kinfo)
+		reg = target - kinfo->arch.indirect_thunk_array_addr;
+	else
+		reg = target - __x86_indirect_thunk_array;
 
 	if (WARN_ON_ONCE(reg & ~0xf))
 		return -1;
