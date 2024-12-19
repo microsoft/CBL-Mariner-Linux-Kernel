@@ -7,6 +7,7 @@
 
 #include <linux/heki.h>
 #include <linux/mem_attr.h>
+#include <linux/kallsyms.h>
 
 #ifdef pr_fmt
 #undef pr_fmt
@@ -80,4 +81,6 @@ void heki_load_arch_kinfo(struct heki_kinfo *kinfo)
 	arch_kinfo->pv_ops = pv_ops;
 	arch_kinfo->pv_bug = paravirt_BUG;
 	arch_kinfo->pv_nop = _paravirt_nop;
+	arch_kinfo->indirect_thunk_array_addr =
+		(retpoline_thunk_t *)kallsyms_lookup_name("__x86_indirect_thunk_array");
 }
