@@ -1967,7 +1967,11 @@ struct mlx5_ifc_cmd_hca_cap_2_bits {
 	u8	   multiplane_qp_ud[0x1];
 	u8	   reserved_at_cb[0x5];
 	u8	   migration_in_chunks[0x1];
-	u8	   reserved_at_d1[0xf];
+	u8	   reserved_at_d1[0x1];
+	u8	   sf_eq_usage[0x1];
+	u8	   reserved_at_d3[0x5];
+	u8	   multiplane[0x1];
+	u8	   reserved_at_d9[0x7];
 
 	u8	   reserved_at_e0[0xc0];
 
