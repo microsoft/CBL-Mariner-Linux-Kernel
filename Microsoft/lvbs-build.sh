@@ -3,6 +3,7 @@
 set -e
 ARTIFACT=""
 kernel_src_dir=""
+kernel_version=""
 install_image=false
 sign_image=false
 
@@ -48,6 +49,10 @@ while (( "$#" )); do
            fi
 	   shift 2
 	   ;;
+	-k | --kernel_ver)
+	   kernel_version=$2
+	   shift 2
+	   ;;
         -h|--help)
            help
            exit
@@ -67,7 +72,10 @@ then
         exit 0;
 fi
 
-kernel_version=$( uname -r | awk -F '[.-]' '{print $1"."$2"."$3"."$4}' )
+if [ -z "$kernel_version" ];
+then
+	kernel_version=$( uname -r | awk -F '[.-]' '{print $1"."$2"."$3"."$4}' )
+fi
 kernel_version=$kernel_version"-lvbs+"
 echo $kernel_version
 
