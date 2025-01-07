@@ -645,11 +645,12 @@ static int mshv_pre_guest_mode_work(struct mshv_vp *vp)
 	while (th_flags & work_flags) {
 		int ret;
 
+		/* nb: following will call schedule */
+		ret = mshv_do_pre_guest_mode_work(th_flags);
+
 		trace_mshv_root_sched_handle_work(ret, vp->vp_partition->pt_id,
 						  vp->vp_index, th_flags);
 
-		/* nb: following will call schedule */
-		ret = mshv_do_pre_guest_mode_work(th_flags);
 		if (ret)
 			return ret;
 
