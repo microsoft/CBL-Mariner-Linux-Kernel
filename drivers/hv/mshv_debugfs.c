@@ -7,12 +7,15 @@
  *
  * Authors:
  *   Stanislav Kinsburskii <skinsburskii@linux.microsoft.com>
+ *   Microsoft Linux Virtualization team
  */
 
 #include <linux/debugfs.h>
 #include <linux/stringify.h>
+#include <linux/crash_dump.h>
 #include <asm/mshyperv.h>
 #include <linux/slab.h>
+#include "hv_tf_api.h"
 
 #include "mshv.h"
 #include "mshv_root.h"
@@ -1071,6 +1074,74 @@ void mshv_debugfs_partition_remove(struct mshv_partition *partition)
 				 partition->pt_debugfs_stats_dentry);
 }
 
+struct hv_tf_test_info {
+	struct hv_tf_input_command command;
+	struct hv_input_tf_testcase testcase;
+	struct hv_tf_input_kd_trigger_exception trigger_exception;
+} __packed;
+
+static int mshv_debugfs_do_hvcore(void)
+{
+	unsigned long flags;
+	u64 status;
+	struct hv_input_invoke_tf *input;
+	struct hv_tf_test_info *tinfo, test_info = { 0 };
+
+	if (is_kdump_kernel())
+		return -EPERM;
+
+	/* See: DbgHvCrashTests::CrashHypervisor */
+	tinfo = &test_info;
+	tinfo->command.type = 2;	/* TfTypeTestcase */;
+	tinfo->command.command = 2;	/* TfCmdMethod */
+	tinfo->testcase.id = HV_TEST_KD_TRIGGER_EXCEPTION;
+	tinfo->trigger_exception.exception_type = 0;	/* bugcheck */
+	tinfo->trigger_exception.parameter1 = 0xffff;
+
+	/* See TfpInvokeTestFrameworkHyperCall */
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	memset(input, 0, sizeof(*input));
+	input->input_buffer_gva = (__u64)tinfo;
+	input->input_buffer_size = sizeof(*tinfo);
+	status = hv_do_hypercall(HVCALL_INVOKE_TEST_FRAMEWORK, input, NULL);
+
+	local_irq_restore(flags);
+	pr_err("hvcore: hypercall returned status: %llx\n", status);
+
+	return hv_status_to_errno(status);
+}
+
+static int hv_hvdbg_write(void *data, u64 val)
+{
+	const unsigned long HVCORE = 0x4856434f5245ULL;	 /* "HVCORE" */
+	int rc = -EOPNOTSUPP;
+
+	if (val == HVCORE)
+		rc = mshv_debugfs_do_hvcore();
+
+	return rc;
+}
+
+DEFINE_DEBUGFS_ATTRIBUTE(hv_hvdbg_fops, NULL, hv_hvdbg_write, "%llx");
+
+static int __init mshv_debugfs_hvdbg_create(struct dentry *parent)
+{
+	struct dentry *dentry;
+	int err = 0;
+
+	dentry = debugfs_create_file("hvdbg", 0200, parent, NULL,
+				     &hv_hvdbg_fops);
+	if (IS_ERR(dentry)) {
+		err = PTR_ERR(dentry);
+		pr_err("%s: failed to create mshv hvdbg dentry: %d\n",
+		       __func__, err);
+	}
+
+	return err;
+}
+
 int __init mshv_debugfs_init(void)
 {
 	int err;
@@ -1082,6 +1153,10 @@ int __init mshv_debugfs_init(void)
 	}
 
 	if (hv_root_partition()) {
+		err = mshv_debugfs_hvdbg_create(mshv_debugfs);
+		if (err)
+			goto remove_mshv_dir;
+
 		err = mshv_debugfs_hv_stats_create(mshv_debugfs);
 		if (err)
 			goto remove_mshv_dir;
