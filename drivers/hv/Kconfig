@@ -63,29 +63,18 @@ config HYPERV_NONTLFS_HEADERS
 	  This options specifies whether the kernel will be built
 	  with hyper-tlfs.h or not. If unsure, say N.
 
-config MSHV
-	tristate "Microsoft Hypervisor VMM interfaces: /dev/mshv"
-	depends on HYPERV
-	select EVENTFD
-	select IRQ_BYPASS_MANAGER
-	default n
-	help
-	  Select this option to enable core functionality for managing guest
-	  virtual machines running under the Microsoft Hypervisor.
-
-	  The interfaces are provided via a device named /dev/mshv.
-
-	  To compile this as a module, choose M here.
-
-	  If unsure, say N.
-
 config MSHV_ROOT
 	tristate "Microsoft Hyper-V root partition APIs driver"
-	depends on MSHV
+	depends on HYPERV
 	select HYPERV_NONTLFS_HEADERS
+	select EVENTFD
+	select IRQ_BYPASS_MANAGER
 	help
-	  Select this option to provide /dev/mshv interfaces specific to
-	  running as the root partition on Microsoft Hypervisor.
+	  Select this option when running as the root partition on Microsoft
+	  Hypervisor, to enable interfaces for managing guest virtual
+	  machines.
+
+	  The interfaces are provided via a device named /dev/mshv.
 
 	  To compile this as a module, choose M here.
 
