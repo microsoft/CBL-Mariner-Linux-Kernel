@@ -2,14 +2,12 @@
 obj-$(CONFIG_HYPERV)		+= hv_vmbus.o
 obj-$(CONFIG_HYPERV_UTILS)	+= hv_utils.o
 obj-$(CONFIG_HYPERV_BALLOON)	+= hv_balloon.o
-obj-$(CONFIG_MSHV)          += mshv.o
 obj-$(CONFIG_MSHV_ROOT)		+= mshv_root.o
 obj-$(CONFIG_MSHV_DIAG)		+= diag/
 
 CFLAGS_hv_trace.o = -I$(src)
 CFLAGS_hv_balloon.o = -I$(src)
 
-mshv-y		+= mshv_main.o
 mshv_root-y	:= mshv_root_main.o mshv_synic.o mshv_portid_table.o \
 		   mshv_eventfd.o mshv_irq.o mshv_root_hv_call.o mshv_vfio.o
 
