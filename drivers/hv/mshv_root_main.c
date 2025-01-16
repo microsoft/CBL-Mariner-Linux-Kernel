@@ -50,6 +50,9 @@ enum hv_scheduler_type hv_scheduler_type;
 static void __percpu **root_scheduler_input;
 static void __percpu **root_scheduler_output;
 
+static long mshv_dev_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg);
+static int mshv_dev_open(struct inode *inode, struct file *filp);
+static int mshv_dev_release(struct inode *inode, struct file *filp);
 static int mshv_vp_release(struct inode *inode, struct file *filp);
 static long mshv_vp_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg);
 static int mshv_partition_release(struct inode *inode, struct file *filp);
@@ -78,6 +81,21 @@ static const struct file_operations mshv_partition_fops = {
 	.release = mshv_partition_release,
 	.unlocked_ioctl = mshv_partition_ioctl,
 	.llseek = noop_llseek,
+};
+
+static const struct file_operations mshv_dev_fops = {
+	.owner = THIS_MODULE,
+	.open = mshv_dev_open,
+	.release = mshv_dev_release,
+	.unlocked_ioctl = mshv_dev_ioctl,
+	.llseek = noop_llseek,
+};
+
+static struct miscdevice mshv_dev = {
+	.minor = MISC_DYNAMIC_MINOR,
+	.name = "mshv",
+	.fops = &mshv_dev_fops,
+	.mode = 0600,
 };
 
 /*
@@ -3013,6 +3031,32 @@ free_partition:
 	return ret;
 }
 
+static long mshv_dev_ioctl(struct file *filp, unsigned int ioctl,
+			   unsigned long arg)
+{
+	struct miscdevice *misc = filp->private_data;
+
+	switch (ioctl) {
+	case MSHV_CREATE_PARTITION:
+		return mshv_ioctl_create_partition((void __user *)arg,
+						misc->this_device);
+	}
+
+	return -ENOTTY;
+}
+
+static int
+mshv_dev_open(struct inode *inode, struct file *filp)
+{
+	return 0;
+}
+
+static int
+mshv_dev_release(struct inode *inode, struct file *filp)
+{
+	return 0;
+}
+
 static int mshv_cpuhp_online;
 static int mshv_root_sched_online;
 
@@ -3315,20 +3359,6 @@ static void mshv_root_partition_exit(void)
 	root_scheduler_deinit();
 }
 
-static long mshv_dev_ioctl(struct file *filp, unsigned int ioctl,
-			   unsigned long arg)
-{
-	struct miscdevice *misc = filp->private_data;
-
-	switch (ioctl) {
-	case MSHV_CREATE_PARTITION:
-		return mshv_ioctl_create_partition((void __user *)arg,
-						   misc->this_device);
-	}
-
-	return -ENOTTY;
-}
-
 static int __init mshv_root_partition_init(struct device *dev)
 {
 	int err;
@@ -3368,9 +3398,11 @@ int __init mshv_parent_partition_init(void)
 	if (hv_get_hypervisor_version(&version_info))
 		return -ENODEV;
 
-	ret = mshv_set_ioctl_func(mshv_dev_ioctl, &dev);
+	ret = misc_register(&mshv_dev);
 	if (ret)
 		return ret;
+
+	dev = mshv_dev.this_device;
 
 	if (version_info.build_number < MSHV_HV_MIN_VERSION ||
 	    version_info.build_number > MSHV_HV_MAX_VERSION) {
@@ -3384,7 +3416,7 @@ int __init mshv_parent_partition_init(void)
 	if (!mshv_root.synic_pages) {
 		dev_err(dev, "Failed to allocate percpu synic page\n");
 		ret = -ENOMEM;
-		goto unset_func;
+		goto device_deregister;
 	}
 
 	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "mshv_synic",
@@ -3435,8 +3467,8 @@ remove_cpu_state:
 	cpuhp_remove_state(mshv_cpuhp_online);
 free_synic_pages:
 	free_percpu(mshv_root.synic_pages);
-unset_func:
-	mshv_set_ioctl_func(NULL, NULL);
+device_deregister:
+	misc_deregister(&mshv_dev);
 	return ret;
 }
 
@@ -3444,7 +3476,7 @@ void __exit mshv_parent_partition_exit(void)
 {
 	hv_setup_mshv_handler(NULL);
 	mshv_port_table_fini();
-	mshv_set_ioctl_func(NULL, NULL);
+	misc_deregister(&mshv_dev);
 	mshv_vfio_ops_exit();
 	mshv_debugfs_exit();
 	mshv_irqfd_wq_cleanup();

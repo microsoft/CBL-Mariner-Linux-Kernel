@@ -194,12 +194,6 @@ int hv_call_issue_psp_guest_request(
 
 int mshv_do_pre_guest_mode_work(ulong th_flags);
 
-typedef long (*mshv_ioctl_func_t)(struct file *filp,
-				  unsigned int ioctl,
-				  unsigned long arg);
-
-int mshv_set_ioctl_func(const mshv_ioctl_func_t func, struct device **dev);
-
 #if IS_ENABLED(CONFIG_MSHV_DIAG)
 void mshv_trace_buffer_complete(const struct hv_eventlog_message_payload *msg);
 #else
