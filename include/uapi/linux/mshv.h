@@ -186,6 +186,7 @@ struct mshv_create_partition {
 
 /* /dev/mshv */
 #define MSHV_CREATE_PARTITION	_IOW(MSHV_IOCTL, 0x00, struct mshv_create_partition)
+#define MSHV_GET_HOST_PARTITION_PROPERTY _IOR(MSHV_IOCTL, 0x01, u64)
 /* Start nr again from 0x00 - mshv_vtl ioctls won't collide with mshv_root */
 #define MSHV_CREATE_VTL		_IO(MSHV_IOCTL, 0x00)
 #define MSHV_GET_VTL_CAPS	_IOR(MSHV_IOCTL, 0x01, struct mshv_vtl_capabilities)
