@@ -8,3 +8,4 @@ feature/mana/5.15                                  0fab2069072e14b3d2c4f775550f1
 feature/netvsc/5.15                                3238e6fa69a429621de9583f8ca6fb1a2d73f9a4
 feature/cifs/5.15                                  2419bfeb459465e81b24947f8ac2fb4ac0f7289f
 feature/fs-dynamic-note-size/5.15                  cef21c0a14778d3fdffcc61fd949db64a063a52c
+feature/reverts/5.15                               a975ed42ac0c9b7a90b916c14f095d3bbe11eaaf
