@@ -21,7 +21,8 @@ hv_vmbus-$(CONFIG_HYPERV_TESTING)	+= hv_debugfs.o
 hv_utils-y := hv_util.o hv_kvp.o hv_snapshot.o hv_fcopy.o hv_utils_transport.o
 
 # Following modules depend on this file which we just statically link in.
-ifneq ($(CONFIG_MSHV_ROOT)$(CONFIG_MSHV_DIAG)$(CONFIG_MSHV_VTL),)
+ifneq ($(CONFIG_MSHV_ROOT)$(CONFIG_MSHV_DIAG)$(CONFIG_MSHV_VTL)\
+       $(CONFIG_HYPERV_VSM),)
   obj-y += mshv_common.o
 endif
 
