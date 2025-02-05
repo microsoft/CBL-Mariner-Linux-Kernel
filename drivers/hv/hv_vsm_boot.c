@@ -219,22 +219,32 @@ static void __init hv_vsm_add_acpi_e820(struct boot_params *bp)
 	}
 }
 
-static __init void hv_vsm_boot_vtl1(void)
+static __init int hv_vsm_boot_vtl1(void)
 {
 	struct hv_vtlcall_param args = {0};
 	u16 vp_enabled_vtl_set = 0;
 	u8 active_mbec_enabled = 0;
+	int ret;
 
 	args.a0 = 0;
 	args.a1 = (u64)VSM_VA_FROM_PA(PAGE_AT(vsm_skm_pa, VSM_BOOT_PARAMS_PAGE));
 
+	/*
+	 * Kick start vtl1 boot on primary cpu. There is currently no way to exit
+	 * gracefully if this boot is not successful. In case of a failure, primary cpu
+	 * will not return from vtl1 and system will hang.
+	 */
 	hv_vsm_init_vtlcall(&args);
 
-	hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
+	ret = hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
+	if (ret)
+		return ret;
+
 	if (!active_mbec_enabled) {
 		pr_err("Failed to enable MBEC for VP0\n");
 		hv_vsm_mbec_enabled = false;
 	}
+	return 0;
 }
 
 static u64 hv_vsm_establish_shared_page(struct page **page)
@@ -293,6 +303,7 @@ static __init int hv_vsm_boot_sec_vp_thread_fn(void *unused)
 	int cpu = smp_processor_id(), next_cpu;
 	u16 vp_enabled_vtl_set = 0;
 	u8 active_mbec_enabled = 0;
+	int ret;
 
 	if (cpu > (VSM_MAX_BOOT_CPUS - 1)) {
 		pr_err("CPU%d: Secure Kernel currently supports CPUID <= %d.",
@@ -320,7 +331,10 @@ out:
 			cpu, next_cpu);
 	}
 
-	hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
+	ret = hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
+	if (ret)
+		return ret;
+
 	if (!active_mbec_enabled) {
 		pr_err("Failed to enable MBEC for VP%d\n", cpu);
 		hv_vsm_mbec_enabled = false;
@@ -919,8 +933,12 @@ int __init hv_vsm_boot_init(void)
 			hv_vsm_boot_panic = true;
 			goto out;
 		}
-		hv_vsm_get_partition_status(&partition_enabled_vtl_set, &partition_max_vtl,
-					    &partition_mbec_enabled_vtl_set);
+		ret = hv_vsm_get_partition_status(&partition_enabled_vtl_set, &partition_max_vtl,
+						  &partition_mbec_enabled_vtl_set);
+		if (ret) {
+			hv_vsm_boot_panic = true;
+			goto out;
+		}
 		if (!(partition_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
 			pr_err("Tried Enabling Partition VTL 1 and still failed");
 			ret = -EINVAL;
@@ -951,7 +969,11 @@ int __init hv_vsm_boot_init(void)
 			hv_vsm_boot_panic = true;
 			goto out;
 		}
-		hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
+		ret = hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
+		if (ret) {
+			hv_vsm_boot_panic = true;
+			goto out;
+		}
 		if (!(vp_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
 			pr_err("Tried Enabling VP VTL 1 and still failed");
 			ret = -EINVAL;
@@ -964,12 +986,11 @@ int __init hv_vsm_boot_init(void)
 	if (ret)
 		goto out;
 
-	/*
-	 * Kick start vtl1 boot on primary cpu. There is currently no way to exit
-	 * gracefully if this boot is not successful. In case of a failure, primary cpu
-	 * will not return from vtl1 and system will hang.
-	 */
-	hv_vsm_boot_vtl1();
+	ret = hv_vsm_boot_vtl1();
+	if (ret) {
+		hv_vsm_boot_panic = true;
+		goto out;
+	}
 
 	/* Enable VTL1 for secondary processots */
 	ret = hv_vsm_enable_ap_vtl();
