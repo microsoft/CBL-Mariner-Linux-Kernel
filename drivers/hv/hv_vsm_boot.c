@@ -426,53 +426,14 @@ static int __init hv_vsm_enable_partition_vtl(void)
 
 static void __init hv_vsm_reserve_sk_mem(void)
 {
-	void *va_start;
-	struct page **page, **pages;
-	unsigned long long paddr, sk_size;
-	unsigned long size;
-	int i, npages;
-
 	if (!sk_res.start)
 		panic("No memory reserved in cmdline for secure kernel");
 
 	vsm_skm_pa = sk_res.start;
-	vsm_skm_va = 0;
+	vsm_skm_va = phys_to_virt(vsm_skm_pa);
 
-	/* Allocate an array of struct page pointers  */
-	sk_size = sk_res.end - sk_res.start + 1;
-	npages = sk_size >> PAGE_SHIFT;
-	size = sizeof(struct page *) * npages;
-	pages = vmalloc(size);
-
-	if (!pages)
-		panic("Allocating array of struct page pointers failed (Size: %lu)\n",
-		      size);
-	/*
-	 * Convert each page frame number to struct page
-	 * Memory was allocated using memblock_phys_alloc_range() during boot
-	 */
-	page = pages;
-	paddr = vsm_skm_pa;
-	for (i = 0; i < npages; i++) {
-		*page++ = pfn_to_page(paddr >> PAGE_SHIFT);
-		paddr += PAGE_SIZE;
-	}
-
-	/* Map Secure Kernel physical memory into kernel virtual address space */
-	va_start = vmap(pages, npages, VM_MAP, PAGE_KERNEL);
-
-	if (!va_start) {
-		vfree(pages);
-		panic("Memory mapping failed\n");
-	}
-
-	vsm_skm_va = va_start;
-
-	pr_info("secure kernel PA=0x%lx, VA=0x%lx\n",
-		(unsigned long)vsm_skm_pa, (unsigned long)vsm_skm_va);
-
-	memset(vsm_skm_va, 0, sk_size);
-	vfree(pages);
+	pr_info("secure kernel region: %#llx-%#llx (%lld MB)\n",
+		sk_res.start, sk_res.end, resource_size(&sk_res) >> 20);
 }
 
 static void __init hv_vsm_init_cpu(struct hv_init_vp_context *vp_ctx)
@@ -1018,7 +979,6 @@ close_sk_file:
 #endif
 	filp_close(sk, NULL);
 free_mem:
-	vunmap(vsm_skm_va);
 	vsm_skm_pa = 0;
 	kfree(sk_sig_path);
 	kfree(sk_path);
