@@ -41,6 +41,8 @@
 
 /* Number of entries in a page table (all levels) */
 #define VSM_ENTRIES_PER_PT	512
+#define VSM_PMD_SIZE		(VSM_PAGE_SIZE * VSM_ENTRIES_PER_PT)
+
 /* Shifts to compute page table mapping */
 #define VSM_PD_TABLE_SHIFT      21
 #define VSM_PDP_TABLE_SHIFT     30
@@ -60,14 +62,23 @@
  * Secure Kernel memory can be larger than this.
  */
 #define VSM_SK_INITIAL_MAP_SIZE	(16 * 1024 * 1024)
-#define VSM_FIRST_CODE_PAGE    0
-#define VSM_GDT_PAGE           4081
-#define VSM_TSS_PAGE           4083
-#define VSM_PML4E_PAGE         4084
-#define VSM_PDPE_PAGE          4085
-#define VSM_PDE_PAGE           4086
-#define VSM_PTE_0_PAGE         4087
-#define VSM_KERNEL_STACK_PAGE  4095  // 4Kb stack
+#define VSM_SK_PTE_PAGES_COUNT	(ALIGN(VSM_SK_INITIAL_MAP_SIZE, VSM_PMD_SIZE) / VSM_PMD_SIZE)
+
+/* VSM pages */
+enum {
+	VSM_GDT_PAGE,
+	VSM_TSS_PAGE,
+	VSM_PML4E_PAGE,
+	VSM_PDPE_PAGE,
+	VSM_PDE_PAGE,
+	VSM_PTE_PAGES,
+	/* PTE tables consume several pages */
+	VSM_KERNEL_STACK_PAGE = VSM_PTE_PAGES + VSM_SK_PTE_PAGES_COUNT,
+	/* Kernel boot pages */
+	VSM_BOOT_PARAMS_PAGE,
+	VSM_CMDLINE_PAGE,
+	VSM_PAGES_COUNT
+};
 
 #define HV_VTL1_ENABLE_BIT      BIT(1)
 
@@ -215,9 +226,7 @@ static __init void hv_vsm_boot_vtl1(void)
 	u8 active_mbec_enabled = 0;
 
 	args.a0 = 0;
-	args.a1 = (u64)VSM_VA_FROM_PA(vsm_skm_pa) + VSM_BOOTPARAMS_OFFSET;
-
-	pr_info("VSM boot params at %llx (phys:%llx)\n", args.a1, args.a0);
+	args.a1 = (u64)VSM_VA_FROM_PA(PAGE_AT(vsm_skm_pa, VSM_BOOT_PARAMS_PAGE));
 
 	hv_vsm_init_vtlcall(&args);
 
@@ -589,7 +598,7 @@ static void __init hv_vsm_fill_pte_tables(u64 *pde, int pd_index, int num_pte_ta
 
 	/* Fill page tables with entries */
 	for (i = 0; i < num_pte_tables; i++) {
-		pte_pa = PAGE_AT(vsm_skm_pa, VSM_PTE_0_PAGE + i);
+		pte_pa = PAGE_AT(vsm_skm_pa, VSM_PTE_PAGES + i);
 		pte = VSM_NON_LOGICAL_PHYS_TO_VIRT(pte_pa);
 		*(pde + pd_index + i) = pte_pa | VSM_PAGE_PTE_MASK;
 		for (j = 0; j < VSM_ENTRIES_PER_PT; j++) {
@@ -651,10 +660,10 @@ static void __init hv_vsm_init_page_tables(struct hv_init_vp_context *vp_ctx)
 	pr_info("\t\t PML4:   0x%llx\n", pml4e_pa);
 	pr_info("\t\t PDPE:   0x%llx\n", pdpe_pa);
 	pr_info("\t\t PDE:    0x%llx\n", pde_pa);
-	pr_info("\t\t PTE 0: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_0_PAGE));
-	pr_info("\t\t PTE 1: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_0_PAGE + 1));
-	pr_info("\t\t PTE 2: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_0_PAGE + 2));
-	pr_info("\t\t PTE 3: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_0_PAGE + 3));
+	pr_info("\t\t PTE 0: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_PAGES));
+	pr_info("\t\t PTE 1: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_PAGES + 1));
+	pr_info("\t\t PTE 2: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_PAGES + 2));
+	pr_info("\t\t PTE 3: 0x%llx\n", PAGE_AT(vsm_skm_pa, VSM_PTE_PAGES + 3));
 	pr_info("%s: Page Table Dump\n", __func__);
 	pr_info("\t\t Entry: Idx/Lvl - Raw Value\n");
 	hv_vsm_dump_pt(pml4e_pa, 1);
@@ -663,6 +672,11 @@ static void __init hv_vsm_init_page_tables(struct hv_init_vp_context *vp_ctx)
 
 static void __init hv_vsm_arch_init_vp_context(struct hv_init_vp_context *vp_ctx)
 {
+	compiletime_assert(VSM_SK_PTE_PAGES_COUNT <= VSM_ENTRIES_PER_PT,
+			   "VSM page table can't accommodate secure kernel.");
+	compiletime_assert(sizeof(struct boot_params) <= VSM_PAGE_SIZE,
+			   "VSM page can't accommodate boot params.");
+
 	hv_vsm_init_cpu(vp_ctx);
 	hv_vsm_init_gdt(vp_ctx);
 	hv_vsm_init_page_tables(vp_ctx);
@@ -718,14 +732,14 @@ static int verify_vsm_signature(char *buffer, unsigned int buff_size, char *sign
 
 static void __init vsm_build_boot_params(void)
 {
-	struct boot_params *bootparams = vsm_skm_va + VSM_BOOTPARAMS_OFFSET;
-	char *cmdline = vsm_skm_va + VSM_CMDLINE_OFFSET;
-	u64 cmd_line_ptr = (u64)VSM_VA_FROM_PA(vsm_skm_pa + VSM_CMDLINE_OFFSET);
+	struct boot_params *bootparams = PAGE_AT(vsm_skm_va, VSM_BOOT_PARAMS_PAGE);
+	char *cmdline = PAGE_AT(vsm_skm_va, VSM_CMDLINE_PAGE);
+	u64 cmd_line_ptr = (u64)VSM_VA_FROM_PA(PAGE_AT(vsm_skm_pa, VSM_CMDLINE_PAGE));
 	u64 start_phys_mem = sk_res.start;
 	u64 end_phys_mem = sk_res.end + 1;
 	u64 total_mem = max_pfn << PAGE_SHIFT;
 
-	snprintf(cmdline, VSM_CMDLINE_SIZE,
+	snprintf(cmdline, VSM_PAGE_SIZE,
 		 "debug rootwait console=ttyS1,115200 earlyprintk=ttyS1,115200 cpuidle.off=1 cpufreq.off=1 idle=halt initcall_blacklist=do_init_real_mode,sbf_init maxcpus=1 noxsave possible_cpus=%u",
 		 num_possible_cpus());
 

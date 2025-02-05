@@ -13,13 +13,9 @@
 
 /* Secure kernel map (16MB minimum)
  * Region		Offset		Size
- * BOOTPARAMS		0		4KB
- * CMDLINE		4KB		512B
+ * VSM PAGES		0		< 2MB
  * SKERNEL		2MB		16MB+ (based on config)
  */
-#define VSM_BOOTPARAMS_OFFSET		0
-#define VSM_CMDLINE_OFFSET		SZ_4K
-#define VSM_CMDLINE_SIZE		SZ_512
 #define VSM_SK_MIN_BASE_SIZE		SZ_16M
 #define VSM_SKERNEL_OFFSET		SZ_2M
 
