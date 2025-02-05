@@ -95,7 +95,6 @@ static u8 *boot_signal;
 
 bool hv_vsm_boot_success;
 bool hv_vsm_mbec_enabled = true;
-bool hv_vsm_boot_panic;
 
 static int hv_vsm_get_partition_status(u16 *enabled_vtl_set, u8 *max_vtl, u16 *mbec_enabled_vtl_set)
 {
@@ -270,7 +269,6 @@ static __init int hv_vsm_enable_ap_vtl(void)
 	cpu_present_page = hv_vsm_alloc_shared_page();
 	if (IS_ERR(cpu_present_page)) {
 		pr_err("Failed to allocate present cpumask page");
-		hv_vsm_boot_panic = true;
 		return PTR_ERR(cpu_present_page);
 	}
 
@@ -280,10 +278,9 @@ static __init int hv_vsm_enable_ap_vtl(void)
 	args.a1 = page_to_pfn(cpu_present_page);
 
 	ret = hv_vsm_init_vtlcall(&args);
-	if (ret) {
+	if (ret)
 		pr_err("Failed to enable VTL1 for APs. Error %d", ret);
-		hv_vsm_boot_panic = true;
-	}
+
 	__free_page(cpu_present_page);
 	return ret;
 }
@@ -301,7 +298,6 @@ static __init int hv_vsm_boot_sec_vp_thread_fn(void *unused)
 	if (cpu > (VSM_MAX_BOOT_CPUS - 1)) {
 		pr_err("CPU%d: Secure Kernel currently supports CPUID <= %d.",
 		       smp_processor_id(), (VSM_MAX_BOOT_CPUS - 1));
-		hv_vsm_boot_panic = true;
 		return -EINVAL;
 	}
 
@@ -425,11 +421,10 @@ static int __init hv_vsm_enable_partition_vtl(void)
 	hvin->flags.enable_mbec = 1;
 
 	status = hv_do_hypercall(HVCALL_ENABLE_PARTITION_VTL, hvin, NULL);
-	if (hv_result(status)) {
+	if (hv_result(status))
 		pr_err("Enable Partition VTL failed. status=0x%x\n",
 		       hv_result(status));
-		hv_vsm_boot_panic = true;
-	}
+
 	local_irq_restore(flags);
 
 	return hv_result(status);
@@ -785,7 +780,6 @@ static int __init hv_vsm_load_secure_kernel(void)
 	sk_buf = kvmalloc(size_sk, GFP_KERNEL);
 	if (!sk_buf) {
 		pr_err("Unable to allocate memory for copying secure kernel\n");
-		hv_vsm_boot_panic = true;
 		return -ENOMEM;
 	}
 
@@ -793,7 +787,7 @@ static int __init hv_vsm_load_secure_kernel(void)
 	sk_sig_buf = kvmalloc(size_sk_sig, GFP_KERNEL);
 	if (!sk_sig_buf) {
 		pr_err("Unable to allocate memory for copying secure kernel\n");
-		hv_vsm_boot_panic = true;
+		ret = -ENOMEM;
 		goto free_sk;
 	}
 #endif
@@ -801,7 +795,7 @@ static int __init hv_vsm_load_secure_kernel(void)
 	ret = kernel_read(sk, sk_buf, size_sk, &sk->f_pos);
 	if (ret != size_sk) {
 		pr_err("Unable to read vmlinux.bin file\n");
-		hv_vsm_boot_panic = true;
+		ret = -EINVAL;
 		goto free_bufs;
 	}
 
@@ -809,14 +803,13 @@ static int __init hv_vsm_load_secure_kernel(void)
 	ret = kernel_read(sk_sig, sk_sig_buf, size_sk_sig, &sk_sig->f_pos);
 	if (ret != size_sk_sig) {
 		pr_err("Unable to read vmlinux.bin.p7s file\n");
-		hv_vsm_boot_panic = true;
+		ret = -EINVAL;
 		goto free_bufs;
 	}
 
 	ret = verify_vsm_signature(sk_buf, size_sk, sk_sig_buf, size_sk_sig);
 	if (ret) {
 		pr_err("Failed to verify Secure Kernel signature.");
-		hv_vsm_boot_panic = true;
 		goto free_bufs;
 	}
 #endif
@@ -834,24 +827,19 @@ free_sk:
 	return ret;
 }
 
-int __init hv_vsm_boot_init(void)
+static int __init hv_vsm_bootstrap_vtl(void)
 {
-	char *sk_path = NULL, *sk_sig_path = NULL;
-	cpumask_var_t mask;
-	unsigned int boot_cpu;
+	char *sk_path, *sk_sig_path;
 	u16 partition_enabled_vtl_set = 0, partition_mbec_enabled_vtl_set = 0;
 	u16 vp_enabled_vtl_set = 0;
 	u8 partition_max_vtl, active_mbec_enabled = 0;
 	int ret = 0, is_legacy_sk_path = 0;
 
-	hv_vsm_reserve_sk_mem();
-
 	sk_path = kasprintf(GFP_KERNEL, "/lib/modules/%s/secure/vmlinux.bin",
 			    init_utsname()->release);
-	if (!sk_path) {
-		ret = -ENOMEM;
-		goto free_mem;
-	}
+	if (!sk_path)
+		return -ENOMEM;
+
 	sk = filp_open(sk_path, O_RDONLY, 0);
 	if (IS_ERR(sk)) {
 		pr_err("File %s not found, trying %s\n", sk_path, "/usr/lib/firmware/vmlinux.bin");
@@ -860,7 +848,6 @@ int __init hv_vsm_boot_init(void)
 		if (IS_ERR(sk)) {
 			pr_err("File /usr/lib/firmware/vmlinux.bin not found\n");
 			ret = -ENOENT;
-			hv_vsm_boot_panic = true;
 			goto free_mem;
 		}
 	}
@@ -875,40 +862,20 @@ int __init hv_vsm_boot_init(void)
 	if (IS_ERR(sk_sig)) {
 		pr_err("File %s not found\n", sk_sig_path);
 		ret = -ENOENT;
-		hv_vsm_boot_panic = true;
 		goto close_sk_file;
 	}
 #endif
 	ret = hv_vsm_get_code_page_offsets();
 	if (ret) {
 		pr_err("Unable to retrieve vsm page offsets\n");
-		hv_vsm_boot_panic = true;
 		goto close_files;
 	}
-
-	/*
-	 * Copy the current cpu mask and pin rest of the running code to boot cpu.
-	 * Important since we want boot cpu of VTL0 to be the boot cpu for VTL1.
-	 * ToDo: Check if copying and restoring current->cpus_mask is enough
-	 * ToDo: Verify the assumption that cpumask_first(cpu_online_mask) is
-	 * the boot cpu
-	 */
-	if (!alloc_cpumask_var(&mask, GFP_KERNEL)) {
-		pr_err("Could not allocate cpumask");
-		ret = -EINVAL;
-		hv_vsm_boot_panic = true;
-		goto close_files;
-	}
-
-	cpumask_copy(mask, &current->cpus_mask);
-	boot_cpu = cpumask_first(cpu_online_mask);
-	set_cpus_allowed_ptr(current, cpumask_of(boot_cpu));
 
 	/* Check and enable VTL1 at the partition level */
 	ret = hv_vsm_get_partition_status(&partition_enabled_vtl_set, &partition_max_vtl,
 					  &partition_mbec_enabled_vtl_set);
 	if (ret)
-		goto out;
+		goto close_files;
 
 	if (partition_enabled_vtl_set & HV_VTL1_ENABLE_BIT) {
 		pr_info("Partition VTL1 is already enabled\n");
@@ -918,33 +885,28 @@ int __init hv_vsm_boot_init(void)
 			pr_err("Enabling Partition VTL1 failed with status 0x%x\n",
 			       ret);
 			ret = -EINVAL;
-			hv_vsm_boot_panic = true;
-			goto out;
+			goto close_files;
 		}
 		ret = hv_vsm_get_partition_status(&partition_enabled_vtl_set, &partition_max_vtl,
 						  &partition_mbec_enabled_vtl_set);
-		if (ret) {
-			hv_vsm_boot_panic = true;
-			goto out;
-		}
+		if (ret)
+			goto close_files;
 		if (!(partition_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
 			pr_err("Tried Enabling Partition VTL 1 and still failed");
 			ret = -EINVAL;
-			hv_vsm_boot_panic = true;
-			goto out;
+			goto close_files;
 		}
 		if (!partition_mbec_enabled_vtl_set) {
 			pr_err("Tried Enabling Partition MBEC and failed");
 			ret = -EINVAL;
-			hv_vsm_boot_panic = true;
-			goto out;
+			goto close_files;
 		}
 	}
 
 	/* Check and enable VTL1 for the primary virtual processor */
 	ret = hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
 	if (ret)
-		goto out;
+		goto close_files;
 
 	if (vp_enabled_vtl_set & HV_VTL1_ENABLE_BIT) {
 		pr_info("VP VTL1 is already enabled\n");
@@ -954,46 +916,34 @@ int __init hv_vsm_boot_init(void)
 			pr_err("Enabling VP VTL1 failed with status 0x%x\n", ret);
 			/* ToDo: Should we disable VTL1 at partition level in this case */
 			ret = -EINVAL;
-			hv_vsm_boot_panic = true;
-			goto out;
+			goto close_files;
 		}
 		ret = hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
 		if (ret) {
-			hv_vsm_boot_panic = true;
-			goto out;
+			goto close_files;
 		}
 		if (!(vp_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
 			pr_err("Tried Enabling VP VTL 1 and still failed");
 			ret = -EINVAL;
-			hv_vsm_boot_panic = true;
-			goto out;
+			goto close_files;
 		}
 	}
 
 	ret = hv_vsm_load_secure_kernel();
 	if (ret)
-		goto out;
+		goto close_files;
 
 	ret = hv_vsm_boot_vtl1();
-	if (ret) {
-		hv_vsm_boot_panic = true;
-		goto out;
-	}
+	if (ret)
+		goto close_files;
 
-	/* Enable VTL1 for secondary processots */
+	/* Enable VTL1 for secondary processors */
 	ret = hv_vsm_enable_ap_vtl();
 	if (ret)
-		goto out;
+		goto close_files;
 
 	/* Boot secondary processors in VTL1 */
 	ret = hv_vsm_boot_ap_vtl();
-	if (!ret) {
-		hv_vsm_boot_success = true;
-		hv_vsm_init_heki();
-	}
-out:
-	set_cpus_allowed_ptr(current, mask);
-	free_cpumask_var(mask);
 
 close_files:
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
@@ -1002,11 +952,41 @@ close_sk_file:
 #endif
 	filp_close(sk, NULL);
 free_mem:
-	vsm_skm_pa = 0;
 	kfree(sk_sig_path);
 	kfree(sk_path);
+	return ret;
+}
 
-	if (hv_vsm_boot_panic)
+int __init hv_vsm_boot_init(void)
+{
+	cpumask_var_t mask;
+	unsigned int boot_cpu;
+	int ret;
+
+	hv_vsm_reserve_sk_mem();
+
+	/*
+	 * Copy the current cpu mask and pin rest of the running code to boot cpu.
+	 * Important since we want boot cpu of VTL0 to be the boot cpu for VTL1.
+	 * ToDo: Check if copying and restoring current->cpus_mask is enough
+	 * ToDo: Verify the assumption that cpumask_first(cpu_online_mask) is
+	 * the boot cpu
+	 */
+	if (!alloc_cpumask_var(&mask, GFP_KERNEL))
+		panic("Could not allocate cpumask");
+
+	cpumask_copy(mask, &current->cpus_mask);
+	boot_cpu = cpumask_first(cpu_online_mask);
+	set_cpus_allowed_ptr(current, cpumask_of(boot_cpu));
+
+	ret = hv_vsm_bootstrap_vtl();
+	if (ret)
 		panic("VTL1 boot failure caused kernel panic; consult log for more details.\n");
+
+	hv_vsm_boot_success = true;
+	hv_vsm_init_heki();
+
+	set_cpus_allowed_ptr(current, mask);
+	free_cpumask_var(mask);
 	return ret;
 }
