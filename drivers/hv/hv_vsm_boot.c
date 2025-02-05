@@ -7,6 +7,8 @@
  *
  */
 
+#define pr_fmt(fmt) "vsm: " fmt
+
 #include <linux/hyperv.h>
 #include <linux/kthread.h>
 #include <linux/file.h>
@@ -149,7 +151,7 @@ static void hv_vsm_dump_pt(u64 root, int lvl)
 
 static void hv_vsm_dump_secure_kernel_memory(void)
 {
-	pr_info("%s: Dumping Secure Kernel Memory\n", __func__);
+	pr_info("Dumping Secure Kernel Memory\n");
 	print_hex_dump(KERN_INFO, "\t", DUMP_PREFIX_ADDRESS, 32, 4, (void *)vsm_skm_va, 1024, 0);
 }
 #endif
@@ -233,7 +235,7 @@ static u64 hv_vsm_establish_shared_page(struct page **page)
 	*page = alloc_page(GFP_KERNEL);
 
 	if (!(*page)) {
-		pr_err("%s: Unable to establish VTL0-VTL1 shared page\n", __func__);
+		pr_err("Unable to establish VTL0-VTL1 shared page\n");
 		hv_vsm_boot_panic = true;
 		return -ENOMEM;
 	}
@@ -255,7 +257,7 @@ static __init int hv_vsm_enable_ap_vtl(void)
 	cpu_present_mask_pfn = hv_vsm_establish_shared_page(&cpu_present_page);
 
 	if (cpu_present_mask_pfn < 0) {
-		pr_err("%s: Failed to allocate present cpumask page", __func__);
+		pr_err("Failed to allocate present cpumask page");
 		hv_vsm_boot_panic = true;
 	}
 
@@ -266,9 +268,8 @@ static __init int hv_vsm_enable_ap_vtl(void)
 	args.a1 = cpu_present_mask_pfn;
 
 	ret = hv_vsm_init_vtlcall(&args);
-
 	if (ret) {
-		pr_err("%s: Failed to enable VTL1 for APs. Error %d", __func__, ret);
+		pr_err("Failed to enable VTL1 for APs. Error %d", ret);
 		hv_vsm_boot_panic = true;
 	}
 	__free_page(cpu_present_page);
@@ -291,7 +292,7 @@ static __init int hv_vsm_boot_sec_vp_thread_fn(void *unused)
 		return -EINVAL;
 	}
 
-	pr_info("%s: cpu%d entering vtl1 boot thread\n", __func__, cpu);
+	pr_info("cpu%d entering vtl1 boot thread\n", cpu);
 	local_irq_save(flags);
 	while (READ_ONCE(boot_signal[cpu]) != VSM_BOOT_SIGNAL) {
 		if (kthread_should_stop()) {
@@ -306,8 +307,8 @@ out:
 	next_cpu = cpumask_next(cpu, cpu_online_mask);
 	if (next_cpu > 0 && next_cpu < nr_cpu_ids) {
 		wake_up_process(ap_thread[next_cpu]);
-		pr_info("%s: cpu%d exiting vtl1 boot thread. Waking up cpu%d\n",
-			__func__, cpu, next_cpu);
+		pr_info("cpu%d exiting vtl1 boot thread. Waking up cpu%d\n",
+			cpu, next_cpu);
 	}
 
 	hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
@@ -393,7 +394,7 @@ free_sharedpages:
 free_bootsignal:
 	__free_page(boot_signal_page);
 	if (ret)
-		panic("%s: Failed to boot APs for VTL1. Error %d", __func__, ret);
+		panic("Failed to boot APs for VTL1. Error %d", ret);
 	return ret;
 }
 
@@ -413,10 +414,9 @@ static int __init hv_vsm_enable_partition_vtl(void)
 	hvin->flags.enable_mbec = 1;
 
 	status = hv_do_hypercall(HVCALL_ENABLE_PARTITION_VTL, hvin, NULL);
-
 	if (hv_result(status)) {
-		pr_err("%s: Enable Partition VTL failed. status=0x%x\n",
-			    __func__, hv_result(status));
+		pr_err("Enable Partition VTL failed. status=0x%x\n",
+		       hv_result(status));
 		hv_vsm_boot_panic = true;
 	}
 	local_irq_restore(flags);
@@ -433,7 +433,7 @@ static void __init hv_vsm_reserve_sk_mem(void)
 	int i, npages;
 
 	if (!sk_res.start)
-		panic("%s: No memory reserved in cmdline for secure kernel", __func__);
+		panic("No memory reserved in cmdline for secure kernel");
 
 	vsm_skm_pa = sk_res.start;
 	vsm_skm_va = 0;
@@ -445,8 +445,8 @@ static void __init hv_vsm_reserve_sk_mem(void)
 	pages = vmalloc(size);
 
 	if (!pages)
-		panic("%s: Allocating array of struct page pointers failed (Size: %lu)\n",
-		      __func__, size);
+		panic("Allocating array of struct page pointers failed (Size: %lu)\n",
+		      size);
 	/*
 	 * Convert each page frame number to struct page
 	 * Memory was allocated using memblock_phys_alloc_range() during boot
@@ -463,13 +463,13 @@ static void __init hv_vsm_reserve_sk_mem(void)
 
 	if (!va_start) {
 		vfree(pages);
-		panic("%s: Memory mapping failed\n", __func__);
+		panic("Memory mapping failed\n");
 	}
 
 	vsm_skm_va = va_start;
 
-	pr_info("%s: secure kernel PA=0x%lx, VA=0x%lx\n",
-		__func__, (unsigned long)vsm_skm_pa, (unsigned long)vsm_skm_va);
+	pr_info("secure kernel PA=0x%lx, VA=0x%lx\n",
+		(unsigned long)vsm_skm_pa, (unsigned long)vsm_skm_va);
 
 	memset(vsm_skm_va, 0, sk_size);
 	vfree(pages);
@@ -511,7 +511,7 @@ static void __init hv_vsm_init_cpu(struct hv_init_vp_context *vp_ctx)
 	vp_ctx->msr_cr_pat = 0x7040600070406;
 
 #ifdef CONFIG_HYPERV_VSM_DEBUG
-	pr_info("%s : Printing Initial VP Registers..\n", __func__);
+	pr_info("Printing Initial VP Registers..\n");
 	pr_info("\t\t RIP: 0x%llx\n", vp_ctx->rip);
 	pr_info("\t\t CR0: 0x%llx\n", vp_ctx->cr0);
 	pr_info("\t\t CR4: 0x%llx\n", vp_ctx->cr4);
@@ -602,7 +602,7 @@ static void __init hv_vsm_init_gdt(struct hv_init_vp_context *vp_ctx)
 	pr_info("\t\t Limit: 0x%x\n",   vp_ctx->cs.limit);
 	pr_info("\t\t Attrs: 0x%x\n",   vp_ctx->cs.attributes);
 
-	pr_info("%s: Printing DS/ES/FS/GS...\n");
+	pr_info("%s: Printing DS/ES/FS/GS...\n", __func__);
 	pr_info("\t\t Sel:   0x%x\n",   vp_ctx->ds.selector);
 	pr_info("\t\t Base:  0x%llx\n", vp_ctx->ds.base);
 	pr_info("\t\t Limit: 0x%x\n",   vp_ctx->ds.limit);
@@ -742,13 +742,13 @@ static int verify_vsm_signature(char *buffer, unsigned int buff_size, char *sign
 		return -EINVAL;
 	pkcs7 = pkcs7_parse_message(signature, sig_size);
 	if (IS_ERR(pkcs7)) {
-		pr_err("%s: pkcs7_parse_message failed. Error code: %ld", __func__, PTR_ERR(pkcs7));
+		pr_err("pkcs7_parse_message failed. Error code: %ld", PTR_ERR(pkcs7));
 		return PTR_ERR(pkcs7);
 	}
 	ret = verify_pkcs7_signature(buffer, buff_size, signature, sig_size, NULL,
 				     VERIFYING_UNSPECIFIED_SIGNATURE, NULL, NULL);
 	if (ret) {
-		pr_err("%s: verify_pkcs7_signature failed. Error code: %d", __func__, ret);
+		pr_err("verify_pkcs7_signature failed. Error code: %d", ret);
 		return ret;
 	}
 	return ret;
@@ -807,7 +807,7 @@ static int __init hv_vsm_load_secure_kernel(void)
 
 	sk_buf = kvmalloc(size_sk, GFP_KERNEL);
 	if (!sk_buf) {
-		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
+		pr_err("Unable to allocate memory for copying secure kernel\n");
 		hv_vsm_boot_panic = true;
 		return -ENOMEM;
 	}
@@ -815,7 +815,7 @@ static int __init hv_vsm_load_secure_kernel(void)
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
 	sk_sig_buf = kvmalloc(size_sk_sig, GFP_KERNEL);
 	if (!sk_sig_buf) {
-		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
+		pr_err("Unable to allocate memory for copying secure kernel\n");
 		hv_vsm_boot_panic = true;
 		goto free_sk;
 	}
@@ -823,7 +823,7 @@ static int __init hv_vsm_load_secure_kernel(void)
 
 	ret = kernel_read(sk, sk_buf, size_sk, &sk->f_pos);
 	if (ret != size_sk) {
-		pr_err("%s Unable to read vmlinux.bin file\n", __func__);
+		pr_err("Unable to read vmlinux.bin file\n");
 		hv_vsm_boot_panic = true;
 		goto free_bufs;
 	}
@@ -831,14 +831,14 @@ static int __init hv_vsm_load_secure_kernel(void)
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
 	ret = kernel_read(sk_sig, sk_sig_buf, size_sk_sig, &sk_sig->f_pos);
 	if (ret != size_sk_sig) {
-		pr_err("%s Unable to read vmlinux.bin.p7s file\n", __func__);
+		pr_err("Unable to read vmlinux.bin.p7s file\n");
 		hv_vsm_boot_panic = true;
 		goto free_bufs;
 	}
 
 	ret = verify_vsm_signature(sk_buf, size_sk, sk_sig_buf, size_sk_sig);
 	if (ret) {
-		pr_err("%s: Failed to verify Secure Kernel signature.", __func__);
+		pr_err("Failed to verify Secure Kernel signature.");
 		hv_vsm_boot_panic = true;
 		goto free_bufs;
 	}
@@ -877,11 +877,11 @@ int __init hv_vsm_boot_init(void)
 	}
 	sk = filp_open(sk_path, O_RDONLY, 0);
 	if (IS_ERR(sk)) {
-		pr_err("%s: File %s not found, trying %s\n", __func__, sk_path, "/usr/lib/firmware/vmlinux.bin");
+		pr_err("File %s not found, trying %s\n", sk_path, "/usr/lib/firmware/vmlinux.bin");
 		is_legacy_sk_path = 1;
 		sk = filp_open("/usr/lib/firmware/vmlinux.bin", O_RDONLY, 0);
 		if (IS_ERR(sk)) {
-			pr_err("%s: File %s not found\n", __func__, "/usr/lib/firmware/vmlinux.bin");
+			pr_err("File /usr/lib/firmware/vmlinux.bin not found\n");
 			ret = -ENOENT;
 			hv_vsm_boot_panic = true;
 			goto free_mem;
@@ -896,7 +896,7 @@ int __init hv_vsm_boot_init(void)
 	}
 	sk_sig = filp_open(sk_sig_path, O_RDONLY, 0);
 	if (IS_ERR(sk_sig)) {
-		pr_err("%s: File %s not found\n", __func__, sk_sig_path);
+		pr_err("File %s not found\n", sk_sig_path);
 		ret = -ENOENT;
 		hv_vsm_boot_panic = true;
 		goto close_sk_file;
@@ -904,7 +904,7 @@ int __init hv_vsm_boot_init(void)
 #endif
 	ret = hv_vsm_get_code_page_offsets();
 	if (ret) {
-		pr_err("%s: Unbable to retrieve vsm page offsets\n", __func__);
+		pr_err("Unable to retrieve vsm page offsets\n");
 		hv_vsm_boot_panic = true;
 		goto close_files;
 	}
@@ -917,7 +917,7 @@ int __init hv_vsm_boot_init(void)
 	 * the boot cpu
 	 */
 	if (!alloc_cpumask_var(&mask, GFP_KERNEL)) {
-		pr_err("%s: Could not allocate cpumask", __func__);
+		pr_err("Could not allocate cpumask");
 		ret = -EINVAL;
 		hv_vsm_boot_panic = true;
 		goto close_files;
@@ -934,12 +934,12 @@ int __init hv_vsm_boot_init(void)
 		goto out;
 
 	if (partition_enabled_vtl_set & HV_VTL1_ENABLE_BIT) {
-		pr_info("%s: Partition VTL1 is already enabled\n", __func__);
+		pr_info("Partition VTL1 is already enabled\n");
 	} else {
 		ret = hv_vsm_enable_partition_vtl();
 		if (ret) {
-			pr_err("%s: Enabling Partition VTL1 failed with status 0x%x\n",
-			       __func__, ret);
+			pr_err("Enabling Partition VTL1 failed with status 0x%x\n",
+			       ret);
 			ret = -EINVAL;
 			hv_vsm_boot_panic = true;
 			goto out;
@@ -947,13 +947,13 @@ int __init hv_vsm_boot_init(void)
 		hv_vsm_get_partition_status(&partition_enabled_vtl_set, &partition_max_vtl,
 					    &partition_mbec_enabled_vtl_set);
 		if (!(partition_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
-			pr_err("%s: Tried Enabling Partition VTL 1 and still failed", __func__);
+			pr_err("Tried Enabling Partition VTL 1 and still failed");
 			ret = -EINVAL;
 			hv_vsm_boot_panic = true;
 			goto out;
 		}
 		if (!partition_mbec_enabled_vtl_set) {
-			pr_err("%s: Tried Enabling Partition MBEC and failed", __func__);
+			pr_err("Tried Enabling Partition MBEC and failed");
 			ret = -EINVAL;
 			hv_vsm_boot_panic = true;
 			goto out;
@@ -966,11 +966,11 @@ int __init hv_vsm_boot_init(void)
 		goto out;
 
 	if (vp_enabled_vtl_set & HV_VTL1_ENABLE_BIT) {
-		pr_info("%s: VP VTL1 is already enabled\n", __func__);
+		pr_info("VP VTL1 is already enabled\n");
 	} else {
 		ret = hv_vsm_enable_vp_vtl();
 		if (ret) {
-			pr_err("%s: Enabling VP VTL1 failed with status 0x%x\n", __func__, ret);
+			pr_err("Enabling VP VTL1 failed with status 0x%x\n", ret);
 			/* ToDo: Should we disable VTL1 at partition level in this case */
 			ret = -EINVAL;
 			hv_vsm_boot_panic = true;
@@ -978,7 +978,7 @@ int __init hv_vsm_boot_init(void)
 		}
 		hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
 		if (!(vp_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
-			pr_err("%s: Tried Enabling VP VTL 1 and still failed", __func__);
+			pr_err("Tried Enabling VP VTL 1 and still failed");
 			ret = -EINVAL;
 			hv_vsm_boot_panic = true;
 			goto out;
@@ -1024,7 +1024,6 @@ free_mem:
 	kfree(sk_path);
 
 	if (hv_vsm_boot_panic)
-		panic("%s: VTL1 boot failure caused kernel panic; consult log for more details.\n",
-		      __func__);
+		panic("VTL1 boot failure caused kernel panic; consult log for more details.\n");
 	return ret;
 }
