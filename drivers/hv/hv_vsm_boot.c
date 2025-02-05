@@ -88,7 +88,6 @@ enum {
 #define VSM_MAX_BOOT_CPUS	96
 
 static struct file *sk;
-static struct page *boot_signal_page, *cpu_online_page, *cpu_present_page;
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
 static struct file *sk_sig;
 #endif
@@ -260,44 +259,40 @@ static __init int hv_vsm_boot_vtl1(void)
 	return 0;
 }
 
-static u64 hv_vsm_establish_shared_page(struct page **page)
+static struct page *hv_vsm_alloc_shared_page(void)
 {
-	void *va;
+	struct page *page;
 
-	*page = alloc_page(GFP_KERNEL);
-
-	if (!(*page)) {
+	page = alloc_page(GFP_KERNEL);
+	if (!page) {
 		pr_err("Unable to establish VTL0-VTL1 shared page\n");
-		hv_vsm_boot_panic = true;
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 	}
 
-	va = page_address(*page);
-	memset(va, 0, PAGE_SIZE);
-
-	return page_to_pfn(*page);
+	memset(page_address(page), 0, PAGE_SIZE);
+	return page;
 }
 
 static __init int hv_vsm_enable_ap_vtl(void)
 {
 	struct hv_vtlcall_param args = {0};
-	u64 cpu_present_mask_pfn;
+	struct page *cpu_present_page;
 	void *va;
 	int ret = 0;
 
 	/* Allocate Present Cpumask Page & Copy cpu_present_mask */
-	cpu_present_mask_pfn = hv_vsm_establish_shared_page(&cpu_present_page);
-
-	if (cpu_present_mask_pfn < 0) {
+	cpu_present_page = hv_vsm_alloc_shared_page();
+	if (IS_ERR(cpu_present_page)) {
 		pr_err("Failed to allocate present cpumask page");
 		hv_vsm_boot_panic = true;
+		return PTR_ERR(cpu_present_page);
 	}
 
 	va = page_address(cpu_present_page);
 	cpumask_copy((struct cpumask *)va, cpu_present_mask);
 
 	args.a0 = VSM_VTL_CALL_FUNC_ID_ENABLE_APS_VTL;
-	args.a1 = cpu_present_mask_pfn;
+	args.a1 = page_to_pfn(cpu_present_page);
 
 	ret = hv_vsm_init_vtlcall(&args);
 	if (ret) {
@@ -359,14 +354,13 @@ static __init int hv_vsm_boot_ap_vtl(void)
 {
 	struct hv_vtlcall_param args = {0};
 	void *va;
-	u64 boot_signal_pfn, cpu_online_mask_pfn;
+	struct page *boot_signal_page, *cpu_online_page;
 	unsigned int cpu, cur_cpu = smp_processor_id(), vsm_cpus = num_possible_cpus(), next_cpu;
 	int ret;
 
 	/* Allocate & Initialize Boot Signal Page */
-	boot_signal_pfn = hv_vsm_establish_shared_page(&boot_signal_page);
-
-	if (boot_signal_pfn < 0)
+	boot_signal_page = hv_vsm_alloc_shared_page();
+	if (IS_ERR(boot_signal_page))
 		return -ENOMEM;
 
 	va = page_address(boot_signal_page);
@@ -374,9 +368,8 @@ static __init int hv_vsm_boot_ap_vtl(void)
 	boot_signal[0] = VSM_BOOT_SIGNAL;
 
 	/* Allocate Online Cpumask Page & Copy cpu_online_mask */
-	cpu_online_mask_pfn = hv_vsm_establish_shared_page(&cpu_online_page);
-
-	if (cpu_online_mask_pfn < 0) {
+	cpu_online_page = hv_vsm_alloc_shared_page();
+	if (IS_ERR(cpu_online_page)) {
 		ret = -ENOMEM;
 		goto free_bootsignal;
 	}
@@ -414,8 +407,8 @@ static __init int hv_vsm_boot_ap_vtl(void)
 
 	wake_up_process(ap_thread[next_cpu]);
 	args.a0 = VSM_VTL_CALL_FUNC_ID_BOOT_APS;
-	args.a1 = cpu_online_mask_pfn;
-	args.a2 = boot_signal_pfn;
+	args.a1 = page_to_pfn(cpu_online_page);
+	args.a2 = page_to_pfn(boot_signal_page);
 
 	ret = hv_vsm_init_vtlcall(&args);
 
