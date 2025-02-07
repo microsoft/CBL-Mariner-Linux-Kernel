@@ -213,7 +213,7 @@ long heki_validate_module(struct module *mod, struct load_info *info, int flags)
 void heki_free_module_init(struct module *mod);
 void heki_unload_module(struct module *mod);
 void heki_copy_secondary_key(const void *data, size_t size);
-void __init heki_store_blacklist_raw_hashes(const char *hash);
+void heki_store_blacklist_raw_hashes(const char *hash);
 
 /* Arch-specific functions. */
 void heki_arch_init(void);
