@@ -267,7 +267,7 @@ void heki_copy_secondary_key(const void *data, size_t size)
 	heki_cleanup_args(&args);
 }
 
-void __init heki_store_blacklist_raw_hashes(const char *hash)
+void heki_store_blacklist_raw_hashes(const char *hash)
 {
 	/* Initialize the blacklist hashes array if it does not already exist */
 	if (!heki_blacklist_hashes) {
