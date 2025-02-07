@@ -57,10 +57,6 @@ u64 hv_tdx_hypercall(u64 control, u64 param1, u64 param2);
 #define HV_AP_INIT_GPAT_DEFAULT		0x0007040600070406ULL
 #define HV_AP_SEGMENT_LIMIT		0xffffffff
 
-int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id);
-int hv_call_notify_all_processors_started(void);
-bool hv_lp_exists(u32 lp_index);
-
 /*
  * If the hypercall involves no input or output parameters, the hypervisor
  * ignores the corresponding GPA pointer.

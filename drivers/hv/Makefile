@@ -27,6 +27,6 @@ ifneq ($(CONFIG_MSHV_ROOT)$(CONFIG_MSHV_DIAG)$(CONFIG_MSHV_VTL)\
 endif
 
 # root and guest core kernel functions call into this file.
-obj-$(subst m,y,$(CONFIG_HYPERV)) += hv_common.o
+obj-$(subst m,y,$(CONFIG_HYPERV)) += hv_common.o hv_proc.o
 
 obj-$(subst m,y,$(CONFIG_HYPERV_VSM)) += hv_vsm.o
