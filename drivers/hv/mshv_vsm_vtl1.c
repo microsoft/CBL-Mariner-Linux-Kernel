@@ -21,7 +21,7 @@
 #include <linux/sort.h>
 #include <linux/bsearch.h>
 #include <linux/mem_attr.h>
-#include "../../../kernel/module/internal.h"
+#include "../../kernel/module/internal.h"
 #include <asm/mshyperv.h>
 #include <asm/fpu/api.h>
 #include <asm/cpu.h>
