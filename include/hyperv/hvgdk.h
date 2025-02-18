@@ -1,9 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Type definitions for the hypervisor guest interface.
+ * Type definitions for the Microsoft Hypervisor.
  */
-#ifndef _UAPI_HV_HVGDK_H
-#define _UAPI_HV_HVGDK_H
+#ifndef _HV_HVGDK_H
+#define _HV_HVGDK_H
 
 #include "hvgdk_mini.h"
 #include "hvgdk_ext.h"
@@ -55,4 +55,4 @@ struct hv_vmcb_enlightenments {
 	u64 reserved;
 } __packed;
 
-#endif /* #ifndef _UAPI_HV_HVGDK_H */
+#endif /* #ifndef _HV_HVGDK_H */
