@@ -1,9 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Type definitions for the hypervisor host interface.
+ * Type definitions for the Microsoft hypervisor.
  */
-#ifndef _UAPI_HV_HVHDK_H
-#define _UAPI_HV_HVHDK_H
+#ifndef _HV_HVHDK_H
+#define _HV_HVHDK_H
 
 #include <linux/build_bug.h>
 
@@ -2358,4 +2358,4 @@ struct hv_input_issue_psp_guest_request {
 	u64 response_page;
 } __packed;
 
-#endif /* _UAPI_HV_HVHDK_H */
+#endif /* _HV_HVHDK_H */

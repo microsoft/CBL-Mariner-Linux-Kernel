@@ -1,6 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
-#ifndef _UAPI_HV_HVGDK_EXT_H
-#define _UAPI_HV_HVGDK_EXT_H
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Type definitions for the Microsoft Hypervisor.
+ */
+#ifndef _HV_HVGDK_EXT_H
+#define _HV_HVGDK_EXT_H
 
 #include "hvgdk_mini.h"
 
@@ -42,4 +45,4 @@ struct hv_memory_hint {		/* HV_EXT_INPUT_MEMORY_HEAT_HINT */
 	union hv_gpa_page_range ranges[];
 } __packed;
 
-#endif /* _UAPI_HV_HVGDK_EXT_H */
+#endif /* _HV_HVGDK_EXT_H */
