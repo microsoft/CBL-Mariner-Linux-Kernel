@@ -1,9 +1,9 @@
-/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Type definitions for the hypervisor guest interface to kernel.
+ * Type definitions for the Microsoft hypervisor.
  */
-#ifndef _UAPI_HV_HVGDK_MINI_H
-#define _UAPI_HV_HVGDK_MINI_H
+#ifndef _HV_HVGDK_MINI_H
+#define _HV_HVGDK_MINI_H
 
 #include <linux/types.h>
 #include <linux/bits.h>
@@ -2654,4 +2654,4 @@ union hv_x64_register_sev_hv_doorbell {
 #define HV_INTERCEPT_ACCESS_WRITE 1
 #define HV_INTERCEPT_ACCESS_EXECUTE 2
 
-#endif /* _UAPI_HV_HVGDK_MINI_H */
+#endif /* _HV_HVGDK_MINI_H */
