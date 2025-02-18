@@ -9,11 +9,11 @@
 #include <linux/bits.h>
 
 #define HVGDK_MINI_H_VERSION		(25294)
-typedef __u64 hv_nano100_time_t;	/* HV_NANO100_TIME */
+typedef u64 hv_nano100_time_t;	/* HV_NANO100_TIME */
 
 struct hv_u128 {
-	__u64 low_part;
-	__u64 high_part;
+	u64 low_part;
+	u64 high_part;
 } __packed;
 
 /* NOTE: when adding below, update hv_status_to_string() */
@@ -65,8 +65,8 @@ struct hv_u128 {
 #define HV_HYP_LARGE_PAGE_SHIFT		21
 
 
-#define HV_PARTITION_ID_INVALID		((__u64) 0)
-#define HV_PARTITION_ID_SELF		((__u64)-1)
+#define HV_PARTITION_ID_INVALID		((u64) 0)
+#define HV_PARTITION_ID_SELF		((u64)-1)
 
 #define MSHV_MAX_VPS    256       /* HV_MAXIMUM_PROCESSORS */
 
@@ -162,21 +162,21 @@ struct hv_u128 {
 #define HV_IPI_HIGH_VECTOR	 0xff
 
 struct hv_reenlightenment_control {
-	__u64 vector:8;
-	__u64 reserved1:8;
-	__u64 enabled:1;
-	__u64 reserved2:15;
-	__u64 target_vp:32;
+	u64 vector:8;
+	u64 reserved1:8;
+	u64 enabled:1;
+	u64 reserved2:15;
+	u64 target_vp:32;
 }  __packed;
 
 struct hv_tsc_emulation_status {	 /* HV_TSC_EMULATION_STATUS */
-	__u64 inprogress:1;
-	__u64 reserved:63;
+	u64 inprogress:1;
+	u64 reserved:63;
 } __packed;
 
 struct hv_tsc_emulation_control {	 /* HV_TSC_INVARIANT_CONTROL */
-	__u64 enabled:1;
-	__u64 reserved:63;
+	u64 enabled:1;
+	u64 reserved:63;
 } __packed;
 
 /* TSC emulation after migration */
@@ -189,7 +189,7 @@ struct hv_tsc_emulation_control {	 /* HV_TSC_INVARIANT_CONTROL */
 #endif /* CONFIG_X86 */
 
 struct hv_get_partition_id {	 /* HV_OUTPUT_GET_PARTITION_ID */
-	__u64 partition_id;
+	u64 partition_id;
 } __packed;
 
 /* HV_CRASH_CTL_REG_CONTENTS */
@@ -197,11 +197,11 @@ struct hv_get_partition_id {	 /* HV_OUTPUT_GET_PARTITION_ID */
 #define HV_CRASH_CTL_CRASH_NOTIFY		 BIT_ULL(63)
 
 union hv_reference_tsc_msr {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enable:1;
-		__u64 reserved:11;
-		__u64 pfn:52;
+		u64 enable:1;
+		u64 reserved:11;
+		u64 pfn:52;
 	} __packed;
 };
 
@@ -212,9 +212,9 @@ union hv_reference_tsc_msr {
 
 /* Some of Hyper-V structs do not use hv_vpset where linux uses them */
 struct hv_vpset {	 /* HV_VP_SET */
-	__u64 format;
-	__u64 valid_bank_mask;
-	__u64 bank_contents[];
+	u64 format;
+	u64 valid_bank_mask;
+	u64 bank_contents[];
 } __packed;
 
 /*
@@ -223,21 +223,21 @@ struct hv_vpset {	 /* HV_VP_SET */
  */
 union hv_hypervisor_version_info {
 	struct {
-		__u32 build_number;
+		u32 build_number;
 
-		__u32 minor_version : 16;
-		__u32 major_version : 16;
+		u32 minor_version : 16;
+		u32 major_version : 16;
 
-		__u32 service_pack;
+		u32 service_pack;
 
-		__u32 service_number : 24;
-		__u32 service_branch : 8;
+		u32 service_number : 24;
+		u32 service_branch : 8;
 	};
 	struct {
-		__u32 eax;
-		__u32 ebx;
-		__u32 ecx;
-		__u32 edx;
+		u32 eax;
+		u32 ebx;
+		u32 ecx;
+		u32 edx;
 	};
 };
 
@@ -351,11 +351,11 @@ enum hv_isolation_type {
 };
 
 union hv_x64_msr_hypercall_contents {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enable:1;
-		__u64 reserved:11;
-		__u64 guest_physical_address:52;
+		u64 enable:1;
+		u64 reserved:11;
+		u64 guest_physical_address:52;
 	} __packed;
 };
 #endif /* CONFIG_X86 */
@@ -372,15 +372,15 @@ union hv_x64_msr_hypercall_contents {
 #endif /* CONFIG_ARM64 */
 
 #define HV_MAX_VP_INDEX			(HV_MAXIMUM_PROCESSORS - 1)
-#define HV_VP_INDEX_SELF		((__u32)-2)
-#define HV_ANY_VP			((__u32)-1)
+#define HV_VP_INDEX_SELF		((u32)-2)
+#define HV_ANY_VP			((u32)-1)
 
 union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enable:1;
-		__u64 reserved:11;
-		__u64 pfn:52;
+		u64 enable:1;
+		u64 reserved:11;
+		u64 pfn:52;
 	} __packed;
 };
 
@@ -504,8 +504,8 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 
 /* HvFlushGuestPhysicalAddressSpace hypercalls */
 struct hv_guest_mapping_flush {
-	__u64 address_space;
-	__u64 flags;
+	u64 address_space;
+	u64 flags;
 } __packed;
 
 /*
@@ -523,17 +523,17 @@ struct hv_guest_mapping_flush {
 
 /* HvFlushGuestPhysicalAddressList, HvExtCallMemoryHeatHint hypercall */
 union hv_gpa_page_range {
-	__u64 address_space;
+	u64 address_space;
 	struct {
-		__u64 additional_pages:11;
-		__u64 largepage:1;
-		__u64 basepfn:52;
+		u64 additional_pages:11;
+		u64 largepage:1;
+		u64 basepfn:52;
 	} page;
 	struct {
-		__u64 reserved:12;
-		__u64 page_size:1;
-		__u64 reserved1:8;
-		__u64 base_large_pfn:43;
+		u64 reserved:12;
+		u64 page_size:1;
+		u64 reserved1:8;
+		u64 base_large_pfn:43;
 	};
 };
 
@@ -542,35 +542,35 @@ union hv_gpa_page_range {
  * count is equal with how many entries of union hv_gpa_page_range can
  * be populated into the input parameter page.
  */
-#define HV_MAX_FLUSH_REP_COUNT ((HV_HYP_PAGE_SIZE - 2 * sizeof(__u64)) / \
+#define HV_MAX_FLUSH_REP_COUNT ((HV_HYP_PAGE_SIZE - 2 * sizeof(u64)) / \
 				sizeof(union hv_gpa_page_range))
 
 struct hv_guest_mapping_flush_list {
-	__u64 address_space;
-	__u64 flags;
+	u64 address_space;
+	u64 flags;
 	union hv_gpa_page_range gpa_list[HV_MAX_FLUSH_REP_COUNT];
 };
 
 struct hv_tlb_flush {	 /* HV_INPUT_FLUSH_VIRTUAL_ADDRESS_LIST */
-	__u64 address_space;
-	__u64 flags;
-	__u64 processor_mask;
-	__u64 gva_list[];
+	u64 address_space;
+	u64 flags;
+	u64 processor_mask;
+	u64 gva_list[];
 } __packed;
 
 /* HvFlushVirtualAddressSpaceEx, HvFlushVirtualAddressListEx hypercalls */
 struct hv_tlb_flush_ex {
-	__u64 address_space;
-	__u64 flags;
+	u64 address_space;
+	u64 flags;
 	struct hv_vpset hv_vp_set;
-	__u64 gva_list[];
+	u64 gva_list[];
 } __packed;
 
 struct ms_hyperv_tsc_page {	 /* HV_REFERENCE_TSC_PAGE */
-	volatile __u32 tsc_sequence;
-	__u32 reserved1;
-	volatile __u64 tsc_scale;
-	volatile __s64 tsc_offset;
+	volatile u32 tsc_sequence;
+	u32 reserved1;
+	volatile u64 tsc_scale;
+	volatile s64 tsc_offset;
 } __packed;
 
 /* Define the number of synthetic interrupt sources. */
@@ -610,64 +610,64 @@ enum hv_interrupt_type {
 
 /* Define synthetic interrupt source. */
 union hv_synic_sint {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
 #if defined(CONFIG_ARM64)
 		u64 vector : 5;
 		u64 reserved1 : 11;
 #else
-		__u64 vector : 8;
-		__u64 reserved1 : 8;
+		u64 vector : 8;
+		u64 reserved1 : 8;
 #endif
-		__u64 masked : 1;
-		__u64 auto_eoi : 1;
-		__u64 polling : 1;
-		__u64 as_intercept : 1;
-		__u64 proxy : 1;
-		__u64 reserved2 : 43;
+		u64 masked : 1;
+		u64 auto_eoi : 1;
+		u64 polling : 1;
+		u64 as_intercept : 1;
+		u64 proxy : 1;
+		u64 reserved2 : 43;
 	} __packed;
 };
 
 
 union hv_x64_xsave_xfem_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u32 low_uint32;
-		__u32 high_uint32;
+		u32 low_uint32;
+		u32 high_uint32;
 	} __packed;
 	struct {
-		__u64 legacy_x87 : 1;
-		__u64 legacy_sse : 1;
-		__u64 avx : 1;
-		__u64 mpx_bndreg : 1;
-		__u64 mpx_bndcsr : 1;
-		__u64 avx_512_op_mask : 1;
-		__u64 avx_512_zmmhi : 1;
-		__u64 avx_512_zmm16_31 : 1;
-		__u64 rsvd8_9 : 2;
-		__u64 pasid : 1;
-		__u64 cet_u : 1;
-		__u64 cet_s : 1;
-		__u64 rsvd13_16 : 4;
-		__u64 xtile_cfg : 1;
-		__u64 xtile_data : 1;
-		__u64 rsvd19_63 : 45;
+		u64 legacy_x87 : 1;
+		u64 legacy_sse : 1;
+		u64 avx : 1;
+		u64 mpx_bndreg : 1;
+		u64 mpx_bndcsr : 1;
+		u64 avx_512_op_mask : 1;
+		u64 avx_512_zmmhi : 1;
+		u64 avx_512_zmm16_31 : 1;
+		u64 rsvd8_9 : 2;
+		u64 pasid : 1;
+		u64 cet_u : 1;
+		u64 cet_s : 1;
+		u64 rsvd13_16 : 4;
+		u64 xtile_cfg : 1;
+		u64 xtile_data : 1;
+		u64 rsvd19_63 : 45;
 	} __packed;
 };
 
 /* Synthetic timer configuration */
 union hv_stimer_config {	 /* HV_X64_MSR_STIMER_CONFIG_CONTENTS */
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enable:1;
-		__u64 periodic:1;
-		__u64 lazy:1;
-		__u64 auto_enable:1;
-		__u64 apic_vector:8;
-		__u64 direct_mode:1;
-		__u64 reserved_z0:3;
-		__u64 sintx:4;
-		__u64 reserved_z1:44;
+		u64 enable:1;
+		u64 periodic:1;
+		u64 lazy:1;
+		u64 auto_enable:1;
+		u64 apic_vector:8;
+		u64 direct_mode:1;
+		u64 reserved_z0:3;
+		u64 sintx:4;
+		u64 reserved_z1:44;
 	} __packed;
 };
 
@@ -676,10 +676,10 @@ union hv_stimer_config {	 /* HV_X64_MSR_STIMER_CONFIG_CONTENTS */
 
 /* Define port identifier type. */
 union hv_port_id {
-	__u32 as__u32;
+	u32 asu32;
 	struct {
-		__u32 id : 24;
-		__u32 reserved : 8;
+		u32 id : 24;
+		u32 reserved : 8;
 	} __packed u; // TODO remove this u
 };
 
@@ -755,29 +755,29 @@ enum hv_message_type {
 
 /* Define the format of the SIMP register */
 union hv_synic_simp {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 simp_enabled : 1;
-		__u64 preserved : 11;
-		__u64 base_simp_gpa : 52;
+		u64 simp_enabled : 1;
+		u64 preserved : 11;
+		u64 base_simp_gpa : 52;
 	} __packed;
 };
 
 union hv_message_flags {
-	__u8 asu8;
+	u8 asu8;
 	struct {
-		__u8 msg_pending : 1;
-		__u8 reserved : 7;
+		u8 msg_pending : 1;
+		u8 reserved : 7;
 	} __packed;
 };
 
 struct hv_message_header {
-	__u32 message_type;
-	__u8 payload_size;
+	u32 message_type;
+	u8 payload_size;
 	union hv_message_flags message_flags;
-	__u8 reserved[2];
+	u8 reserved[2];
 	union {
-		__u64 sender;
+		u64 sender;
 		union hv_port_id port;
 	};
 } __packed;
@@ -787,13 +787,13 @@ struct hv_message_header {
  * intercept message(as_intercept=1)
  */
 struct hv_notification_message_payload {
-	__u32 sint_index;
+	u32 sint_index;
 } __packed;
 
 struct hv_message {
 	struct hv_message_header header;
 	union {
-		__u64 payload[HV_MESSAGE_PAYLOAD_QWORD_COUNT];
+		u64 payload[HV_MESSAGE_PAYLOAD_QWORD_COUNT];
 	} u;
 } __packed;
 
@@ -803,47 +803,47 @@ struct hv_message_page {
 } __packed;
 
 struct hv_x64_segment_register {
-	__u64 base;
-	__u32 limit;
-	__u16 selector;
+	u64 base;
+	u32 limit;
+	u16 selector;
 	union {
 		struct {
-			__u16 segment_type : 4;
-			__u16 non_system_segment : 1;
-			__u16 descriptor_privilege_level : 2;
-			__u16 present : 1;
-			__u16 reserved : 4;
-			__u16 available : 1;
-			__u16 _long : 1;
-			__u16 _default : 1;
-			__u16 granularity : 1;
+			u16 segment_type : 4;
+			u16 non_system_segment : 1;
+			u16 descriptor_privilege_level : 2;
+			u16 present : 1;
+			u16 reserved : 4;
+			u16 available : 1;
+			u16 _long : 1;
+			u16 _default : 1;
+			u16 granularity : 1;
 		} __packed;
-		__u16 attributes;
+		u16 attributes;
 	};
 } __packed;
 
 struct hv_x64_table_register {
-	__u16 pad[3];
-	__u16 limit;
-	__u64 base;
+	u16 pad[3];
+	u16 limit;
+	u64 base;
 } __packed;
 
 union hv_x64_fp_control_status_register {
 	struct hv_u128 as_uint128;
 	struct {
-		__u16 fp_control;
-		__u16 fp_status;
-		__u8 fp_tag;
-		__u8 reserved;
-		__u16 last_fp_op;
+		u16 fp_control;
+		u16 fp_status;
+		u8 fp_tag;
+		u8 reserved;
+		u16 last_fp_op;
 		union {
 			/* long mode */
-			__u64 last_fp_rip;
+			u64 last_fp_rip;
 			/* 32 bit mode */
 			struct {
-				__u32 last_fp_eip;
-				__u16 last_fp_cs;
-				__u16 padding;
+				u32 last_fp_eip;
+				u16 last_fp_cs;
+				u16 padding;
 			} __packed;
 		};
 	} __packed;
@@ -854,43 +854,43 @@ union hv_x64_xmm_control_status_register {
 	struct {
 		union {
 			/* long mode */
-			__u64 last_fp_rdp;
+			u64 last_fp_rdp;
 			/* 32 bit mode */
 			struct {
-				__u32 last_fp_dp;
-				__u16 last_fp_ds;
-				__u16 padding;
+				u32 last_fp_dp;
+				u16 last_fp_ds;
+				u16 padding;
 			} __packed;
 		};
-		__u32 xmm_status_control;
-		__u32 xmm_status_control_mask;
+		u32 xmm_status_control;
+		u32 xmm_status_control_mask;
 	} __packed;
 } __packed;
 
 union hv_x64_fp_register {
 	struct hv_u128 as_uint128;
 	struct {
-		__u64 mantissa;
-		__u64 biased_exponent : 15;
-		__u64 sign : 1;
-		__u64 reserved : 48;
+		u64 mantissa;
+		u64 biased_exponent : 15;
+		u64 sign : 1;
+		u64 reserved : 48;
 	} __packed;
 } __packed;
 
 union hv_x64_msr_npiep_config_contents {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
 		/*
 		 * These bits enable instruction execution prevention for
 		 * specific instructions.
 		 */
-		__u64 prevents_gdt : 1;
-		__u64 prevents_idt : 1;
-		__u64 prevents_ldt : 1;
-		__u64 prevents_tr : 1;
+		u64 prevents_gdt : 1;
+		u64 prevents_idt : 1;
+		u64 prevents_ldt : 1;
+		u64 prevents_tr : 1;
 
 		/* The reserved bits must always be 0. */
-		__u64 reserved : 60;
+		u64 reserved : 60;
 	} __packed;
 };
 
@@ -900,11 +900,11 @@ union hv_x64_msr_npiep_config_contents {
 #define HV_VTL_ALL 0xF
 
 union hv_input_vtl {
-	__u8 as_uint8;
+	u8 as_uint8;
 	struct {
-		__u8 target_vtl : 4;
-		__u8 use_target_vtl : 1;
-		__u8 reserved_z : 3;
+		u8 target_vtl : 4;
+		u8 use_target_vtl : 1;
+		u8 reserved_z : 3;
 	};
 } __packed;
 
@@ -958,53 +958,53 @@ struct hv_get_vp_from_apic_id_in {
 #endif
 
 union hv_register_vsm_partition_config {
-	__u64 as_u64;
+	u64 as_u64;
 	struct {
-		__u64 enable_vtl_protection : 1;
-		__u64 default_vtl_protection_mask : 4;
-		__u64 zero_memory_on_reset : 1;
-		__u64 deny_lower_vtl_startup : 1;
-		__u64 intercept_acceptance : 1;
-		__u64 intercept_enable_vtl_protection : 1;
-		__u64 intercept_vp_startup : 1;
-		__u64 intercept_cpuid_unimplemented : 1;
-		__u64 intercept_unrecoverable_exception : 1;
-		__u64 intercept_page : 1;
-		__u64 intercept_restore_partition_time: 1;
-		__u64 intercept_not_present: 1;
-		__u64 mbz : 49;
+		u64 enable_vtl_protection : 1;
+		u64 default_vtl_protection_mask : 4;
+		u64 zero_memory_on_reset : 1;
+		u64 deny_lower_vtl_startup : 1;
+		u64 intercept_acceptance : 1;
+		u64 intercept_enable_vtl_protection : 1;
+		u64 intercept_vp_startup : 1;
+		u64 intercept_cpuid_unimplemented : 1;
+		u64 intercept_unrecoverable_exception : 1;
+		u64 intercept_page : 1;
+		u64 intercept_restore_partition_time: 1;
+		u64 intercept_not_present: 1;
+		u64 mbz : 49;
 	};
 };
 
 struct hv_nested_enlightenments_control {
 	struct {
-		__u32 directhypercall : 1;
-		__u32 reserved : 31;
+		u32 directhypercall : 1;
+		u32 reserved : 31;
 	} __packed features;
 	struct {
-		__u32 inter_partition_comm : 1;
-		__u32 reserved : 31;
+		u32 inter_partition_comm : 1;
+		u32 reserved : 31;
 	} __packed hypercall_controls;
 } __packed;
 
 /* Define virtual processor assist page structure. */
 struct hv_vp_assist_page {
-	__u32 apic_assist;
-	__u32 reserved1;
-	__u32 vtl_entry_reason;
-	__u32 vtl_reserved;
-	__u64 vtl_ret_x64rax;
-	__u64 vtl_ret_x64rcx;
+	u32 apic_assist;
+	u32 reserved1;
+	u32 vtl_entry_reason;
+	u32 vtl_reserved;
+	u64 vtl_ret_x64rax;
+	u64 vtl_ret_x64rcx;
 	struct hv_nested_enlightenments_control nested_control;
-	__u8 enlighten_vmentry;
-	__u8 reserved2[7];
-	__u64 current_nested_vmcs;
-	__u8 synthetic_time_unhalted_timer_expired;
-	__u8 reserved3[7];
-	__u8 virtualization_fault_information[40];
-	__u8 reserved4[8];
-	__u8 intercept_message[256];
-	__u8 vtl_ret_actions[256];
+	u8 enlighten_vmentry;
+	u8 reserved2[7];
+	u64 current_nested_vmcs;
+	u8 synthetic_time_unhalted_timer_expired;
+	u8 reserved3[7];
+	u8 virtualization_fault_information[40];
+	u8 reserved4[8];
+	u8 intercept_message[256];
+	u8 vtl_ret_actions[256];
 } __packed;
 
 enum hv_register_name {
@@ -2214,57 +2214,57 @@ enum hv_register_name {
 /* General Hypervisor Register Content Definitions */
 
 union hv_explicit_suspend_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 suspended : 1;
-		__u64 reserved : 63;
+		u64 suspended : 1;
+		u64 reserved : 63;
 	} __packed;
 };
 
 union hv_intercept_suspend_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 suspended : 1;
-		__u64 reserved : 63;
+		u64 suspended : 1;
+		u64 reserved : 63;
 	} __packed;
 };
 
 union hv_dispatch_suspend_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 suspended : 1;
-		__u64 reserved : 63;
+		u64 suspended : 1;
+		u64 reserved : 63;
 	} __packed;
 };
 
 union hv_internal_activity_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 
 	struct {
-		__u64 startup_suspend : 1;
-		__u64 halt_suspend : 1;
-		__u64 idle_suspend : 1;
-		__u64 rsvd_z : 61;
+		u64 startup_suspend : 1;
+		u64 halt_suspend : 1;
+		u64 idle_suspend : 1;
+		u64 rsvd_z : 61;
 	} __packed;
 };
 
 union hv_x64_interrupt_state_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 interrupt_shadow : 1;
-		__u64 nmi_masked : 1;
-		__u64 reserved : 62;
+		u64 interrupt_shadow : 1;
+		u64 nmi_masked : 1;
+		u64 reserved : 62;
 	} __packed;
 };
 
 union hv_register_vsm_partition_status {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enabled_vtl_set : 16;
-		__u64 max_vtl : 4;
-		__u64 mbec_enabled_vtl_set: 16;
-		__u64 supervisor_shadow_stack_enabled_vtl_set : 4;
-		__u64 reserved : 24;
+		u64 enabled_vtl_set : 16;
+		u64 max_vtl : 4;
+		u64 mbec_enabled_vtl_set: 16;
+		u64 supervisor_shadow_stack_enabled_vtl_set : 4;
+		u64 reserved : 24;
 	};
 };
 
@@ -2272,38 +2272,38 @@ union hv_register_vsm_partition_status {
 struct hv_get_vp_registers_output {
 	union {
 		struct {
-			__u32 a;
-			__u32 b;
-			__u32 c;
-			__u32 d;
+			u32 a;
+			u32 b;
+			u32 c;
+			u32 d;
 		} as32 __packed;
 		struct {
-			__u64 low;
-			__u64 high;
+			u64 low;
+			u64 high;
 		} as64 __packed;
 	};
 };
 
 #define HV_ARM64_PENDING_EVENT_HEADER \
-	__u8 event_pending : 1; \
-	__u8 event_type : 3; \
-	__u8 reserved : 4
+	u8 event_pending : 1; \
+	u8 event_type : 3; \
+	u8 reserved : 4
 
 union hv_arm64_pending_synthetic_exception_event {
-	__u64 as_uint64[2];
+	u64 as_uint64[2];
 	struct {
 		HV_ARM64_PENDING_EVENT_HEADER;
 
-		__u32 exception_type;
-		__u64 context;
+		u32 exception_type;
+		u64 context;
 	} __packed;
 };
 
 union hv_arm64_interrupt_state_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 interrupt_shadow : 1;
-		__u64 reserved : 63;
+		u64 interrupt_shadow : 1;
+		u64 reserved : 63;
 	} __packed;
 };
 
@@ -2313,73 +2313,73 @@ enum hv_arm64_pending_interruption_type {
 };
 
 union hv_arm64_pending_interruption_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 interruption_pending : 1;
-		__u64 interruption_type : 1;
-		__u64 reserved : 30;
-		__u64 error_code : 32;
+		u64 interruption_pending : 1;
+		u64 interruption_type : 1;
+		u64 reserved : 30;
+		u64 error_code : 32;
 	} __packed;
 };
 
 union hv_x64_pending_exception_event {
-	__u64 as_uint64[2];
+	u64 as_uint64[2];
 	struct {
-		__u32 event_pending : 1;
-		__u32 event_type : 3;
-		__u32 reserved0 : 4;
-		__u32 deliver_error_code : 1;
-		__u32 reserved1 : 7;
-		__u32 vector : 16;
-		__u32 error_code;
-		__u64 exception_parameter;
+		u32 event_pending : 1;
+		u32 event_type : 3;
+		u32 reserved0 : 4;
+		u32 deliver_error_code : 1;
+		u32 reserved1 : 7;
+		u32 vector : 16;
+		u32 error_code;
+		u64 exception_parameter;
 	} __packed;
 };
 
 union hv_x64_pending_virtualization_fault_event {
-	__u64 as_uint64[2];
+	u64 as_uint64[2];
 	struct {
-		__u32 event_pending : 1;
-		__u32 event_type : 3;
-		__u32 reserved0 : 4;
-		__u32 reserved1 : 8;
-		__u32 parameter0 : 16;
-		__u32 code;
-		__u64 parameter1;
+		u32 event_pending : 1;
+		u32 event_type : 3;
+		u32 reserved0 : 4;
+		u32 reserved1 : 8;
+		u32 parameter0 : 16;
+		u32 code;
+		u64 parameter1;
 	} __packed;
 };
 
 union hv_x64_pending_interruption_register {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u32 interruption_pending : 1;
-		__u32 interruption_type : 3;
-		__u32 deliver_error_code : 1;
-		__u32 instruction_length : 4;
-		__u32 nested_event : 1;
-		__u32 reserved : 6;
-		__u32 interruption_vector : 16;
-		__u32 error_code;
+		u32 interruption_pending : 1;
+		u32 interruption_type : 3;
+		u32 deliver_error_code : 1;
+		u32 instruction_length : 4;
+		u32 nested_event : 1;
+		u32 reserved : 6;
+		u32 interruption_vector : 16;
+		u32 error_code;
 	} __packed;
 };
 
 #define HV_SUPPORTS_SEV_SNP_GUESTS
 
 union hv_x64_register_sev_control {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enable_encrypted_state : 1;
-		__u64 reserved_z : 11;
-		__u64 vmsa_gpa_page_number : 52;
+		u64 enable_encrypted_state : 1;
+		u64 reserved_z : 11;
+		u64 vmsa_gpa_page_number : 52;
 	} __packed;
 };
 
 union hv_register_value {
 	struct hv_u128 reg128;
-	__u64 reg64;
-	__u32 reg32;
-	__u16 reg16;
-	__u8 reg8;
+	u64 reg64;
+	u32 reg32;
+	u16 reg16;
+	u8 reg8;
 
 #ifdef CONFIG_X86
 	union hv_x64_fp_register fp;
@@ -2410,27 +2410,27 @@ union hv_register_value {
 };
 
 struct hv_register_assoc {
-	__u32 name;			/* enum hv_register_name */
-	__u32 reserved1;
-	__u64 reserved2;
+	u32 name;			/* enum hv_register_name */
+	u32 reserved1;
+	u64 reserved2;
 	union hv_register_value value;
 } __packed;
 
 struct hv_input_get_vp_registers {
-	__u64 partition_id;
-	__u32 vp_index;
+	u64 partition_id;
+	u32 vp_index;
 	union hv_input_vtl input_vtl;
-	__u8  rsvd_z8;
-	__u16 rsvd_z16;
-	__u32 names[];
+	u8  rsvd_z8;
+	u16 rsvd_z16;
+	u32 names[];
 } __packed;
 
 struct hv_input_set_vp_registers {
-	__u64 partition_id;
-	__u32 vp_index;
+	u64 partition_id;
+	u32 vp_index;
 	union hv_input_vtl input_vtl;
-	__u8  rsvd_z8;
-	__u16 rsvd_z16;
+	u8  rsvd_z8;
+	u16 rsvd_z16;
 	struct hv_register_assoc elements[];
 } __packed;
 
@@ -2438,41 +2438,41 @@ struct hv_input_set_vp_registers {
 
 /* HvCallSendSyntheticClusterIpi hypercall */
 struct hv_send_ipi {	 /* HV_INPUT_SEND_SYNTHETIC_CLUSTER_IPI */
-	__u32 vector;
-	__u32 reserved;
-	__u64 cpu_mask;
+	u32 vector;
+	u32 reserved;
+	u64 cpu_mask;
 } __packed;
 
 #define HV_X64_VTL_MASK			GENMASK(3, 0)
 
 #if defined(CONFIG_X86)
 union hv_msi_address_register { /* HV_MSI_ADDRESS */
-	__u32 as_uint32;
+	u32 as_uint32;
 	struct {
-		__u32 reserved1:2;
-		__u32 destination_mode:1;
-		__u32 redirection_hint:1;
-		__u32 reserved2:8;
-		__u32 destination_id:8;
-		__u32 msi_base:12;
+		u32 reserved1:2;
+		u32 destination_mode:1;
+		u32 redirection_hint:1;
+		u32 reserved2:8;
+		u32 destination_id:8;
+		u32 msi_base:12;
 	};
 } __packed;
 
 union hv_msi_data_register {	 /* HV_MSI_ENTRY.Data */
-	__u32 as_uint32;
+	u32 as_uint32;
 	struct {
-		__u32 vector:8;
-		__u32 delivery_mode:3;
-		__u32 reserved1:3;
-		__u32 level_assert:1;
-		__u32 trigger_mode:1;
-		__u32 reserved2:16;
+		u32 vector:8;
+		u32 delivery_mode:3;
+		u32 reserved1:3;
+		u32 level_assert:1;
+		u32 trigger_mode:1;
+		u32 reserved2:16;
 	};
 } __packed;
 
 union hv_msi_entry {	 /* HV_MSI_ENTRY */
 
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
 		union hv_msi_address_register address;
 		union hv_msi_data_register data;
@@ -2482,36 +2482,36 @@ union hv_msi_entry {	 /* HV_MSI_ENTRY */
 #elif defined(CONFIG_ARM64) /* CONFIG_X86 */
 
 union hv_msi_entry {
-	__u64 as_uint64[2];
+	u64 as_uint64[2];
 	struct {
-		__u64 address;
-		__u32 data;
-		__u32 reserved;
+		u64 address;
+		u32 data;
+		u32 reserved;
 	} __packed;
 };
 #endif /* CONFIG_ARM64 */
 
 union hv_ioapic_rte {
-	__u64 as_uint64;
+	u64 as_uint64;
 
 	struct {
-		__u32 vector:8;
-		__u32 delivery_mode:3;
-		__u32 destination_mode:1;
-		__u32 delivery_status:1;
-		__u32 interrupt_polarity:1;
-		__u32 remote_irr:1;
-		__u32 trigger_mode:1;
-		__u32 interrupt_mask:1;
-		__u32 reserved1:15;
+		u32 vector:8;
+		u32 delivery_mode:3;
+		u32 destination_mode:1;
+		u32 delivery_status:1;
+		u32 interrupt_polarity:1;
+		u32 remote_irr:1;
+		u32 trigger_mode:1;
+		u32 interrupt_mask:1;
+		u32 reserved1:15;
 
-		__u32 reserved2:24;
-		__u32 destination_id:8;
+		u32 reserved2:24;
+		u32 destination_id:8;
 	};
 
 	struct {
-		__u32 low_uint32;
-		__u32 high_uint32;
+		u32 low_uint32;
+		u32 high_uint32;
 	};
 } __packed;
 
@@ -2521,8 +2521,8 @@ enum hv_interrupt_source {	 /* HV_INTERRUPT_SOURCE */
 };
 
 struct hv_interrupt_entry {	 /* HV_INTERRUPT_ENTRY */
-	__u32 source;
-	__u32 reserved1;
+	u32 source;
+	u32 reserved1;
 	union {
 		union hv_msi_entry msi_entry;
 		union hv_ioapic_rte ioapic_rte;
@@ -2533,19 +2533,19 @@ struct hv_interrupt_entry {	 /* HV_INTERRUPT_ENTRY */
 #define HV_DEVICE_INTERRUPT_TARGET_PROCESSOR_SET	2
 
 struct hv_device_interrupt_target {	 /* HV_DEVICE_INTERRUPT_TARGET */
-	__u32 vector;
-	__u32 flags;		/* HV_DEVICE_INTERRUPT_TARGET_* above */
+	u32 vector;
+	u32 flags;		/* HV_DEVICE_INTERRUPT_TARGET_* above */
 	union {
-		__u64 vp_mask;
+		u64 vp_mask;
 		struct hv_vpset vp_set;
 	};
 } __packed;
 
 struct hv_retarget_device_interrupt {	 /* HV_INPUT_RETARGET_DEVICE_INTERRUPT */
-	__u64 partition_id;		/* use "self" */
-	__u64 device_id;
+	u64 partition_id;		/* use "self" */
+	u64 device_id;
 	struct hv_interrupt_entry int_entry;
-	__u64 reserved2;
+	u64 reserved2;
 	struct hv_device_interrupt_target int_target;
 } __packed __aligned(8);
 
@@ -2576,18 +2576,18 @@ enum hv_intercept_type {
 
 union hv_intercept_parameters {
 	/*  HV_INTERCEPT_PARAMETERS is defined to be an 8-byte field. */
-	__u64 as_uint64;
+	u64 as_uint64;
 #if defined(CONFIG_X86)
 	/* HV_INTERCEPT_TYPE_X64_IO_PORT */
-	__u16 io_port;
+	u16 io_port;
 	/* HV_INTERCEPT_TYPE_X64_CPUID */
-	__u32 cpuid_index;
+	u32 cpuid_index;
 	/* HV_INTERCEPT_TYPE_X64_APIC_WRITE */
-	__u32 apic_write_mask;
+	u32 apic_write_mask;
 	/* HV_INTERCEPT_TYPE_EXCEPTION */
-	__u16 exception_vector;
+	u16 exception_vector;
 	/* HV_INTERCEPT_TYPE_X64_MSR_INDEX */
-	__u32 msr_index;
+	u32 msr_index;
 #endif
 	/* N.B. Other intercept types do not have any parameters. */
 };
@@ -2599,9 +2599,9 @@ union hv_intercept_parameters {
 #define HV_INTERCEPT_ACCESS_MASK_EXECUTE	0x04
 
 struct hv_input_install_intercept {
-	__u64 partition_id;
-	__u32 access_type;	/* mask */
-	__u32 intercept_type;	/* hv_intercept_type */
+	u64 partition_id;
+	u32 access_type;	/* mask */
+	u32 intercept_type;	/* hv_intercept_type */
 	union hv_intercept_parameters intercept_parameter;
 } __packed;
 
@@ -2609,20 +2609,20 @@ struct hv_input_install_intercept {
 #define HV_HYPERCALL_MMIO_MAX_DATA_LENGTH 64
 
 struct hv_mmio_read_input { /* HV_INPUT_MEMORY_MAPPED_IO_READ */
-	__u64 gpa;
-	__u32 size;
-	__u32 reserved;
+	u64 gpa;
+	u32 size;
+	u32 reserved;
 } __packed;
 
 struct hv_mmio_read_output {
-	__u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
+	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
 } __packed;
 
 struct hv_mmio_write_input {
-	__u64 gpa;
-	__u32 size;
-	__u32 reserved;
-	__u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
+	u64 gpa;
+	u32 size;
+	u32 reserved;
+	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
 } __packed;
 
 enum hv_eventlog_type { /* HV_EVENTLOG_TYPE */
@@ -2632,20 +2632,20 @@ enum hv_eventlog_type { /* HV_EVENTLOG_TYPE */
 };
 
 union hv_x64_register_sev_ghcb {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enabled:1;
-		__u64 reservedz:11;
-		__u64 page_number:52;
+		u64 enabled:1;
+		u64 reservedz:11;
+		u64 page_number:52;
 	} __packed;
 };
 
 union hv_x64_register_sev_hv_doorbell {
-	__u64 as_uint64;
+	u64 as_uint64;
 	struct {
-		__u64 enabled:1;
-		__u64 reservedz:11;
-		__u64 page_number:52;
+		u64 enabled:1;
+		u64 reservedz:11;
+		u64 page_number:52;
 	} __packed;
 };
 
