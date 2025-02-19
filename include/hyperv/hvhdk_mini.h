@@ -228,7 +228,7 @@ struct hv_input_get_system_property {
 	__u32 reserved;
 	union {
 		__u64 as_uint64;
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 		__u32 hv_processor_feature; /* enum hv_dynamic_processor_feature_property */
 #endif
 		/* More fields to be filled in when needed */
@@ -245,7 +245,7 @@ struct hv_output_get_system_property { /* HV_OUTPUT_GET_SYSTEM_PROPERTY */
 	union {
 		__u32 scheduler_type; /* HV_SCHEDULER_TYPE */
 		struct hv_system_diag_log_buffer_config hv_diagbuf_info;
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 		__u64 hv_processor_feature_value;
 #endif
 		union hv_pfn_range hv_cda_info; /* CrashdumpAreaAddress */
@@ -510,8 +510,6 @@ struct hv_create_vp {	/* HV_INPUT_CREATE_VP */
 	__u64 flags;
 } __packed;
 
-#if defined(__KERNEL__)
-
 /* HV_INTERRUPT_TRIGGER_MODE */
 enum hv_interrupt_trigger_mode {
 	HV_INTERRUPT_TRIGGER_MODE_EDGE = 0,
@@ -549,8 +547,6 @@ struct hv_input_unmap_device_interrupt {
 	struct hv_interrupt_entry interrupt_entry;
 	__u32 flags;
 } __packed;
-
-#endif /* __KERNEL__ */
 
 #define HV_SOURCE_SHADOW_NONE		    0x0
 #define HV_SOURCE_SHADOW_BRIDGE_BUS_RANGE   0x1
@@ -617,8 +613,6 @@ enum hv_device_type {		/* HV_DEVICE_TYPE */
 	HV_DEVICE_TYPE_ACPI = 3,
 };
 
-#if defined(__KERNEL__)
-
 union hv_device_id {		/* HV_DEVICE_ID */
 	__u64 as_uint64;
 
@@ -682,8 +676,6 @@ struct hv_input_attach_device {         /* HV_INPUT_ATTACH_DEVICE */
 	__u16 resvd2;
 } __packed;
 
-#endif /* __KERNEL__ */
-
 struct hv_input_detach_device {		/* HV_INPUT_DETACH_DEVICE */
 	__u64 partition_id;
 	__u64 logical_devid;
@@ -733,8 +725,6 @@ struct hv_input_delete_device_domain {	/* HV_INPUT_DELETE_DEVICE_DOMAIN */
 	struct hv_input_device_domain device_domain;
 } __packed;
 
-#if defined(__KERNEL__)
-
 struct hv_input_attach_device_domain {	/* HV_INPUT_ATTACH_DEVICE_DOMAIN */
 	struct hv_input_device_domain device_domain;
 	union hv_device_id device_id;
@@ -744,8 +734,6 @@ struct hv_input_detach_device_domain {	/* HV_INPUT_DETACH_DEVICE_DOMAIN */
 	__u64 partition_id;
 	union hv_device_id device_id;
 } __packed;
-
-#endif /* __KERNEL__ */
 
 struct hv_input_map_device_gpa_pages {	/* HV_INPUT_MAP_DEVICE_GPA_PAGES */
 	struct hv_input_device_domain device_domain;

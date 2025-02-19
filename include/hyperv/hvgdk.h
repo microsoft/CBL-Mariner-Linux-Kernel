@@ -6,13 +6,11 @@
 #define _UAPI_HV_HVGDK_H
 
 #include "hvgdk_mini.h"
-#if defined(__KERNEL__)
 #include "hvgdk_ext.h"
-#endif
 
 #define HVGDK_H_VERSION			(25125)
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 enum hv_unimplemented_msr_action {
 	HV_UNIMPLEMENTED_MSR_ACTION_FAULT = 0,

@@ -5,9 +5,7 @@
 #ifndef _UAPI_HV_HVHDK_H
 #define _UAPI_HV_HVHDK_H
 
-#if defined(__KERNEL__)
 #include <linux/build_bug.h>
-#endif
 
 #include "hvhdk_mini.h"
 #include "hvgdk.h"
@@ -15,7 +13,7 @@
 #define HVHDK_H_VERSION			(25212)
 
 enum hv_stats_hypervisor_counters {		/* HV_HYPERVISOR_COUNTER */
-#if defined(__x86_64__) || defined(__aarch64__)
+#if IS_ENABLED(CONFIG_X86) || IS_ENABLED(CONFIG_ARM64)
 	HvLogicalProcessors			= 1,
 	HvPartitions				= 2,
 	HvTotalPages				= 3,
@@ -32,7 +30,7 @@ enum hv_stats_hypervisor_counters {		/* HV_HYPERVISOR_COUNTER */
 };
 
 enum hv_stats_partition_counters {		/* HV_PROCESS_COUNTER */
-#if defined(__x86_64__) || defined(__aarch64__)
+#if IS_ENABLED(CONFIG_X86) || IS_ENABLED(CONFIG_ARM64)
 	PartitionVirtualProcessors		= 1,
 	PartitionTlbSize			= 3,
 	PartitionAddressSpaces			= 4,
@@ -59,7 +57,7 @@ enum hv_stats_partition_counters {		/* HV_PROCESS_COUNTER */
 	PartitionSkippedTimerTicks		= 25,
 	PartitionPartitionId			= 26,
 #endif
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 	PartitionNestedTlbSize			= 27,
 	PartitionRecommendedNestedTlbSize	= 28,
 	PartitionNestedTlbFreeListSize		= 29,
@@ -67,14 +65,14 @@ enum hv_stats_partition_counters {		/* HV_PROCESS_COUNTER */
 	PartitionPagesShattered			= 31,
 	PartitionPagesRecombined		= 32,
 	PartitionHwpRequestValue		= 33,
-#elif defined(__aarch64__)
+#elif IS_ENABLED(CONFIG_ARM64)
 	PartitionHwpRequestValue		= 27,
 #endif
 	PartitionStatsMaxCounter
 };
 
 enum hv_stats_vp_counters {			/* HV_THREAD_COUNTER */
-#if defined(__x86_64__) || defined(__aarch64__)
+#if IS_ENABLED(CONFIG_X86) || IS_ENABLED(CONFIG_ARM64)
 	VpTotalRunTime					= 1,
 	VpHypervisorRunTime				= 2,
 	VpRemoteNodeRunTime				= 3,
@@ -83,7 +81,7 @@ enum hv_stats_vp_counters {			/* HV_THREAD_COUNTER */
 	VpHypercallsCount				= 7,
 	VpHypercallsTime				= 8,
 #endif
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 	VpPageInvalidationsCount			= 9,
 	VpPageInvalidationsTime				= 10,
 	VpControlRegisterAccessesCount			= 11,
@@ -277,7 +275,7 @@ enum hv_stats_vp_counters {			/* HV_THREAD_COUNTER */
 	VpSvmHypercalls					= 199,
 	VpBusLockAcquisitionCount			= 200,
 	VpRootDispatchThreadBlocked			= 201,
-#elif defined(__aarch64__)
+#elif IS_ENABLED(CONFIG_ARM64)
 	VpSysRegAccessesCount				= 9,
 	VpSysRegAccessesTime				= 10,
 	VpSmcInstructionsCount				= 11,
@@ -369,7 +367,7 @@ enum hv_stats_vp_counters {			/* HV_THREAD_COUNTER */
 };
 
 enum hv_stats_lp_counters {			/* HV_CPU_COUNTER */
-#if defined(__x86_64__) || defined(__aarch64__)
+#if IS_ENABLED(CONFIG_X86) || IS_ENABLED(CONFIG_ARM64)
 	LpGlobalTime				= 1,
 	LpTotalRunTime				= 2,
 	LpHypervisorRunTime			= 3,
@@ -401,7 +399,7 @@ enum hv_stats_lp_counters {			/* HV_CPU_COUNTER */
 	LpPostedInterruptNotifications		= 29,
 	LpBranchPredictorFlushes		= 30,
 #endif
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 	LpL1DataCacheFlushes			= 31,
 	LpImmediateL1DataCacheFlushes		= 32,
 	LpMbFlushes				= 33,
@@ -423,7 +421,7 @@ enum hv_stats_lp_counters {			/* HV_CPU_COUNTER */
 	LpReserveGroupId			= 49,
 	LpRunningPriority			= 50,
 	LpPerfmonInterruptCount			= 51,
-#elif defined(__aarch64__)
+#elif IS_ENABLED(CONFIG_ARM64)
 	LpCounterRefreshSequenceNumber		= 31,
 	LpCounterRefreshReferenceTime		= 32,
 	LpIdleAccumulationSnapshot		= 33,
@@ -482,7 +480,7 @@ struct hv_vp_register_page {
 	__u8 rsvdz;
 	__u32 dirty;
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 	union {
 		struct {
@@ -569,7 +567,7 @@ struct hv_vp_register_page {
 	 */
 	union hv_vp_register_page_interrupt_vectors interrupt_vectors;
 
-#elif defined(__aarch64__)
+#elif IS_ENABLED(CONFIG_ARM64)
 	/* Not yet supported in ARM */
 #endif
 
@@ -579,7 +577,7 @@ struct hv_vp_register_page {
 
 union hv_partition_processor_features {
 	__u64 as_uint64[HV_PARTITION_PROCESSOR_FEATURES_BANKS];
-#if defined(__aarch64__)
+#if IS_ENABLED(CONFIG_ARM64)
 	struct {
 		__u64 asid16 : 1;
 		__u64 t_gran16 : 1;
@@ -694,7 +692,7 @@ union hv_partition_processor_features {
 
 	} __packed;
 #endif
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 	struct {
 		__u64 sse3_support : 1;
 		__u64 lahf_sahf_support : 1;
@@ -831,7 +829,7 @@ union hv_partition_processor_xsave_features {
 
 struct hv_partition_creation_properties {
 	union hv_partition_processor_features disabled_processor_features;
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 	union hv_partition_processor_xsave_features
 		disabled_processor_xsave_features;
 #endif
@@ -1010,7 +1008,7 @@ union hv_partition_synthetic_processor_features {
 		 */
 		__u64 access_partition_reference_tsc:1;
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 		/* Partition has access to the guest idle reg. Corresponds to
 		 * access_guest_idle_reg privilege.
@@ -1029,7 +1027,7 @@ union hv_partition_synthetic_processor_features {
 		__u64 reserved_z13:1; /* Reserved for access_root_scheduler_reg. */
 		__u64 reserved_z14:1; /* Reserved for access_tsc_invariant_controls. */
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 		/* Extended GVA ranges for HvCallFlushVirtualAddressList hypercall.
 		 * Corresponds to privilege.
@@ -1081,7 +1079,7 @@ union hv_partition_synthetic_processor_features {
 		/* HvCallRetargetDeviceInterrupt is supported. */
 		__u64 retarget_device_interrupt:1;
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 		/* HvCallRestorePartitionTime is supported. */
 		__u64 restore_time : 1;
 
@@ -1101,7 +1099,7 @@ union hv_partition_synthetic_processor_features {
 		__u64 reserved_z35 : 1;
 #endif
 
-#if defined(__aarch64__)
+#if IS_ENABLED(CONFIG_ARM64)
 		__u64 register_intercepts_v1 : 1;
 #else
 		__u64 reserved_z36 : 1;
@@ -1110,20 +1108,20 @@ union hv_partition_synthetic_processor_features {
 		__u64 wake_vps : 1;
 		__u64 access_vp_regs : 1;
 
-#if defined(__aarch64__)
+#if IS_ENABLED(CONFIG_ARM64)
 		__u64 sync_context : 1;
 #else
 		__u64 reserved_z39 : 1;
 #endif
 		__u64 management_vtl_synic_support : 1;
 
-#if defined(__aarch64__)
+#if IS_ENABLED(CONFIG_ARM64)
 		__u64 proxy_interrupt_doorbell_support : 1;
 #else
 		__u64 reserved_z41 : 1;
 #endif
 
-#if defined(__aarch64__)
+#if IS_ENABLED(CONFIG_ARM64)
 		__u64 intercept_system_reset : 1;
 #else
 		__u64 reserved_z42 : 1;
@@ -1304,7 +1302,7 @@ union hv_output_get_vp_cpuid_values {
  */
 #define HV_TRANSLATE_GVA_VALIDATE_EXECUTE    (0x0004)
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 /*
  * Don't enforce any checks related to access mode (supervisor vs. user; SMEP and SMAP are treated
@@ -1327,7 +1325,7 @@ union hv_output_get_vp_cpuid_values {
  */
 #define HV_TRANSLATE_GVA_USER_ACCESS	     (0x0080)
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 /*
  * Enforce the SMAP restriction on supervisor data access to user mode addresses if CR4.SMAP=1
@@ -1464,8 +1462,6 @@ struct hv_connection_info {
 	};
 } __packed;
 
-#if defined(__KERNEL__)
-
 /* Define synthetic interrupt controller flag constants. */
 #define HV_EVENT_FLAGS_COUNT        (256 * 8)
 #define HV_EVENT_FLAGS_BYTE_COUNT   (256)
@@ -1484,8 +1480,6 @@ union hv_synic_event_flags {
 struct hv_synic_event_flags_page {
 	volatile union hv_synic_event_flags event_flags[HV_SYNIC_SINT_COUNT];
 };
-
-#endif /* __KERNEL__ */
 
 /* Define the synthentic interrupt controller event ring format */
 #define HV_SYNIC_EVENT_RING_MESSAGE_COUNT 63
@@ -1535,7 +1529,7 @@ union hv_interrupt_control {
 		__u32 interrupt_type; /* enum hv_interrupt type */
 		__u32 level_triggered : 1;
 		__u32 logical_dest_mode : 1;
-#if defined(__aarch64__)
+#if IS_ENABLED(CONFIG_ARM64)
 		__u32 asserted : 1;
 		__u32 rsvd : 29;
 #else
@@ -1544,7 +1538,7 @@ union hv_interrupt_control {
 	} __packed;
 };
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 struct hv_local_interrupt_controller_state {
 	/* HV_X64_INTERRUPT_CONTROLLER_STATE */
@@ -1602,7 +1596,7 @@ struct hv_synthetic_timers_state {
 	__u64 reserved[5];
 } __packed;
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 union hv_x64_vp_execution_state {
 	__u16 as_uint16;
@@ -1886,7 +1880,7 @@ struct hv_x64_vmgexit_intercept_message {
 	} __packed;
 } __packed;
 
-#endif /* __x86_64__ */
+#endif /* CONFIG_X86 */
 
 struct hv_async_completion_message_payload {
 	__u64 partition_id;
@@ -1912,13 +1906,13 @@ enum hv_cache_type {
 	HV_CACHE_TYPE_UNCACHED		= 0,
 	HV_CACHE_TYPE_WRITE_COMBINING	= 1,
 	HV_CACHE_TYPE_WRITE_THROUGH	= 4,
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 	HV_CACHE_TYPE_WRITE_PROTECTED	= 5,
 #endif
 	HV_CACHE_TYPE_WRITE_BACK	= 6,
 };
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 #define HV_SUPPORTS_REGISTER_INTERCEPT
 
@@ -2024,7 +2018,7 @@ struct hv_input_post_message_direct {
 	__u32 padding2;
 } __packed;
 
-#if defined(__x86_64__)
+#if IS_ENABLED(CONFIG_X86)
 
 #define HV_SUPPORTS_VP_STATE
 
@@ -2110,7 +2104,7 @@ union hv_output_get_vp_set_from_mda {  /* HV_OUTPUT_GET_VP_SET_FROM_MDA */
 	__u64 bitset_buffer[HV_GENERIC_SET_QWORD_COUNT(MSHV_MAX_VPS)];
 } __packed;
 
-#endif /* __x86_64__ */
+#endif /* CONFIG_X86 */
 
 /*
  * Dispatch state for the VP communicated by the hypervisor to the
@@ -2179,10 +2173,8 @@ struct hv_eventlog_message_payload {
 	__u32 buffer_index;
 } __packed;
 
-#if defined(__KERNEL__)
 static_assert(sizeof(struct hv_vp_signal_bitset_scheduler_message) <=
 	(sizeof(struct hv_message) - sizeof(struct hv_message_header)));
-#endif
 
 #define HV_MESSAGE_MAX_PARTITION_VP_PAIR_COUNT \
 	(((sizeof(struct hv_message) - sizeof(struct hv_message_header)) / \
@@ -2199,10 +2191,8 @@ struct hv_vp_signal_pair_scheduler_message {
 	__u8 reserved2[4];
 } __packed;
 
-#if defined(__KERNEL__)
 static_assert(sizeof(struct hv_vp_signal_pair_scheduler_message) ==
 	(sizeof(struct hv_message) - sizeof(struct hv_message_header)));
-#endif
 
 /* Input and output structures for HVCALL_DISPATCH_VP */
 #define HV_DISPATCH_VP_FLAG_CLEAR_INTERCEPT_SUSPEND		0x1
