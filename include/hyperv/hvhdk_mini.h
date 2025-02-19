@@ -617,14 +617,14 @@ union hv_device_id {		/* HV_DEVICE_ID */
 	u64 as_uint64;
 
 	struct {
-		u64 reserved0:62;
-		u64 device_type:2;
+		u64 reserved0 : 62;
+		u64 device_type : 2;
 	};
 
 	/* HV_DEVICE_TYPE_LOGICAL */
 	struct {
-		u64 id:62;
-		u64 device_type:2;
+		u64 id : 62;
+		u64 device_type : 2;
 	} logical;
 
 	/* HV_DEVICE_TYPE_PCI */
@@ -637,11 +637,11 @@ union hv_device_id {		/* HV_DEVICE_ID */
 		hv_pci_segment segment;
 		union hv_pci_bus_range shadow_bus_range;
 
-		u16 phantom_function_bits:2;
-		u16 source_shadow:1;
+		u16 phantom_function_bits : 2;
+		u16 source_shadow : 1;
 
-		u16 rsvdz0:11;
-		u16 device_type:2;
+		u16 rsvdz0 : 11;
+		u16 device_type : 2;
 	} pci;
 
 	/* HV_DEVICE_TYPE_IOAPIC */
@@ -651,15 +651,15 @@ union hv_device_id {		/* HV_DEVICE_ID */
 		u16 rsvdz1;
 		u16 rsvdz2;
 
-		u16 rsvdz3:14;
-		u16 device_type:2;
+		u16 rsvdz3 : 14;
+		u16 device_type : 2;
 	} ioapic;
 
 	/* HV_DEVICE_TYPE_ACPI */
 	struct {
 		u32 input_mapping_base;
-		u32 input_mapping_count:30;
-		u32 device_type:2;
+		u32 input_mapping_count : 30;
+		u32 device_type : 2;
 	} acpi;
 } __packed;
 
@@ -694,8 +694,8 @@ struct hv_input_detach_device {		/* HV_INPUT_DETACH_DEVICE */
 union hv_device_domain_id {
 	u64 as_uint64;
 	struct {
-		u32 type: 4;
-		u32 reserved: 28;
+		u32 type : 4;
+		u32 reserved : 28;
 		u32 id;
 	};
 } __packed;
@@ -710,9 +710,9 @@ struct hv_input_device_domain { /* HV_INPUT_DEVICE_DOMAIN */
 union hv_create_device_domain_flags {	/* HV_CREATE_DEVICE_DOMAIN_FLAGS */
 	u32 as_uint32;
 	struct {
-		u32 forward_progress_required: 1;
-		u32 inherit_owning_vtl: 1;
-		u32 reserved: 30;
+		u32 forward_progress_required : 1;
+		u32 inherit_owning_vtl : 1;
+		u32 reserved : 30;
 	} __packed;
 } __packed;
 
