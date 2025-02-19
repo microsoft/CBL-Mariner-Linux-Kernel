@@ -49,21 +49,13 @@ struct hv_u128 {
  * The Hyper-V TimeRefCount register and the TSC
  * page provide a guest VM clock with 100ns tick rate
  */
-#define HV_CLOCK_HZ (NSEC_PER_SEC/100)
-
-
-/* TODO not in hv headers */
-
-#ifndef BIT
-#define BIT(nr)				(1UL << (nr))
-#endif
+#define HV_CLOCK_HZ (NSEC_PER_SEC / 100)
 
 #define HV_LINUX_VENDOR_ID		0x8100
 #define HV_HYP_PAGE_SHIFT		12
 #define HV_HYP_PAGE_SIZE		BIT(HV_HYP_PAGE_SHIFT)
 #define HV_HYP_PAGE_MASK		(~(HV_HYP_PAGE_SIZE - 1))
 #define HV_HYP_LARGE_PAGE_SHIFT		21
-
 
 #define HV_PARTITION_ID_INVALID		((u64)0)
 #define HV_PARTITION_ID_SELF		((u64)-1)
@@ -154,12 +146,31 @@ struct hv_u128 {
 #define HV_X64_MSR_CRASH_P3			0x40000103
 #define HV_X64_MSR_CRASH_P4			0x40000104
 #define HV_X64_MSR_CRASH_CTL			0x40000105
-/* NOTE: derived, not in hvgdk_mini.h */
+
+#define HV_X64_MSR_HYPERCALL_ENABLE		0x00000001
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_HYPERCALL_PAGE_ADDRESS_SHIFT) - 1))
+
 #define HV_X64_MSR_CRASH_PARAMS		\
 		(1 + (HV_X64_MSR_CRASH_P4 - HV_X64_MSR_CRASH_P0))
 
 #define HV_IPI_LOW_VECTOR	 0x10
 #define HV_IPI_HIGH_VECTOR	 0xff
+
+#define HV_X64_MSR_VP_ASSIST_PAGE_ENABLE	0x00000001
+#define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT	12
+#define HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_MASK	\
+		(~((1ull << HV_X64_MSR_VP_ASSIST_PAGE_ADDRESS_SHIFT) - 1))
+
+/* Hyper-V Enlightened VMCS version mask in nested features CPUID */
+#define HV_X64_ENLIGHTENED_VMCS_VERSION		0xff
+
+#define HV_X64_MSR_TSC_REFERENCE_ENABLE		0x00000001
+#define HV_X64_MSR_TSC_REFERENCE_ADDRESS_SHIFT	12
+
+/* Number of XMM registers used in hypercall input/output */
+#define HV_HYPERCALL_MAX_XMM_REGISTERS		6
 
 struct hv_reenlightenment_control {
 	u64 vector : 8;
@@ -470,6 +481,7 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_FLUSH_DEVICE_DOMAIN			0x00d0
 #define HVCALL_ACQUIRE_SPARSE_SPA_PAGE_HOST_ACCESS	0x00d7
 #define HVCALL_RELEASE_SPARSE_SPA_PAGE_HOST_ACCESS	0x00d8
+#define HVCALL_MODIFY_SPARSE_GPA_PAGE_HOST_VISIBILITY	0x00db
 #define HVCALL_MAP_VP_STATE_PAGE			0x00e1
 #define HVCALL_UNMAP_VP_STATE_PAGE			0x00e2
 #define HVCALL_GET_VP_STATE				0x00e3
@@ -2268,22 +2280,6 @@ union hv_register_vsm_partition_status {
 	};
 };
 
-/* HvGetVpRegisters returns an array of these output elements */
-struct hv_get_vp_registers_output {
-	union {
-		struct {
-			u32 a;
-			u32 b;
-			u32 c;
-			u32 d;
-		} as32 __packed;
-		struct {
-			u64 low;
-			u64 high;
-		} as64 __packed;
-	};
-};
-
 #define HV_ARM64_PENDING_EVENT_HEADER \
 	u8 event_pending : 1; \
 	u8 event_type : 3; \
@@ -2363,6 +2359,7 @@ union hv_x64_pending_interruption_register {
 	} __packed;
 };
 
+#ifdef CONFIG_X86
 #define HV_SUPPORTS_SEV_SNP_GUESTS
 
 union hv_x64_register_sev_control {
@@ -2373,6 +2370,7 @@ union hv_x64_register_sev_control {
 		u64 vmsa_gpa_page_number : 52;
 	} __packed;
 };
+#endif
 
 union hv_register_value {
 	struct hv_u128 reg128;
@@ -2409,6 +2407,29 @@ union hv_register_value {
 #endif
 };
 
+/* NOTE: Linux helper struct - NOT from Hyper-V code. */
+struct hv_output_get_vp_registers {
+	DECLARE_FLEX_ARRAY(union hv_register_value, values);
+};
+
+#if defined(CONFIG_ARM64)
+/* HvGetVpRegisters returns an array of these output elements */
+struct hv_get_vp_registers_output {
+	union {
+		struct {
+			u32 a;
+			u32 b;
+			u32 c;
+			u32 d;
+		} as32 __packed;
+		struct {
+			u64 low;
+			u64 high;
+		} as64 __packed;
+	};
+};
+#endif /* CONFIG_ARM64 */
+
 struct hv_register_assoc {
 	u32 name;			/* enum hv_register_name */
 	u32 reserved1;
@@ -2444,6 +2465,23 @@ struct hv_send_ipi {	 /* HV_INPUT_SEND_SYNTHETIC_CLUSTER_IPI */
 } __packed;
 
 #define HV_X64_VTL_MASK			GENMASK(3, 0)
+
+/* Hyper-V memory host visibility */
+enum hv_mem_host_visibility {
+	VMBUS_PAGE_NOT_VISIBLE		= 0,
+	VMBUS_PAGE_VISIBLE_READ_ONLY	= 1,
+	VMBUS_PAGE_VISIBLE_READ_WRITE	= 3
+};
+
+/* HvCallModifySparseGpaPageHostVisibility hypercall */
+#define HV_MAX_MODIFY_GPA_REP_COUNT	((HV_HYP_PAGE_SIZE / sizeof(u64)) - 2)
+struct hv_gpa_range_for_visibility {
+	u64 partition_id;
+	u32 host_visibility : 2;
+	u32 reserved0 : 30;
+	u32 reserved1;
+	u64 gpa_page_list[HV_MAX_MODIFY_GPA_REP_COUNT];
+} __packed;
 
 #if defined(CONFIG_X86)
 union hv_msi_address_register { /* HV_MSI_ADDRESS */
