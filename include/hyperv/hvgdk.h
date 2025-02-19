@@ -24,8 +24,8 @@ enum hv_unimplemented_msr_action {
 union hv_connection_id {
 	u32 asu32;
 	struct {
-		u32 id:24;
-		u32 reserved:8;
+		u32 id : 24;
+		u32 reserved : 8;
 	} __packed u;
 };
 
@@ -44,10 +44,10 @@ struct hv_input_unmap_gpa_pages {
  */
 struct hv_vmcb_enlightenments {
 	struct __packed hv_enlightenments_control {
-		u32 nested_flush_hypercall:1;
-		u32 msr_bitmap:1;
+		u32 nested_flush_hypercall : 1;
+		u32 msr_bitmap : 1;
 		u32 enlightened_npt_tlb: 1;
-		u32 reserved:29;
+		u32 reserved : 29;
 	} __packed hv_enlightenments_control;
 	u32 hv_vp_id;
 	u64 hv_vm_id;
