@@ -22,8 +22,7 @@
 #include "mshv_eventfd.h"
 #include "mshv.h"
 
-u32
-synic_event_ring_get_queued_port(u32 sint_index)
+static u32 synic_event_ring_get_queued_port(u32 sint_index)
 {
 	struct hv_synic_event_ring_page **event_ring_page;
 	volatile struct hv_synic_event_ring *ring;
