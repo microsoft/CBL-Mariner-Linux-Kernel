@@ -271,6 +271,7 @@ bool hv_vcpu_is_preempted(int vcpu);
 static inline void hv_apic_init(void) {}
 #endif
 
+#if IS_ENABLED(CONFIG_HYPERV_IOMMU)
 struct irq_domain *hv_create_pci_msi_domain(void);
 
 int hv_map_msi_interrupt(struct irq_data *data,
@@ -281,9 +282,49 @@ int hv_map_ioapic_interrupt(int ioapic_id, bool level, int vcpu, int vector,
 		struct hv_interrupt_entry *entry);
 int hv_unmap_ioapic_interrupt(int ioapic_id, struct hv_interrupt_entry *entry);
 u64 hv_build_devid_oftype(struct pci_dev *pdev, enum hv_device_type type);
-u64 hv_pci_vmbus_device_id(struct pci_dev *pdev);
 bool hv_pcidev_is_attached_dev(struct pci_dev *pdev);
 u64 hv_iommu_get_curr_partid(void);
+#else
+static inline struct irq_domain *hv_create_pci_msi_domain(void)
+{
+	return NULL;
+}
+static inline int hv_map_msi_interrupt(struct irq_data *data,
+					struct hv_interrupt_entry *out_entry)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_unmap_msi_interrupt(struct pci_dev *dev,
+					  struct hv_interrupt_entry *hvirqe)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_map_ioapic_interrupt(int ioapic_id, bool level,
+					   int vcpu, int vector,
+					   struct hv_interrupt_entry *entry)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_unmap_ioapic_interrupt(int ioapic_id,
+					     struct hv_interrupt_entry *entry)
+{
+	return -EOPNOTSUPP;
+}
+static inline u64 hv_build_devid_oftype(struct pci_dev *pdev,
+					 enum hv_device_type type)
+{
+	return 0;
+}
+static inline bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
+{
+	return false;
+}
+static inline u64 hv_iommu_get_curr_partid(void)
+{
+	return HV_PARTITION_ID_INVALID;
+}
+#endif
+u64 hv_pci_vmbus_device_id(struct pci_dev *pdev);
 void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg);
 extern bool hv_no_attdev;
 
