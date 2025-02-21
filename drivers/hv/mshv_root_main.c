@@ -3409,7 +3409,7 @@ root_sched_deinit:
 	return err;
 }
 
-int __init mshv_parent_partition_init(void)
+static int __init mshv_parent_partition_init(void)
 {
 	int ret;
 	struct device *dev;
@@ -3495,7 +3495,7 @@ device_deregister:
 	return ret;
 }
 
-void __exit mshv_parent_partition_exit(void)
+static void __exit mshv_parent_partition_exit(void)
 {
 	hv_setup_mshv_handler(NULL);
 	mshv_port_table_fini();
