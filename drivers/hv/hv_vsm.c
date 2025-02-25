@@ -130,9 +130,23 @@ static int hv_vsm_signal_end_of_boot(void)
 	return hv_vsm_vtlcall(&args);
 }
 
+static int hv_vsm_protect_memory(phys_addr_t pa, unsigned long nranges)
+{
+	struct hv_vtlcall_param args = {0};
+
+	if (!hv_vsm_boot_success || !hv_vsm_mbec_enabled)
+		return -EINVAL;
+
+	args.a0 = VSM_VTL_CALL_FUNC_ID_PROTECT_MEMORY;
+	args.a1 = pa;
+	args.a2 = nranges;
+	return hv_vsm_vtlcall(&args);
+}
+
 static struct heki_hypervisor hyperv_heki_hypervisor = {
 	.lock_crs = hv_vsm_lock_crs,
 	.finish_boot = hv_vsm_signal_end_of_boot,
+	.protect_memory = hv_vsm_protect_memory,
 };
 
 int __init hv_vsm_init_heki(void)

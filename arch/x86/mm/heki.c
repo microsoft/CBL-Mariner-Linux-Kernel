@@ -49,6 +49,12 @@ void heki_arch_init(void)
 	heki_init_perm(kernel_va, direct_map_va, &args);
 	heki_init_perm(direct_map_end, kernel_end, &args);
 
+	/*
+	 * Pass guest pages along with their permissions to the host so EPT
+	 * permissions can be set for the pages.
+	 */
+	heki_protect(direct_map_va, direct_map_end, &args);
+
 	xa_destroy(&args.permissions);
 
 	mutex_unlock(&heki.lock);
