@@ -6,6 +6,7 @@
  */
 
 #include <linux/heki.h>
+#include "../../kernel/module/internal.h"
 
 #include "common.h"
 
@@ -80,4 +81,47 @@ void heki_load_kdata(void)
 
 	heki_cleanup_args(&args);
 	vfree(heki_module_certs);
+}
+
+long heki_validate_module(struct module *mod, struct load_info *info, int flags)
+{
+	struct heki_hypervisor *hypervisor = heki.hypervisor;
+	struct heki_args args = {};
+	long token;
+
+	if (!hypervisor)
+		return 0;
+
+	mutex_lock(&heki.lock);
+
+	/* Load original unmodified module ELF buffer. */
+	args.attributes = MOD_ELF;
+	heki_walk((unsigned long)info->orig_hdr,
+		  (unsigned long)info->orig_hdr + info->orig_len,
+		  heki_get_ranges, &args);
+
+	/* Load module sections. */
+	for_each_mod_mem_type(type) {
+		struct module_memory *mem = &mod->mem[type];
+
+		if (!mem->size)
+			continue;
+
+		args.attributes = type;
+		heki_walk((unsigned long)mem->base,
+			  (unsigned long)mem->base + mem->size,
+			  heki_get_ranges, &args);
+	}
+
+	token = hypervisor->validate_module(args.head_pa, args.nranges, flags);
+	if (token < 0) {
+		pr_warn("Failed to validate module %s (%ld).\n",
+			info->name, token);
+	}
+
+	heki_cleanup_args(&args);
+
+	mutex_unlock(&heki.lock);
+
+	return token;
 }
