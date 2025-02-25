@@ -13,6 +13,7 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/cpumask.h>
+#include <linux/utsname.h>
 #include <linux/vmalloc.h>
 #include <linux/verification.h>
 #include <linux/acpi.h>
@@ -858,27 +859,44 @@ free_sk:
 
 int __init hv_vsm_boot_init(void)
 {
+	char *sk_path = NULL, *sk_sig_path = NULL;
 	cpumask_var_t mask;
 	unsigned int boot_cpu;
 	u16 partition_enabled_vtl_set = 0, partition_mbec_enabled_vtl_set = 0;
 	u16 vp_enabled_vtl_set = 0;
 	u8 partition_max_vtl, active_mbec_enabled = 0;
-	int ret = 0;
+	int ret = 0, is_legacy_sk_path = 0;
 
 	hv_vsm_reserve_sk_mem();
 
-	sk = filp_open("/usr/lib/firmware/vmlinux.bin", O_RDONLY, 0);
-	if (IS_ERR(sk)) {
-		pr_err("%s: File usr/lib/firmware/vmlinux.bin not found\n", __func__);
-		ret = -ENOENT;
-		hv_vsm_boot_panic = true;
+	sk_path = kasprintf(GFP_KERNEL, "/lib/modules/%s/secure/vmlinux.bin",
+			    init_utsname()->release);
+	if (!sk_path) {
+		ret = -ENOMEM;
 		goto free_mem;
+	}
+	sk = filp_open(sk_path, O_RDONLY, 0);
+	if (IS_ERR(sk)) {
+		pr_err("%s: File %s not found, trying %s\n", __func__, sk_path, "/usr/lib/firmware/vmlinux.bin");
+		is_legacy_sk_path = 1;
+		sk = filp_open("/usr/lib/firmware/vmlinux.bin", O_RDONLY, 0);
+		if (IS_ERR(sk)) {
+			pr_err("%s: File %s not found\n", __func__, "/usr/lib/firmware/vmlinux.bin");
+			ret = -ENOENT;
+			hv_vsm_boot_panic = true;
+			goto free_mem;
+		}
 	}
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	sk_sig = filp_open("/usr/lib/firmware/vmlinux.bin.p7s", O_RDONLY, 0);
+	sk_sig_path = kasprintf(GFP_KERNEL, "%s.p7s", is_legacy_sk_path ? "/usr/lib/firmware/vmlinux.bin" : sk_path);
+	if (!sk_sig_path) {
+		ret = -ENOMEM;
+		goto close_sk_file;
+	}
+	sk_sig = filp_open(sk_sig_path, O_RDONLY, 0);
 	if (IS_ERR(sk_sig)) {
-		pr_err("%s: File usr/lib/firmware/vmlinux.bin.p7s not found\n", __func__);
+		pr_err("%s: File %s not found\n", __func__, sk_sig_path);
 		ret = -ENOENT;
 		hv_vsm_boot_panic = true;
 		goto close_sk_file;
@@ -1002,6 +1020,8 @@ close_sk_file:
 free_mem:
 	vunmap(vsm_skm_va);
 	vsm_skm_pa = 0;
+	kfree(sk_sig_path);
+	kfree(sk_path);
 
 	if (hv_vsm_boot_panic)
 		panic("%s: VTL1 boot failure caused kernel panic; consult log for more details.\n",
