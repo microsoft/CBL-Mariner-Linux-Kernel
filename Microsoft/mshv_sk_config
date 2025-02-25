@@ -241,8 +241,11 @@ CONFIG_SYSTEM_DATA_VERIFICATION=y
 # Kexec and crash features
 #
 # CONFIG_KEXEC is not set
-# CONFIG_KEXEC_FILE is not set
 # CONFIG_CRASH_DUMP is not set
+CONFIG_KEXEC_FILE=y
+CONFIG_KEXEC_SIG=y
+# CONFIG_KEXEC_SIG_FORCE is not set
+CONFIG_KEXEC_BZIMAGE_VERIFY_SIG=y
 # end of Kexec and crash features
 # end of General setup
 
@@ -472,6 +475,7 @@ CONFIG_ARCH_CONFIGURES_CPU_MITIGATIONS=y
 #
 # General architecture-dependent options
 #
+CONFIG_KEXEC_CORE=y
 CONFIG_HOTPLUG_SMT=y
 CONFIG_HOTPLUG_CORE_SYNC=y
 CONFIG_HOTPLUG_CORE_SYNC_DEAD=y
