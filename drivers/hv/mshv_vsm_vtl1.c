@@ -1088,6 +1088,126 @@ free_ranges:
 	return ret;
 }
 
+static int mshv_vsm_create_blacklist_keys(void)
+{
+	struct heki_mem *mem = &vtl0.mem[HEKI_REVOCATION_CERTS];
+	const u8 *p, *end;
+	size_t plen;
+	int ret = 0;
+
+	if (!mem->va || !mem->size) {
+		pr_info("%s: No revocation certificates\n", __func__);
+		return 0;
+	}
+
+	/* Iteration code copied from x509_loader.c which requires a pointer to the keyring
+	 * as an argument, something we cannot get for the blacklist keyring.
+	 */
+	p = mem->va;
+	end = p + mem->size;
+	while (p < end) {
+		/* Each cert begins with an ASN.1 SEQUENCE tag and must be more
+		 * than 256 bytes in size.
+		 */
+		if (end - p < 4)
+			goto unmap;
+		if (p[0] != 0x30 && p[1] != 0x82)
+			goto unmap;
+		plen = (p[2] << 8) | p[3];
+		plen += 4;
+		if (plen > end - p)
+			goto unmap;
+
+		ret = add_key_to_revocation_list(p, plen);
+		if (ret) {
+			pr_warn("Failed to blacklist revocation certificate\n");
+			goto unmap;
+		} else {
+			pr_debug("%s: Blacklisted revocation certificate\n", __func__);
+		}
+
+		p += plen;
+	}
+
+unmap:
+	vsm_unmap(mem);
+	return ret;
+}
+
+static int mshv_vsm_save_blacklist_hashes(void)
+{
+	struct heki_mem *mem = &vtl0.mem[HEKI_BLACKLIST_HASHES];
+	void *current_hash = mem->va;
+	unsigned long num_hashes = mem->size / HEKI_MAX_TOTAL_HASH_LEN;
+	u8 *binary_hash;
+	size_t binary_hash_len, current_hash_len;
+	int blacklist_type, i, ret = 0;
+
+	if (!current_hash || !num_hashes) {
+		pr_info("%s: No blacklist hashes\n", __func__);
+		return 0;
+	}
+
+	binary_hash = kmalloc(MAX_HASH_LEN / 2, GFP_KERNEL);
+
+	if (!binary_hash) {
+		pr_err("Memory allocation for binary_hash failed\n");
+		ret = -ENOMEM;
+		goto unmap;
+	}
+
+	for (i = 0; i < num_hashes; i++) {
+		/* Set blacklist_type arg based on hash prefix. Must be tbs or bin.
+		 * We extract the hash type to ensure the hash data is properly handled
+		 * by the blacklist code and that the key descriptions are consistent with
+		 * those from VTL0
+		 */
+		if (strncmp(current_hash, "bin", 3) == 0) {
+			blacklist_type = BLACKLIST_HASH_BINARY;
+		} else if (strncmp(current_hash, "tbs", 3) == 0) {
+			blacklist_type = BLACKLIST_HASH_X509_TBS;
+		} else {
+			pr_warn("Unknown blacklist hash prefix\n");
+			current_hash += HEKI_MAX_TOTAL_HASH_LEN;
+			continue;
+		}
+
+		/* Chop prefix */
+		current_hash = current_hash + 4;
+		current_hash_len = strlen(current_hash);
+
+		/* Convert the hash to binary. This is done because the public function call
+		 * mark_hash_blacklisted expects binary data, but we store hashes in hexidecimal
+		 * as the VTL0 function we get hashes from is mark_raw_hash_blacklisted,
+		 * a static function that takes in the hashes in raw hexidecimal form.
+		 * The reason we store the hashes from this function is that when the
+		 * revocation keyring is initialized, mark_raw_hash_blacklisted is called
+		 * internally bypassing the public call, but we still need to save those hashes,
+		 * so we make our heki call from the static function mark_raw_hash_blacklisted.
+		 */
+		binary_hash_len = current_hash_len / 2;
+
+		memset(binary_hash, 0, MAX_HASH_LEN / 2);
+		if (hex2bin(binary_hash, current_hash, binary_hash_len) != 0) {
+			pr_warn("Invalid hash string\n");
+			current_hash += HEKI_MAX_TOTAL_HASH_LEN - 4;
+			continue;
+		}
+
+		ret = mark_hash_blacklisted(binary_hash, binary_hash_len, blacklist_type);
+		if (ret)
+			pr_warn("Error marking hash as blacklisted\n");
+
+		/* Move the pointer to the start of the next hash */
+		current_hash += HEKI_MAX_TOTAL_HASH_LEN - 4;
+	}
+
+	kfree(binary_hash);
+unmap:
+	vsm_unmap(mem);
+	return ret;
+}
+
 static void *vsm_vtl0_va_to_vtl1_va(struct heki_mem *mem, void *va)
 {
 	void *vtl0_va = (void *)mem->ranges->va;
@@ -1148,6 +1268,14 @@ static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 		goto free_ranges;
 
 	ret =  mshv_vsm_create_trusted_keys();
+	if (ret)
+		goto free_ranges;
+
+	ret =  mshv_vsm_create_blacklist_keys();
+	if (ret)
+		goto free_ranges;
+
+	ret =  mshv_vsm_save_blacklist_hashes();
 	if (ret)
 		goto free_ranges;
 
