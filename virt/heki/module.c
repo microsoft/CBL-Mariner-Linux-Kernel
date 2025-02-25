@@ -73,29 +73,6 @@ static int __init heki_copy_boot_certs(void)
 }
 core_initcall(heki_copy_boot_certs);
 
-static void heki_get_ranges(struct heki_args *args)
-{
-	phys_addr_t pa, pa_end, pa_next;
-	unsigned long va, va_end, va_next;
-
-	if (!pfn_valid(args->pa >> PAGE_SHIFT))
-		return;
-
-	va_end = args->va + args->size;
-	pa_end = args->pa + args->size;
-	for (va = args->va, pa = args->pa;
-	     pa < pa_end;
-	     va = va_next, pa = pa_next) {
-		va_next = (va & PAGE_MASK) + PAGE_SIZE;
-		pa_next = (pa & PAGE_MASK) + PAGE_SIZE;
-		if (pa_next > pa_end) {
-			va_next = va_end;
-			pa_next = pa_end;
-		}
-		heki_add_range(args, va, pa, pa_next);
-	}
-}
-
 void heki_load_kdata(void)
 {
 	struct heki_hypervisor *hypervisor = heki.hypervisor;

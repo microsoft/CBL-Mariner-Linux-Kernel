@@ -263,10 +263,6 @@ static void hv_machine_shutdown(void)
 
 	/* The function calls stop_other_cpus(). */
 	native_machine_shutdown();
-
-	/* Disable the hypercall page when there is only 1 active CPU. */
-	if (kexec_in_progress)
-		hyperv_cleanup();
 }
 
 static void hv_guest_crash_shutdown(struct pt_regs *regs)
@@ -276,7 +272,10 @@ static void hv_guest_crash_shutdown(struct pt_regs *regs)
 
 	/* The function calls crash_smp_send_stop(). */
 	native_machine_crash_shutdown(regs);
+}
 
+static void hv_machine_kexec(void)
+{
 	/* Disable the hypercall page when there is only 1 active CPU. */
 	hyperv_cleanup();
 }
@@ -1055,8 +1054,10 @@ static void __init ms_hyperv_init_platform(void)
 
 #if IS_ENABLED(CONFIG_HYPERV) && defined(CONFIG_KEXEC_CORE)
 	machine_ops.shutdown = hv_machine_shutdown;
-	if (!hv_root_partition())
+	if (!hv_root_partition()) {
 		machine_ops.crash_shutdown = hv_guest_crash_shutdown;
+		machine_ops.kexec = hv_machine_kexec;
+	}
 #endif
 	if (ms_hyperv.features & HV_ACCESS_TSC_INVARIANT) {
 		/*
