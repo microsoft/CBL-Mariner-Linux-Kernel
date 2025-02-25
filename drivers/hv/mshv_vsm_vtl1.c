@@ -1218,6 +1218,58 @@ static int vsm_set_guest_module_permissions(struct heki_mod *hmod)
 	return err;
 }
 
+static int vsm_free_guest_module_init(long token)
+{
+	struct heki_mod *hmod;
+	bool found;
+	unsigned long permissions;
+	int err = 0;
+
+	mutex_lock(&vtl0.lock);
+
+	found = false;
+	list_for_each_entry(hmod, &vtl0.modules, node) {
+		if (hmod->token == token) {
+			found = true;
+			break;
+		}
+	}
+
+	if (!found) {
+		/* Silently ignore the request. */
+		goto unlock;
+	}
+
+	for_each_mod_mem_type(type) {
+		bool free = true;
+
+		switch (type) {
+		case MOD_RO_AFTER_INIT:
+			permissions = MEM_ATTR_READ;
+			free = false;
+			break;
+		case MOD_INIT_TEXT:
+			permissions = MEM_ATTR_READ | MEM_ATTR_WRITE;
+			break;
+		case MOD_INIT_DATA:
+			permissions = MEM_ATTR_READ | MEM_ATTR_WRITE;
+			break;
+		case MOD_INIT_RODATA:
+			permissions = MEM_ATTR_READ | MEM_ATTR_WRITE;
+			break;
+		default:
+			continue;
+		}
+
+		err = vsm_set_module_permissions(hmod, type, permissions, free);
+		if (err)
+			break;
+	}
+unlock:
+	mutex_unlock(&vtl0.lock);
+	return err;
+}
+
 static void vsm_resolve_func(char *name, Elf64_Sym *sym);
 
 static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
@@ -1667,6 +1719,10 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 		status = mshv_vsm_validate_guest_module(_vtl_params->a1,
 							_vtl_params->a2,
 							_vtl_params->a3);
+		break;
+	case VSM_VTL_CALL_FUNC_ID_FREE_MODULE_INIT:
+		pr_debug("%s : VSM_FREE_MODULE_INIT\n", __func__);
+		status = vsm_free_guest_module_init(_vtl_params->a1);
 		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
