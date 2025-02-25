@@ -17,6 +17,7 @@
 #include <linux/uidgid.h>
 #include <keys/asymmetric-type.h>
 #include <keys/system_keyring.h>
+#include <linux/heki.h>
 #include "blacklist.h"
 
 /*
@@ -197,6 +198,8 @@ static int mark_raw_hash_blacklisted(const char *hash)
 		else
 			pr_err("Problem blacklisting hash %s: %pe\n", hash, key);
 		return PTR_ERR(key);
+	} else {
+		heki_store_blacklist_raw_hashes(hash);
 	}
 	return 0;
 }
