@@ -798,6 +798,13 @@ bool hyp_set_default_idle(void)
 
 struct cpumask cpus_stop_mask;
 
+#ifdef CONFIG_HYPERV_VTL_MODE
+void hv_vtl_set_idle(void (*idle)(void))
+{
+	static_call_update(x86_idle, idle);
+}
+#endif
+
 void __noreturn stop_this_cpu(void *dummy)
 {
 	struct cpuinfo_x86 *c = this_cpu_ptr(&cpu_info);
