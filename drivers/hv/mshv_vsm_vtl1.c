@@ -1432,6 +1432,45 @@ found:
 	sym->st_value = (unsigned long)addr + offset;
 }
 
+static int vsm_unload_guest_module(long token)
+{
+	struct heki_mod *hmod;
+	bool found;
+	unsigned long permissions;
+
+	mutex_lock(&vtl0.lock);
+
+	found = false;
+	list_for_each_entry(hmod, &vtl0.modules, node) {
+		if (hmod->token == token) {
+			found = true;
+			break;
+		}
+	}
+
+	if (!found) {
+		/* Silently ignore the request. */
+		goto unlock;
+	}
+
+	for_each_mod_mem_type(type) {
+		permissions = MEM_ATTR_READ | MEM_ATTR_WRITE;
+		vsm_set_module_permissions(hmod, type, permissions, true);
+	}
+
+	list_del(&hmod->node);
+
+	hmod->mem[MOD_DATA].retain = false;
+	hmod->mem[MOD_RODATA].retain = false;
+	vsm_unmap_all(hmod->mem, MOD_ELF + 1);
+
+	vfree(hmod->ranges);
+	kfree(hmod);
+unlock:
+	mutex_unlock(&vtl0.lock);
+	return 0;
+}
+
 /********************** Boot Secondary CPUs **********************/
 static int mshv_vsm_boot_aps(unsigned int cpu_online_mask_pfn,
 							unsigned int boot_signal_pfn)
@@ -1723,6 +1762,10 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 	case VSM_VTL_CALL_FUNC_ID_FREE_MODULE_INIT:
 		pr_debug("%s : VSM_FREE_MODULE_INIT\n", __func__);
 		status = vsm_free_guest_module_init(_vtl_params->a1);
+		break;
+	case VSM_VTL_CALL_FUNC_ID_UNLOAD_MODULE:
+		pr_debug("%s : VSM_UNLOAD_MODULE\n", __func__);
+		status = vsm_unload_guest_module(_vtl_params->a1);
 		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
