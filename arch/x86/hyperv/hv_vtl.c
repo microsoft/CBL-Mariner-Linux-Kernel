@@ -66,13 +66,29 @@ static void hv_vtl_ap_entry(void)
 	((secondary_startup_64_fn)secondary_startup_64)(&boot_params, &boot_params);
 }
 
-static int hv_vtl_bringup_vcpu(u32 target_vp_index, int cpu, u64 eip_ignored)
+static int __hv_vtl_enable_vcpu(struct hv_enable_vp_vtl *input)
 {
 	u64 status;
 	int ret = 0;
-	struct hv_enable_vp_vtl *input;
 	unsigned long irq_flags;
 
+	local_irq_save(irq_flags);
+
+	status = hv_do_hypercall(HVCALL_ENABLE_VP_VTL, input, NULL);
+
+	if (!hv_result_success(status) &&
+	    hv_result(status) != HV_STATUS_VTL_ALREADY_ENABLED) {
+		pr_err("HVCALL_ENABLE_VP_VTL failed for VP : %d ! [Err: %#llx\n]",
+		       input->vp_index, status);
+		ret = -EINVAL;
+	}
+
+	local_irq_restore(irq_flags);
+	return ret;
+}
+
+static void hv_vtl_populate_vp_context(struct hv_enable_vp_vtl *input, u32 target_vp_index, int cpu)
+{
 	struct desc_ptr gdt_ptr;
 	struct desc_ptr idt_ptr;
 
@@ -92,14 +108,6 @@ static int hv_vtl_bringup_vcpu(u32 target_vp_index, int cpu, u64 eip_ignored)
 	tss = (struct ldttss_desc *)(gdt + GDT_ENTRY_TSS);
 	ldt = (struct ldttss_desc *)(gdt + GDT_ENTRY_LDT);
 
-	local_irq_save(irq_flags);
-
-	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
-	memset(input, 0, sizeof(*input));
-
-	input->partition_id = HV_PARTITION_ID_SELF;
-	input->vp_index = target_vp_index;
-	input->target_vtl.target_vtl = HV_VTL_MGMT;
 
 	/*
 	 * The x86_64 Linux kernel follows the 16-bit -> 32-bit -> 64-bit
@@ -150,17 +158,29 @@ static int hv_vtl_bringup_vcpu(u32 target_vp_index, int cpu, u64 eip_ignored)
 	input->vp_context.tr.base = hv_vtl_system_desc_base(tss);
 	input->vp_context.tr.limit = hv_vtl_system_desc_limit(tss);
 	input->vp_context.tr.attributes = 0x8b;
+}
 
-	status = hv_do_hypercall(HVCALL_ENABLE_VP_VTL, input, NULL);
+static int hv_vtl_bringup_vcpu(u32 target_vp_index, int cpu, u64 eip_ignored)
+{
+	u64 status;
+	int ret = 0;
+	unsigned long irq_flags;
+	struct hv_enable_vp_vtl *input;
 
-	if (!hv_result_success(status) &&
-	    hv_result(status) != HV_STATUS_VTL_ALREADY_ENABLED) {
-		pr_err("HVCALL_ENABLE_VP_VTL failed for VP : %d ! [Err: %#llx\n]",
-		       target_vp_index, status);
-		ret = -EINVAL;
-		goto free_lock;
-	}
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(input, 0, sizeof(*input));
 
+	input->partition_id = HV_PARTITION_ID_SELF;
+	input->vp_index = target_vp_index;
+	input->target_vtl.target_vtl = HV_VTL_MGMT;
+	hv_vtl_populate_vp_context(input, target_vp_index, cpu);
+
+	ret = __hv_vtl_enable_vcpu(input);
+
+	if (ret)
+		return ret;
+
+	local_irq_save(irq_flags);
 	status = hv_do_hypercall(HVCALL_START_VP, input, NULL);
 
 	if (!hv_result_success(status)) {
@@ -168,8 +188,6 @@ static int hv_vtl_bringup_vcpu(u32 target_vp_index, int cpu, u64 eip_ignored)
 		       target_vp_index, status);
 		ret = -EINVAL;
 	}
-
-free_lock:
 	local_irq_restore(irq_flags);
 
 	return ret;
