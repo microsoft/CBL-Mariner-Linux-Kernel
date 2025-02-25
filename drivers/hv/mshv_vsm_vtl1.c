@@ -13,6 +13,8 @@
 #include <linux/fs.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
+#include <linux/heki.h>
+#include <linux/mem_attr.h>
 #include <asm/mshyperv.h>
 #include <asm/fpu/api.h>
 #include <asm/cpu.h>
@@ -529,6 +531,119 @@ static int hv_modify_vtl_protection_mask(u64 start, u64 number_of_pages, u32 pag
 	return hv_result(status);
 }
 
+/* Read in guest ranges. */
+static struct heki_range *__vsm_read_ranges(u64 pa, unsigned long nranges)
+{
+	struct heki_page *heki_page;
+	struct heki_range *ranges;
+	struct page *page;
+	unsigned long max_nranges, cur_nranges;
+	size_t size;
+	unsigned long n;
+
+	if (pa & (PAGE_SIZE - 1)) {
+		pr_warn("heki: list %llx not page aligned\n", pa);
+		return NULL;
+	}
+
+	ranges = vmalloc(sizeof(*ranges) * nranges);
+	if (!ranges) {
+		pr_warn("heki: Can't allocate %ld ranges\n", nranges);
+		return NULL;
+	}
+
+	max_nranges = (PAGE_SIZE - sizeof(*heki_page)) / sizeof(*ranges);
+
+	for (n = 0; n < nranges; n += cur_nranges) {
+		page = pfn_to_page(pa >> PAGE_SHIFT);
+		heki_page = vmap(&page, 1, VM_MAP, PAGE_KERNEL);
+
+		cur_nranges = heki_page->nranges;
+		pa = heki_page->next_pa;
+
+		if (cur_nranges > max_nranges || cur_nranges > (nranges - n)) {
+			pr_warn("%s: Too many ranges\n", __func__);
+			vfree(ranges);
+			return NULL;
+		}
+
+		size = cur_nranges * sizeof(*ranges);
+		memcpy(&ranges[n], heki_page->ranges, size);
+
+		vunmap(heki_page);
+	}
+	return ranges;
+}
+
+static int mshv_vsm_protect_memory(u64 pa, unsigned long nranges)
+{
+	struct heki_range *ranges, *range;
+	unsigned long attributes, n;
+	u32 permissions;
+	int i, err = 0;
+
+	ranges = __vsm_read_ranges(pa, nranges);
+	if (!ranges)
+		return -EINVAL;
+
+	/* Check all parameters before setting any permissions. */
+	for (i = 0; i < nranges; i++) {
+		range = &ranges[i];
+
+		if (!PAGE_ALIGNED(range->va)) {
+			pr_warn("%s: GVA not aligned: %lx\n",
+				__func__, range->va);
+			err = -EINVAL;
+			goto out;
+		}
+		if (!PAGE_ALIGNED(range->pa)) {
+			pr_warn("%s: GPA not aligned: %llx\n",
+				__func__, range->pa);
+			err = -EINVAL;
+			goto out;
+		}
+		if (!PAGE_ALIGNED(range->epa)) {
+			pr_warn("%s: GPA not aligned: %llx\n",
+				__func__, range->epa);
+			err = -EINVAL;
+			goto out;
+		}
+
+		attributes = range->attributes;
+		if (!attributes || (attributes & ~MEM_ATTR_PROT)) {
+			err = -EINVAL;
+			goto out;
+		}
+	}
+
+	/* Walk the ranges, apply the permissions for each guest page. */
+	for (i = 0; i < nranges; i++) {
+		range = &ranges[i];
+		attributes = range->attributes;
+
+		permissions = 0;
+		if (attributes & MEM_ATTR_READ) {
+			permissions |= (HV_PAGE_READABLE |
+					HV_PAGE_USER_EXECUTABLE);
+		}
+		if (attributes & MEM_ATTR_WRITE)
+			permissions |= HV_PAGE_WRITABLE;
+		if (attributes & MEM_ATTR_EXEC)
+			permissions |= HV_PAGE_EXECUTABLE;
+
+		n = (range->epa - range->pa) >> PAGE_SHIFT;
+		err = hv_modify_vtl_protection_mask(range->pa, n, permissions);
+		if (err) {
+			pr_err("%s: failed pa=0x%llx, nranges=%lu, perm=0x%x\n",
+			       __func__, range->pa, n, permissions);
+			goto out;
+		}
+	}
+out:
+	vfree(ranges);
+	return err;
+}
+
 static void __save_vtl0_registers(void)
 {
 	struct hv_vsm_per_cpu *per_cpu = this_cpu_ptr(&vsm_per_cpu);
@@ -865,6 +980,11 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 		pr_debug("%s: VSM_SIGNAL_END_OF_BOOT\n", __func__);
 		vtl0_end_of_boot = true;
 		status = 0;
+		break;
+	case VSM_VTL_CALL_FUNC_ID_PROTECT_MEMORY:
+		pr_debug("%s : VSM_PROTECT_MEMORY\n", __func__);
+		if (!vtl0_end_of_boot)
+			status = mshv_vsm_protect_memory(_vtl_params->a1, _vtl_params->a2);
 		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
