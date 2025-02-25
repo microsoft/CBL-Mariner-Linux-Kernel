@@ -169,3 +169,22 @@ void heki_free_module_init(struct module *mod)
 
 	mutex_unlock(&heki.lock);
 }
+
+void heki_unload_module(struct module *mod)
+{
+	struct heki_hypervisor *hypervisor = heki.hypervisor;
+	int err;
+
+	if (!hypervisor)
+		return;
+
+	mutex_lock(&heki.lock);
+
+	err = hypervisor->unload_module(mod->heki_token);
+	if (err) {
+		pr_warn("Failed to unload module %s (%d).\n",
+			mod->name, err);
+	}
+
+	mutex_unlock(&heki.lock);
+}
