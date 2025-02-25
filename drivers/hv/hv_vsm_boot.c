@@ -63,6 +63,7 @@
 #define HV_VTL1_ENABLE_BIT      BIT(1)
 
 #define VSM_BOOT_SIGNAL	0xDC
+#define VSM_MAX_BOOT_CPUS	96
 
 static struct file *sk_loader, *sk;
 static struct page *boot_signal_page, *cpu_online_page, *cpu_present_page;
@@ -304,9 +305,9 @@ static __init int hv_vsm_boot_sec_vp_thread_fn(void *unused)
 	u16 vp_enabled_vtl_set = 0;
 	u8 active_mbec_enabled = 0;
 
-	/* TODO: Remove once we allow >64 CPUs in Secure Kernel */
-	if (cpu > 63) {
-		pr_err("CPU%d: Secure Kernel currently supports CPUID <= 63.", smp_processor_id());
+	if (cpu > (VSM_MAX_BOOT_CPUS - 1)) {
+		pr_err("CPU%d: Secure Kernel currently supports CPUID <= %d.",
+		       smp_processor_id(), (VSM_MAX_BOOT_CPUS - 1));
 		return -EINVAL;
 	}
 
