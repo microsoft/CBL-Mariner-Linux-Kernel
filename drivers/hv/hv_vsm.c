@@ -6,6 +6,10 @@
  */
 
 #include <linux/module.h>
+#include <linux/types.h>
+#include <linux/cpumask.h>
+#include <linux/sched.h>
+#include <linux/heki.h>
 
 #include <hyperv/hvgdk_mini.h>
 #include <hyperv/hv_vsm.h>
@@ -14,6 +18,119 @@
 
 #include "mshv.h"
 #include "hv_vsm.h"
+
+static void __hv_vsm_vtlcall(struct hv_vtlcall_param *args)
+{
+	u64 hcall_addr;
+
+	hcall_addr = (u64)((u8 *)hv_hypercall_pg + vsm_code_page_offsets.vtl_call_offset);
+	register u64 hypercall_addr asm("rax") = hcall_addr;
+
+	asm __volatile__ (	\
+	/*
+	 * Keep copies of the registers we modify.
+	 * Everything else is saved and restored by VTL1.
+	 */
+		"pushq	%%rdi\n"
+		"pushq	%%rsi\n"
+		"pushq	%%rdx\n"
+		"pushq	%%r8\n"
+		"pushq	%%rcx\n"
+		"pushq	%%rax\n"
+	/*
+	 * The vtlcall_param structure is in rdi, which is modified below, so copy it into a
+	 * register that stays constant in the instructon block immediately following.
+	 */
+		"movq	%1, %%rcx\n"
+	/* Copy values from vtlcall_param structure into registers used to communicate with VTL1 */
+		"movq	0x00(%%rcx), %%rdi\n"
+		"movq	0x08(%%rcx), %%rsi\n"
+		"movq	0x10(%%rcx), %%rdx\n"
+		"movq	0x18(%%rcx), %%r8\n"
+	/* Make rcx 0 */
+		"xorl	%%ecx, %%ecx\n"
+	/* VTL call */
+		CALL_NOSPEC
+	/* Restore rcx to args after VTL call */
+		"movq	40(%%rsp),  %%rcx\n"
+	/* Copy values from registers used to communicate with VTL1 into vtlcall_param structure */
+		"movq	%%rdi,  0x00(%%rcx)\n"
+		"movq	%%rsi,  0x08(%%rcx)\n"
+		"movq	%%rdx,  0x10(%%rcx)\n"
+		"movq	%%r8,  0x18(%%rcx)\n"
+	/* Restore all modified registers */
+		"popq	%%rax\n"
+		"popq	%%rcx\n"
+		"popq	%%r8\n"
+		"popq	%%rdx\n"
+		"popq	%%rsi\n"
+		"popq	%%rdi\n"
+		: ASM_CALL_CONSTRAINT
+		: "D"(args), THUNK_TARGET(hypercall_addr)
+		: "cc", "memory");
+}
+
+static int hv_vsm_vtlcall(struct hv_vtlcall_param *args)
+{
+	unsigned long flags = 0;
+
+	local_irq_save(flags);
+	__hv_vsm_vtlcall(args);
+	local_irq_restore(flags);
+
+	return (int)args->a3;
+}
+
+static int hv_vsm_lock_crs(void)
+{
+	cpumask_var_t orig_mask;
+	struct hv_vtlcall_param args = {0};
+	int cpu, ret = 0;
+
+	if (!hv_vsm_boot_success)
+		return -EINVAL;
+
+	args.a0 = VSM_VTL_CALL_FUNC_ID_LOCK_REGS;
+
+	if (!alloc_cpumask_var(&orig_mask, GFP_KERNEL)) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	cpumask_copy(orig_mask, &current->cpus_mask);
+	/*
+	 * ToDo: Spin off separate threads on each cpu to do this.
+	 * Should be better from a performance point of view.
+	 * Irrespective this thread should wait until all cpus have locked
+	 * the registers
+	 */
+	for_each_online_cpu(cpu) {
+		set_cpus_allowed_ptr(current, cpumask_of(cpu));
+		ret = hv_vsm_vtlcall(&args);
+		if (ret) {
+			pr_err("%s: Unable to lock registers for cpu%d..Aborting\n",
+			       __func__, cpu);
+			break;
+		}
+	}
+	set_cpus_allowed_ptr(current, orig_mask);
+	free_cpumask_var(orig_mask);
+
+out:
+	return ret;
+}
+
+static struct heki_hypervisor hyperv_heki_hypervisor = {
+	.lock_crs = hv_vsm_lock_crs,
+};
+
+static int __init hv_vsm_init_heki(void)
+{
+	if (hv_vsm_boot_success)
+		heki_register_hypervisor(&hyperv_heki_hypervisor);
+
+	return 0;
+}
+late_initcall(hv_vsm_init_heki);
 
 static int __init vsm_arch_has_vsm_access(void)
 {
