@@ -34,6 +34,7 @@ void heki_late_init(void)
 
 	mutex_init(&heki.lock);
 	heki_arch_init();
+	heki_load_kdata();
 
 	/*
 	 * Signal end of kernel boot.
