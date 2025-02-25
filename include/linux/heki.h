@@ -22,6 +22,9 @@
 struct heki_hypervisor {
 	/* Lock control registers. */
 	int (*lock_crs)(void);
+
+	/* Signal end of kernel boot */
+	int (*finish_boot)(void);
 };
 
 #ifdef CONFIG_HEKI
