@@ -344,8 +344,16 @@ static inline int static_call_text_reserved(void *start, void *end)
 	return 0;
 }
 
+#define static_call_update_early(name, func)				\
+({									\
+	typeof(&STATIC_CALL_TRAMP(name)) __F = (func);			\
+	__static_call_update(&STATIC_CALL_KEY(name),			\
+			     STATIC_CALL_TRAMP_ADDR(name), __F);	\
+})
+
 #define EXPORT_STATIC_CALL(name)	EXPORT_SYMBOL(STATIC_CALL_KEY(name))
 #define EXPORT_STATIC_CALL_GPL(name)	EXPORT_SYMBOL_GPL(STATIC_CALL_KEY(name))
+#define EXPORT_STATIC_CALL_TRAMP(name)	EXPORT_SYMBOL(STATIC_CALL_KEY(name))
 #define EXPORT_STATIC_CALL_TRAMP_GPL(name)				\
 	EXPORT_SYMBOL_GPL(STATIC_CALL_KEY(name))
 

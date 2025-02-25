@@ -97,9 +97,14 @@ DECLARE_STATIC_CALL(xen_hypercall, xen_hypercall_func);
 #define __ADDRESSABLE_xen_hypercall __ADDRESSABLE_ASM_STR(__SCK__xen_hypercall)
 #endif
 
+#ifdef CONFIG_HAVE_STATIC_CALL
 #define __HYPERCALL					\
 	__ADDRESSABLE_xen_hypercall			\
 	"call __SCT__xen_hypercall"
+#else
+#define __HYPERCALL					\
+	"call __SCK__xen_hypercall"
+#endif
 
 #define __HYPERCALL_ENTRY(x)	"a" (x)
 
