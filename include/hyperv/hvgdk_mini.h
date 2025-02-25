@@ -2550,6 +2550,43 @@ struct hv_input_set_vp_registers {
 	struct hv_register_assoc elements[];
 } __packed;
 
+/*  CR Intercept Control */
+union hv_register_cr_intercept_control {
+	u64 as_uint64;
+	struct {
+		u64 cr0_write : 1;
+		u64 cr4_write : 1;
+		u64 xcr0_write : 1;
+		u64 ia32_misc_enable_read : 1;
+		u64 ia32_misc_enable_write : 1;
+		u64 msr_lstar_read : 1;
+		u64 msr_lstar_write : 1;
+		u64 msr_star_read : 1;
+		u64 msr_star_write : 1;
+		u64 msr_cstar_read : 1;
+		u64 msr_cstar_write : 1;
+		u64 apic_base_msr_read : 1;
+		u64 apic_base_msr_write : 1;
+		u64 msr_efer_read : 1;
+		u64 msr_efer_write : 1;
+		u64 gdtr_write : 1;
+		u64 idtr_write : 1;
+		u64 ldtr_write : 1;
+		u64 tr_write : 1;
+		u64 msr_sysenter_cs_write : 1;
+		u64 msr_sysenter_eip_write : 1;
+		u64 msr_sysenter_esp_write : 1;
+		u64 msr_sfmask_write : 1;
+		u64 msr_tsc_aux_write : 1;
+		u64 msr_sgx_launch_control_write : 1;
+		u64 msr_xss_write : 1;
+		u64 msr_s_cet_write : 1;
+		u64 msr_pls_ssp_write : 1;
+		u64 msr_interrupt_ssp_table_addr_write : 1;
+		u64 reserved			: 35;
+	} __packed;
+};
+
 #define HV_UNMAP_GPA_LARGE_PAGE		0x2
 
 /* HvCallSendSyntheticClusterIpi hypercall */
