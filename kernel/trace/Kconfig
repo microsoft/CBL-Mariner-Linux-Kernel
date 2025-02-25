@@ -181,6 +181,7 @@ config TRACING_SUPPORT
 
 menuconfig FTRACE
 	bool "Tracers"
+	depends on !HEKI
 	depends on TRACING_SUPPORT
 	default y if DEBUG_KERNEL
 	help
