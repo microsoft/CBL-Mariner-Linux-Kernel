@@ -15,11 +15,14 @@
 #include <linux/cpumask.h>
 #include <linux/vmalloc.h>
 #include <linux/verification.h>
+#include <linux/acpi.h>
 #include <crypto/pkcs7.h>
+#include <asm/e820/types.h>
 
 #include <asm/mshyperv.h>
 
 #include "hv_vsm.h"
+#include "hv_vsm_boot.h"
 
 /* Define PAGE size and related variables for initial secure kernel pages */
 #define VSM_PAGE_SHIFT  12
@@ -77,6 +80,16 @@ static u8 *boot_signal;
 bool hv_vsm_boot_success;
 bool hv_vsm_mbec_enabled = true;
 bool hv_vsm_boot_panic;
+
+#define VSM_E820_MAX_ENTRIES		8
+/* Boot parameters for skloader */
+struct hv_vsm_boot_params {
+	u64	num_possible_cpus;
+	u64	sk_start;
+	u64	rsdp;
+	u8	e820_entries;
+	struct boot_e820_entry e820_table[VSM_E820_MAX_ENTRIES];
+};
 
 static int hv_vsm_get_partition_status(u16 *enabled_vtl_set, u8 *max_vtl, u16 *mbec_enabled_vtl_set)
 {
@@ -232,16 +245,67 @@ static int __init hv_vsm_init_vtlcall(struct hv_vtlcall_param *args)
 	return (int)args->a3;
 }
 
+static __init void hv_vsm_add_acpi_e820(struct hv_vsm_boot_params
+		*vsm_boot_params)
+{
+	int i;
+	struct boot_e820_entry *entry, *hv_vsm_entry;
+
+	for (i = 0; i < boot_params.e820_entries; i++) {
+		entry = &boot_params.e820_table[i];
+
+		if (entry->type != E820_TYPE_ACPI)
+			continue;
+
+		if (vsm_boot_params->e820_entries >= VSM_E820_MAX_ENTRIES) {
+			pr_warn("%s: HV VSM e820 table full. Skipping...\n", __func__);
+			continue;
+		}
+
+		hv_vsm_entry = &vsm_boot_params->e820_table[vsm_boot_params->e820_entries++];
+		hv_vsm_entry->addr = entry->addr;
+		hv_vsm_entry->size = entry->size;
+		hv_vsm_entry->type = entry->type;
+	}
+}
+
+static __init void hv_vsm_add_e820(struct hv_vsm_boot_params
+		*vsm_boot_params)
+{
+	vsm_boot_params->e820_table[0].addr = 0;
+	vsm_boot_params->e820_table[0].size = sk_res.start;
+	vsm_boot_params->e820_table[0].type = E820_TYPE_RESERVED;
+
+	vsm_boot_params->e820_table[1].addr = sk_res.start;
+	vsm_boot_params->e820_table[1].size =
+		sk_res.end - sk_res.start + 1;
+	vsm_boot_params->e820_table[1].type = E820_TYPE_RAM;
+
+	vsm_boot_params->e820_table[2].addr = sk_res.end + 1;
+	vsm_boot_params->e820_table[2].size =
+		(max_pfn << PAGE_SHIFT) - sk_res.end;
+	vsm_boot_params->e820_table[2].type = E820_TYPE_RESERVED;
+
+	vsm_boot_params->e820_entries = 3;
+	hv_vsm_add_acpi_e820(vsm_boot_params);
+}
+
 static __init void hv_vsm_boot_vtl1(void)
 {
 	struct hv_vtlcall_param args = {0};
 	u16 vp_enabled_vtl_set = 0;
 	u8 active_mbec_enabled = 0;
+	struct hv_vsm_boot_params *vtl1_boot_params =
+		vsm_skm_va + VSM_SKLOADER_BOOT_PARAMS_OFFSET;
 
-	args.a0 = num_possible_cpus();
-	args.a1 = sk_res.start;
-	args.a2 = sk_res.end + 1;
-	args.a3 = max_pfn << PAGE_SHIFT;
+	vtl1_boot_params->num_possible_cpus = num_possible_cpus();
+	vtl1_boot_params->sk_start = sk_res.start;
+	vtl1_boot_params->rsdp = acpi_os_get_root_pointer();
+	hv_vsm_add_e820(vtl1_boot_params);
+
+	args.a0 = vsm_skm_pa + VSM_SKLOADER_BOOT_PARAMS_OFFSET;
+
+	pr_info("VSM boot params at %llx (phys:%llx)\n", (u64)vtl1_boot_params, args.a0);
 
 	hv_vsm_init_vtlcall(&args);
 
@@ -796,8 +860,15 @@ static int __init hv_vsm_load_secure_kernel(void)
 	char *skloader_sig_buf = NULL, *sk_sig_buf = NULL;
 #endif
 
+	BUILD_BUG_ON(sizeof(struct hv_vsm_boot_params) > VSM_SKLOADER_BOOT_PARAMS_SIZE);
+
 	// Find the size of skloader and sk
 	size_skloader = vfs_llseek(sk_loader, 0, SEEK_END);
+	if (size_skloader > VSM_SKLOADER_SIZE) {
+		pr_err("%s: Skloader too big:%lld\n", __func__, size_skloader);
+		hv_vsm_boot_panic = true;
+		return -ENOMEM;
+	}
 	size_sk = vfs_llseek(sk, 0, SEEK_END);
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
