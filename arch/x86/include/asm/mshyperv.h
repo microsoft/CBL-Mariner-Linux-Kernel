@@ -397,10 +397,12 @@ static inline u64 hv_get_non_nested_msr(unsigned int reg) { return 0; }
 void __init hv_vtl_init_platform(void);
 int __init hv_vtl_early_init(u8 vtl);
 int hv_secure_vtl_enable_secondary_cpu(u32 target_vp_index);
+int hv_secure_vtl_init_boot_signal_page(void *shared_data);
 #else
 static inline void __init hv_vtl_init_platform(void) {}
 static inline int __init hv_vtl_early_init(u8 vtl) { return 0; }
 static inline int hv_secure_vtl_enable_secondary_cpu(u32 target_vp_index) { return 0; }
+static inline int hv_secure_vtl_init_boot_signal_page(void *shared_data) { return 0; }
 #endif
 
 #include <asm-generic/mshyperv.h>

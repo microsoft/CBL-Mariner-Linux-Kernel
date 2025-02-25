@@ -11,6 +11,7 @@
 #include <linux/kthread.h>
 #include <linux/cpuhotplug.h>
 #include <linux/fs.h>
+#include <linux/delay.h>
 #include <asm/mshyperv.h>
 #include <asm/fpu/api.h>
 #include <asm/cpu.h>
@@ -69,6 +70,7 @@ struct hv_vsm_per_cpu {
 	/* CPU should stay in VTL1 and not exit to VTL0 even if idle is invoked */
 	bool stay_in_vtl1;
 	bool vtl1_enabled;
+	bool vtl1_booted;
 };
 
 static DEFINE_PER_CPU(struct hv_vsm_per_cpu, vsm_per_cpu);
@@ -151,6 +153,118 @@ static int mshv_vsm_enable_aps(unsigned int cpu_present_mask_pfn)
 out:
 	vunmap(cpu_present_data);
 	return ret;
+}
+
+/********************** Boot Secondary CPUs **********************/
+static int mshv_vsm_boot_aps(unsigned int cpu_online_mask_pfn,
+							unsigned int boot_signal_pfn)
+{
+	unsigned int cpu, present = num_present_cpus(), online = num_online_cpus(),
+		total_cpus_booted = 0;
+	struct hv_vsm_per_cpu *per_cpu;
+	const struct cpumask *cpu_online_vtl0;
+	struct page *boot_signal_page, *cpu_online_page;
+	void *boot_signal_data = NULL, *cpu_online_data = NULL;
+	cpumask_var_t cpu_online_diff;
+	int status = 0;
+
+	if (!(present - online)) {
+		pr_debug("%s: VTL1 kernel has no present CPUs that are not already online.\n", __func__);
+		return -EINVAL;
+	}
+
+	per_cpu = this_cpu_ptr(&vsm_per_cpu);
+	per_cpu->stay_in_vtl1 = true;
+	/* Validate boot_signal_pfn parameter */
+	boot_signal_page = pfn_to_page(boot_signal_pfn);
+	boot_signal_data = vmap(&boot_signal_page, 1, VM_MAP, PAGE_KERNEL);
+	if (!boot_signal_data) {
+		pr_err("%s: Could not map shared page", __func__);
+		status = -EINVAL;
+		goto out;
+	}
+
+	status = hv_secure_vtl_init_boot_signal_page(boot_signal_data);
+	if (status) {
+		pr_err("%s: Could not initialize boot_signal", __func__);
+		goto unmap_signal;
+	}
+
+	/* Validate cpu_online_mask_pfn parameter */
+	cpu_online_page = pfn_to_page(cpu_online_mask_pfn);
+	cpu_online_data = vmap(&cpu_online_page, 1, VM_MAP, PAGE_KERNEL);
+	if (!cpu_online_data) {
+		pr_err("%s: Could not map shared page", __func__);
+		status = -EINVAL;
+		goto unmap_signal;
+	}
+	cpu_online_vtl0 = (struct cpumask *)cpu_online_data;
+
+	/* Find VTL0's Online CPUs that are not already online in VTL1 */
+	if (!alloc_cpumask_var(&cpu_online_diff, GFP_KERNEL)) {
+		pr_err("%s: Error allocating cpu_online_diff", __func__);
+		status = -ENOMEM;
+		goto unmap_online;
+	}
+	status = cpumask_andnot(cpu_online_diff, cpu_online_vtl0, cpu_online_mask);
+	if (!status) {
+		pr_err("%s: Error computing cpumask_andnot()", __func__);
+		goto free_cpumask;
+	}
+
+	/* Loop through VTL0's online CPUs that are not already online in VTL1
+	 * and bring them online
+	 */
+	for_each_cpu(cpu, cpu_online_diff) {
+		if (!cpu_present(cpu)) {
+			pr_err("%s: Cannot bring up CPU%u because CPU%u is not present",
+			       __func__, cpu, cpu);
+			status = -EINVAL;
+			goto free_cpumask;
+		}
+
+		per_cpu = per_cpu_ptr(&vsm_per_cpu, cpu);
+
+		if (!(per_cpu->vtl1_enabled)) {
+			pr_err("%s: Cannot bring up CPU%u because CPU%u is not enabled for VTL1",
+			       __func__, cpu, cpu);
+			status = -EINVAL;
+			goto free_cpumask;
+		}
+
+		per_cpu->vtl1_booted = 0;
+		pr_debug("%s: Bringing up CPU%u", __func__, cpu);
+
+		/* Bring up AP */
+		status = cpu_device_up(get_cpu_device(cpu));
+		if (status) {
+			pr_err("%s: Failed to Boot CPU%u", __func__, cpu);
+			goto free_cpumask;
+		}
+
+		total_cpus_booted++;
+	}
+
+	/* Loop through newly booted CPUs and disable tick when exiting VTL1 */
+	for_each_cpu(cpu, cpu_online_diff) {
+		per_cpu = per_cpu_ptr(&vsm_per_cpu, cpu);
+
+		while (!(per_cpu->vtl1_booted));
+		per_cpu->suppress_tick = true;
+	}
+
+	pr_debug("%s: Booted %u CPUs", __func__, total_cpus_booted);
+
+free_cpumask:
+	free_cpumask_var(cpu_online_diff);
+unmap_online:
+	vunmap(cpu_online_data);
+unmap_signal:
+	vunmap(boot_signal_data);
+out:
+	per_cpu = this_cpu_ptr(&vsm_per_cpu);
+	per_cpu->stay_in_vtl1 = false;
+	return status;
 }
 
 /* DO NOT MODIFY THIS FUNCTION WITHOUT DISASSEMBLING AND SEEING WHAT IS GOING ON */
@@ -271,7 +385,7 @@ static void mshv_vsm_vtl_idle(void)
 	if (!per_cpu->vsm_task)
 		goto out;
 
-	if (task_is_running(per_cpu->vsm_task) || per_cpu->stay_in_vtl1)
+	if (task_is_running(per_cpu->vsm_task) || !(per_cpu->vtl1_booted) || per_cpu->stay_in_vtl1)
 		goto out;
 
 	if (per_cpu->suppress_tick)
@@ -298,6 +412,10 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 	case VSM_VTL_CALL_FUNC_ID_ENABLE_APS_VTL:
 		pr_debug("%s : VSM_VTL_CALL_FUNC_ID_ENABLE_APS_VTL\n", __func__);
 		status = mshv_vsm_enable_aps(_vtl_params->a1);
+		break;
+	case VSM_VTL_CALL_FUNC_ID_BOOT_APS:
+		pr_debug("%s : VSM_VTL_CALL_FUNC_ID_BOOT_APS\n", __func__);
+		status = mshv_vsm_boot_aps(_vtl_params->a1, _vtl_params->a2);
 		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
@@ -403,6 +521,7 @@ static int mshv_vsm_per_cpu_init(unsigned int cpu)
 
 	mshv_vsm_set_secure_config_vtl0();
 
+	per_cpu->vtl1_booted = true;
 	return 0;
 }
 
