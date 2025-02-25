@@ -8,6 +8,7 @@
 
 #include <linux/elf.h>
 #include <linux/compiler.h>
+#include <linux/heki.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/rculist.h>
@@ -84,6 +85,7 @@ struct load_info {
 	struct {
 		unsigned int sym, str, mod, vers, info, pcpu;
 	} index;
+	struct key *trusted_keys;
 };
 
 enum mod_license {
@@ -406,3 +408,6 @@ static inline int same_magic(const char *amagic, const char *bmagic, bool has_cr
 	return strcmp(amagic, bmagic) == 0;
 }
 #endif /* CONFIG_MODVERSIONS */
+
+int validate_guest_module(struct load_info *info, int flags,
+			  struct heki_mod *hmod);
