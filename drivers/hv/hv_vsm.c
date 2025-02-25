@@ -195,6 +195,20 @@ static int hv_vsm_unload_module(long token)
 	return hv_vsm_vtlcall(&args);
 }
 
+static int hv_vsm_copy_secondary_key(phys_addr_t pa, unsigned long nranges)
+{
+	struct hv_vtlcall_param args = {0};
+
+	if (!hv_vsm_boot_success)
+		return -EINVAL;
+
+	args.a0 = VSM_VTL_CALL_FUNC_ID_COPY_SECONDARY_KEY;
+	args.a1 = pa;
+	args.a2 = nranges;
+
+	return hv_vsm_vtlcall(&args);
+}
+
 static struct heki_hypervisor hyperv_heki_hypervisor = {
 	.lock_crs = hv_vsm_lock_crs,
 	.finish_boot = hv_vsm_signal_end_of_boot,
@@ -203,6 +217,7 @@ static struct heki_hypervisor hyperv_heki_hypervisor = {
 	.validate_module = hv_vsm_validate_module,
 	.free_module_init = hv_vsm_free_module_init,
 	.unload_module = hv_vsm_unload_module,
+	.copy_secondary_key = hv_vsm_copy_secondary_key,
 };
 
 int __init hv_vsm_init_heki(void)
