@@ -1759,14 +1759,6 @@ static int mshv_vsm_boot_aps(unsigned int cpu_online_mask_pfn,
 		total_cpus_booted++;
 	}
 
-	/* Loop through newly booted CPUs and disable tick when exiting VTL1 */
-	for_each_cpu(cpu, cpu_online_diff) {
-		per_cpu = per_cpu_ptr(&vsm_per_cpu, cpu);
-
-		while (!(per_cpu->vtl1_booted));
-		per_cpu->suppress_tick = true;
-	}
-
 	pr_debug("%s: Booted %u CPUs", __func__, total_cpus_booted);
 
 free_cpumask:
@@ -1980,15 +1972,25 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 	_vtl_params->a3 = status;
 }
 
+static void mshv_vsm_enable_tick(void *unused)
+{
+	struct hv_vsm_per_cpu *per_cpu;
+
+	per_cpu = this_cpu_ptr(&vsm_per_cpu);
+	per_cpu->suppress_tick = false;
+}
+
 static int mshv_vsm_vtl_task(void *unused)
 {
 	struct hv_vp_assist_page *hvp;
 	struct hv_vsm_per_cpu *per_cpu;
 	struct hv_vtl_cpu_context *cpu_context;
 	struct hv_vtlcall_param *vtl_params;
+	int current_cpu, cpu;
 
 	while (true) {
 		hvp = hv_vp_assist_page[smp_processor_id()];
+		per_cpu = this_cpu_ptr(&vsm_per_cpu);
 		switch (hvp->vtl_entry_reason) {
 		case VTL_ENTRY_REASON_LOWER_VTL_CALL:
 			/*
@@ -1999,7 +2001,6 @@ static int mshv_vsm_vtl_task(void *unused)
 			 *  out to cpu_context on vtl exit so that _mshv_vtl_return
 			 *  populates these registers with return values from vtl1.
 			 */
-			per_cpu = this_cpu_ptr(&vsm_per_cpu);
 			cpu_context = &per_cpu->cpu_context;
 			vtl_params = &per_cpu->vtl_params;
 
@@ -2023,6 +2024,26 @@ static int mshv_vsm_vtl_task(void *unused)
 			pr_err("CPU%u: Unknown entry reason: %d",
 			       smp_processor_id(), hvp->vtl_entry_reason);
 			break;
+		}
+		/*
+		 * If any rcu operation is pending, disable tick on this cpu and bring in other
+		 * cpus to allow for rcu operations to complete.
+		 */
+		if (rcu_pending(0)) {
+			current_cpu = smp_processor_id();
+			for_each_online_cpu(cpu) {
+				if (cpu == current_cpu) {
+					per_cpu = this_cpu_ptr(&vsm_per_cpu);
+					per_cpu->suppress_tick = false;
+					continue;
+				}
+				per_cpu = per_cpu_ptr(&vsm_per_cpu, cpu);
+				if (per_cpu->suppress_tick)
+					smp_call_function_single(cpu, mshv_vsm_enable_tick,
+								 NULL, 0);
+			}
+		} else {
+			per_cpu->suppress_tick = true;
 		}
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule();
