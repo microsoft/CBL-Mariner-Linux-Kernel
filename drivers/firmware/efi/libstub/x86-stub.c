@@ -27,6 +27,8 @@
        EFI_GUID(0x610b9e98, 0xc6f6, 0x47f8, 0x8b, 0x47, 0x2d, 0x2d, 0xa0, 0xd5, 0x2a, 0x91)
 
 static const efi_char16_t efi_HvPrivOsloaderIndications_name[] = L"OsLoaderIndications";
+static const efi_char16_t efi_HvPrivOsloaderIndicationsSupported_name[] =
+	L"OsLoaderIndicationsSupported";
 #endif
 
 extern char _bss[], _ebss[];
@@ -748,12 +750,32 @@ static void efi_set_hv_os_indications(void)
 	u32 attr, val;
 
 	size = sizeof(val);
+	status = get_efi_var(efi_HvPrivOsloaderIndicationsSupported_name,
+			     &guid, &attr, &size, &val);
+	if (status != EFI_SUCCESS) {
+		efi_err("Could not read Hyper-V OsloaderIndicationsSupported\n");
+		return;
+	}
+
+	if (!(val & 1)) {
+		efi_info("Hyper-V does not support VSM in OsloaderIndicationsSupported\n");
+		return;
+	}
+
+	size = sizeof(val);
 	status = get_efi_var(efi_HvPrivOsloaderIndications_name, &guid, &attr, &size, &val);
         if (status != EFI_SUCCESS) {
 		efi_err("Could not read Hyper-V OsLoaderIndications\n");
 		return;
 	}
+
+	if (val & 1) {
+		efi_info("VSM is already supported in OsLoaderIndications.");
+		return;
+	}
+
 	val |= 1;
+	size = sizeof(val);
 	set_efi_var(efi_HvPrivOsloaderIndications_name, &guid, attr, size, &val);
         if (status != EFI_SUCCESS) {
 		efi_err("Could not set Hyper-V OsLoaderIndications to indicate VSM support \n");
