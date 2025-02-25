@@ -12,7 +12,10 @@
 #define SECKERNEL_ALIGN			SZ_2M
 #define SECKERNEL_ADDR_MAX		(max_low_pfn_mapped << PAGE_SHIFT)
 #define SECKERNEL_BASE_SIZE		(16 * 1024 * 1024)
-#define SECKERNEL_PERCPU_SIZE		(2 * 1024 * 1024)
+#define SECKERNEL_PERCPU_SIZE		(4 * 1024 * 1024)
+
+/* Estimate amount of memory needed for Secure Kernel */
+#define SECKERNEL_MIN_SIZE (SECKERNEL_BASE_SIZE + num_possible_cpus() * SECKERNEL_PERCPU_SIZE)
 
 struct resource sk_res = {
 	.name  = "vsm",
@@ -117,13 +120,15 @@ static int __init hv_vsm_seckernel_mem_init(char *__unused)
 	ret = parse_securekernel(boot_command_line, SECKERNEL_ADDR_MAX, &securekernel_size,
 				 &securekernel_base);
 
-	if (ret != 0 || securekernel_size < SECKERNEL_BASE_SIZE) {
-		pr_info("%s: securekernel cmd line not defined. Falling back to default.\n",
-			__func__);
+	if (ret != 0 || securekernel_size < SECKERNEL_MIN_SIZE) {
+		if (ret != 0)
+			pr_info("%s: securekernel cmd line not defined. Falling back to default.\n",
+				__func__);
+		else if (securekernel_size < SECKERNEL_MIN_SIZE)
+			pr_info("%s: securekernel cmd line too small. Falling back to default.\n",
+				__func__);
 
-		/* Estimate amount of memory needed for Secure Kernel */
-		securekernel_size = SECKERNEL_BASE_SIZE +
-					num_possible_cpus() * SECKERNEL_PERCPU_SIZE;
+		securekernel_size = SECKERNEL_MIN_SIZE;
 		securekernel_base = 0;
 	}
 
