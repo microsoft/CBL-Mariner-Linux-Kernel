@@ -21,6 +21,8 @@
 
 struct load_info;
 
+#include <asm/heki.h>
+
 /*
  * This structure contains a guest physical range and its attributes (e.g.,
  * permissions (RWX)).
@@ -69,6 +71,7 @@ struct heki_kinfo {
 	struct kernel_symbol	*ksymtab_end;
 	struct kernel_symbol	*ksymtab_gpl_start;
 	struct kernel_symbol	*ksymtab_gpl_end;
+	struct heki_arch_kinfo	arch;
 };
 
 /*
@@ -185,6 +188,7 @@ long heki_validate_module(struct module *mod, struct load_info *info, int flags)
 /* Arch-specific functions. */
 void heki_arch_init(void);
 unsigned long heki_flags_to_permissions(unsigned long flags);
+void heki_load_arch_kinfo(struct heki_kinfo *kinfo);
 
 #else /* !CONFIG_HEKI */
 
