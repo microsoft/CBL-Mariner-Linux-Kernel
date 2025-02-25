@@ -171,12 +171,25 @@ static long hv_vsm_validate_module(phys_addr_t pa, unsigned long nranges,
 	return hv_vsm_vtlcall(&args);
 }
 
+static int hv_vsm_free_module_init(long token)
+{
+	struct hv_vtlcall_param args = {0};
+
+	if (!hv_vsm_boot_success)
+		return -EINVAL;
+
+	args.a0 = VSM_VTL_CALL_FUNC_ID_FREE_MODULE_INIT;
+	args.a1 = token;
+	return hv_vsm_vtlcall(&args);
+}
+
 static struct heki_hypervisor hyperv_heki_hypervisor = {
 	.lock_crs = hv_vsm_lock_crs,
 	.finish_boot = hv_vsm_signal_end_of_boot,
 	.protect_memory = hv_vsm_protect_memory,
 	.load_kdata = hv_vsm_load_kdata,
 	.validate_module = hv_vsm_validate_module,
+	.free_module_init = hv_vsm_free_module_init,
 };
 
 int __init hv_vsm_init_heki(void)
