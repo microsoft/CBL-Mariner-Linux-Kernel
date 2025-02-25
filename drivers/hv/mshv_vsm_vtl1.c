@@ -178,6 +178,9 @@ static DEFINE_PER_CPU(struct hv_vsm_per_cpu, vsm_per_cpu);
 
 struct vtl0 {
 	struct heki_mem mem[HEKI_KDATA_MAX];
+	struct heki_range *ranges;
+	unsigned long nranges;
+	struct heki_range *kdata_ranges;
 	struct key *trusted_keys;
 	struct mutex lock;
 	struct list_head modules;
@@ -328,7 +331,6 @@ static void mshv_vsm_handle_intercept(unsigned long data)
 	struct hv_intercept_message_header *intercept_msg_hdr;
 	u64 value, mask, allowed_value;
 	u32 reg_name, message_type;
-	bool raise_fault = false;
 
 	pr_info("%s: cpu%d\n", __func__, smp_processor_id());
 	message_type = READ_ONCE(msg->header.message_type);
@@ -360,10 +362,9 @@ static void mshv_vsm_handle_intercept(unsigned long data)
 			(struct hv_mem_intercept_message *)msg->u.payload;
 
 		intercept_msg_hdr = &mem_intercept_msg->hdr;
-		raise_fault = true;
 		pr_err("%s: Memory intercept on cpu%d, gpa:0x%llx\n",
 		       __func__, smp_processor_id(), mem_intercept_msg->gpa);
-		goto out;
+		goto raise_fault;
 	} else {
 		goto clear_event;
 	}
@@ -381,8 +382,7 @@ static void mshv_vsm_handle_intercept(unsigned long data)
 	case HV_X64_REGISTER_IDTR:
 	case HV_X64_REGISTER_LDTR:
 	case HV_X64_REGISTER_TR:
-		raise_fault = true;
-		break;
+		goto raise_fault;
 	case MSR_LSTAR:
 		reg_name = HV_X64_REGISTER_LSTAR;
 		allowed_value = per_cpu->msr_lstar_saved;
@@ -430,24 +430,19 @@ static void mshv_vsm_handle_intercept(unsigned long data)
 		break;
 	default:
 		/* We should not be here. Do nothing */
-		goto out;
+		goto clear_event;
 	}
 
-	if (!raise_fault) {
-		if ((value & mask) == allowed_value) {
-			if (hv_vsm_set_vtl0_register(reg_name, value))
-				pr_err("%s: Error writing into register 0x%x of VTL0\n",
-				       __func__, reg_name);
-		} else {
-			raise_fault = true;
-		}
-	}
-
-out:
-	if (raise_fault)
-		__raise_vtl0_gp_fault();
-	else
+	if ((value & mask) == allowed_value) {
+		if (hv_vsm_set_vtl0_register(reg_name, value))
+			pr_err("%s: Error writing into register 0x%x of VTL0\n",
+			       __func__, reg_name);
 		__increment_vtl0_rip(intercept_msg_hdr);
+		goto clear_event;
+	}
+
+raise_fault:
+	__raise_vtl0_gp_fault();
 
 clear_event:
 	vmbus_signal_eom(msg, message_type);
@@ -609,14 +604,47 @@ static struct heki_range *__vsm_read_ranges(u64 pa, unsigned long nranges,
 	if (need_sort) {
 		/* Sort the ranges in ascending <type, VA> order. */
 		sort(ranges, nranges, sizeof(*ranges), cmp_ranges, NULL);
-
-		/* Check contiguity for each type. */
-		if (!vsm_contiguous(ranges, nranges)) {
-			vfree(ranges);
-			return NULL;
-		}
 	}
 	return ranges;
+}
+
+static int vsm_group_ranges(struct heki_range *ranges, unsigned long nranges,
+			    struct heki_mem *mems, unsigned long nmems)
+{
+	struct heki_range *range;
+	struct heki_mem *mem;
+	long id = -1;
+	int i;
+
+	memset(mems, 0, sizeof(*mem) * nmems);
+
+	/*
+	 * The attributes field contains an identifier that identifies a VTL0
+	 * kernel data structure. Collect the ranges of each VTL0 kernel data
+	 * structure into its own mem.
+	 */
+	for (i = 0; i < nranges; i++) {
+		range = &ranges[i];
+
+		if (id == range->attributes) {
+			mem->nranges++;
+		} else {
+			id = range->attributes;
+			if (id >= nmems) {
+				pr_warn("%s: Illegal ID %lx\n", __func__, id);
+				return -EINVAL;
+			}
+
+			mem = &mems[id];
+			if (mem->nranges) {
+				pr_warn("%s: ID %lx repeated\n", __func__, id);
+				return -EINVAL;
+			}
+			mem->ranges = range;
+			mem->nranges = 1;
+		}
+	}
+	return 0;
 }
 
 /*
@@ -689,6 +717,10 @@ static int vsm_map(struct heki_mem *mem)
 	u64 spa, epa, pa;
 	int i, p;
 
+	/* Check contiguity. */
+	if (!vsm_contiguous(ranges, nranges))
+		return -EINVAL;
+
 	mem->offset = ranges[0].va & (PAGE_SIZE - 1);
 
 	/* Count the number of pages. */
@@ -749,39 +781,13 @@ static void vsm_unmap_all(struct heki_mem *mems, unsigned long nmems);
 static int vsm_map_all(struct heki_range *ranges, unsigned long nranges,
 		       struct heki_mem *mems, unsigned long nmems)
 {
-	struct heki_range *range;
 	struct heki_mem *mem;
 	long id = -1;
-	int i, ret;
+	int ret;
 
-	memset(mems, 0, sizeof(*mem) * nmems);
-
-	/*
-	 * The attributes field contains an identifier that identifies a VTL0
-	 * kernel data structure. Collect the ranges of each VTL0 kernel data
-	 * structure into its own mem.
-	 */
-	for (i = 0; i < nranges; i++) {
-		range = &ranges[i];
-
-		if (id == range->attributes) {
-			mem->nranges++;
-		} else {
-			id = range->attributes;
-			if (id >= nmems) {
-				pr_warn("%s: Illegal ID %lx\n", __func__, id);
-				return -EINVAL;
-			}
-
-			mem = &mems[id];
-			if (mem->nranges) {
-				pr_warn("%s: ID %lx repeated\n", __func__, id);
-				return -EINVAL;
-			}
-			mem->ranges = range;
-			mem->nranges = 1;
-		}
-	}
+	ret = vsm_group_ranges(ranges, nranges, mems, nmems);
+	if (ret)
+		return ret;
 
 	/* Map the data structures. */
 	for (id = 0; id < nmems; id++) {
@@ -876,7 +882,12 @@ static int mshv_vsm_protect_memory(u64 pa, unsigned long nranges)
 		}
 	}
 out:
-	vfree(ranges);
+	if (err) {
+		vfree(ranges);
+	} else {
+		vtl0.ranges = ranges;
+		vtl0.nranges = nranges;
+	}
 	return err;
 }
 
@@ -1253,6 +1264,11 @@ static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 	ret = mshv_vsm_get_kinfo();
 
 free_ranges:
+	if (ret) {
+		vfree(ranges);
+		ranges = NULL;
+	}
+	vtl0.kdata_ranges = ranges;
 	return ret;
 }
 
