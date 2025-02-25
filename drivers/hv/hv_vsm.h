@@ -17,6 +17,7 @@
 #define VSM_VTL_CALL_FUNC_ID_SIGNAL_END_OF_BOOT	0x1FFE3
 #define VSM_VTL_CALL_FUNC_ID_PROTECT_MEMORY	0x1FFE4
 #define VSM_VTL_CALL_FUNC_ID_LOAD_KDATA		0x1FFE5
+#define VSM_VTL_CALL_FUNC_ID_VALIDATE_MODULE	0x1FFE6
 
 extern bool hv_vsm_boot_success;
 extern bool hv_vsm_mbec_enabled;
