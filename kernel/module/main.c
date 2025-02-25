@@ -1509,6 +1509,37 @@ static int apply_relocations(struct module *mod, const struct load_info *info)
 	return err;
 }
 
+static int apply_guest_relocations(struct module *mod,
+				   const struct load_info *info)
+{
+	unsigned int i;
+	int err = 0;
+
+	/* Now do relocations. */
+	for (i = 1; i < info->hdr->e_shnum; i++) {
+		unsigned int infosec = info->sechdrs[i].sh_info;
+
+		/* Not a valid relocation section? */
+		if (infosec >= info->hdr->e_shnum)
+			continue;
+
+		/* Don't bother with non-allocated sections */
+		if (!(info->sechdrs[infosec].sh_flags & SHF_ALLOC))
+			continue;
+
+		if (info->sechdrs[i].sh_flags & SHF_RELA_LIVEPATCH)
+			continue;
+		if (info->sechdrs[i].sh_type == SHT_REL)
+			continue;
+		if (info->sechdrs[i].sh_type == SHT_RELA)
+			err = apply_relocate_add(info->sechdrs, info->strtab,
+						 info->index.sym, i, mod);
+		if (err < 0)
+			break;
+	}
+	return err;
+}
+
 /* Additional bytes needed by arch in front of individual sections */
 unsigned int __weak arch_mod_section_prepend(struct module *mod,
 					     unsigned int section)
@@ -3195,6 +3226,13 @@ int validate_guest_module(struct load_info *info, int flags,
 	err = simplify_guest_symbols(mod, info, resolve);
 	if (err < 0) {
 		pr_warn("%s: Module symbols not processed for %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
+
+	err = apply_guest_relocations(mod, info);
+	if (err < 0) {
+		pr_warn("%s: Relocations not applied for %s\n",
 			__func__, info->name);
 		goto unmap_mod;
 	}
