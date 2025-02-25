@@ -7,11 +7,12 @@
  */
 
 #include <linux/memblock.h>
+#include "hv_vsm_boot.h"
 
 /* Define Memory Reservation for Secure Kernel */
 #define SECKERNEL_ALIGN			SZ_2M
 #define SECKERNEL_ADDR_MAX		(max_low_pfn_mapped << PAGE_SHIFT)
-#define SECKERNEL_BASE_SIZE		(16 * 1024 * 1024)
+#define SECKERNEL_BASE_SIZE		VSM_SK_MIN_BASE_SIZE
 #define SECKERNEL_PERCPU_SIZE		(4 * 1024 * 1024)
 
 /* Estimate amount of memory needed for Secure Kernel */
