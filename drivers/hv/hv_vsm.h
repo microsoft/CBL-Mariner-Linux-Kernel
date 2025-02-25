@@ -40,7 +40,7 @@ union hv_register_vsm_code_page_offsets {
 
 int hv_vsm_boot_init(void);
 
-
+int __init hv_vsm_init_heki(void);
 int __hv_vsm_get_register(u32 reg_name, u64 *result, u8 input_vtl);
 int __hv_vsm_set_register(u32 reg_name, u64 value, u8 input_vtl);
 

@@ -927,8 +927,10 @@ int __init hv_vsm_boot_init(void)
 
 	/* Boot secondary processors in VTL1 */
 	ret = hv_vsm_boot_ap_vtl();
-	if (!ret)
+	if (!ret) {
 		hv_vsm_boot_success = true;
+		hv_vsm_init_heki();
+	}
 out:
 	set_cpus_allowed_ptr(current, mask);
 	free_cpumask_var(mask);
