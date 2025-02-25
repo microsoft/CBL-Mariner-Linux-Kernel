@@ -17,6 +17,7 @@
 #include <keys/system_keyring.h>
 #include <linux/heki.h>
 #include <linux/sort.h>
+#include <linux/bsearch.h>
 #include <linux/mem_attr.h>
 #include "../../kernel/module/internal.h"
 #include <asm/mshyperv.h>
@@ -1017,6 +1018,52 @@ unmap:
 	return ret;
 }
 
+static void *vsm_vtl0_va_to_vtl1_va(struct heki_mem *mem, void *va)
+{
+	void *vtl0_va = (void *)mem->ranges->va;
+	unsigned long offset;
+
+	if (va >= vtl0_va && va < (vtl0_va + mem->size)) {
+		offset = va - vtl0_va;
+		return mem->va + offset;
+	}
+	return NULL;
+}
+
+static void *vsm_vtl1_va_to_vtl0_va(struct heki_mem *mem, void *va)
+{
+	void *vtl0_va = (void *)mem->ranges->va;
+	unsigned long offset;
+
+	if (va >= mem->va && va < (mem->va + mem->size)) {
+		offset = va - mem->va;
+		return vtl0_va + offset;
+	}
+	return NULL;
+}
+
+static int mshv_vsm_get_kinfo(void)
+{
+	struct heki_mem *data_mem = &vtl0.mem[HEKI_KERNEL_DATA];
+	struct heki_mem *info_mem = &vtl0.mem[HEKI_KERNEL_INFO];
+	struct heki_kinfo *kinfo = info_mem->va;
+	unsigned long nsyms;
+
+	/*
+	 * Convert VTL0 addresses to VTL1 addresses so we can access the
+	 * symbol tables.
+	 */
+	nsyms = kinfo->ksymtab_end - kinfo->ksymtab_start;
+	kinfo->ksymtab_start = vsm_vtl0_va_to_vtl1_va(data_mem, kinfo->ksymtab_start);
+	kinfo->ksymtab_end = kinfo->ksymtab_start + nsyms;
+
+	nsyms = kinfo->ksymtab_gpl_end - kinfo->ksymtab_gpl_start;
+	kinfo->ksymtab_gpl_start = vsm_vtl0_va_to_vtl1_va(data_mem, kinfo->ksymtab_gpl_start);
+	kinfo->ksymtab_gpl_end = kinfo->ksymtab_gpl_start + nsyms;
+
+	return 0;
+}
+
 static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 {
 	struct heki_range *ranges;
@@ -1031,9 +1078,12 @@ static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 		goto free_ranges;
 
 	ret =  mshv_vsm_create_trusted_keys();
+	if (ret)
+		goto free_ranges;
+
+	ret = mshv_vsm_get_kinfo();
 
 free_ranges:
-	vfree(ranges);
 	return ret;
 }
 
@@ -1088,6 +1138,8 @@ void module_id_unmap(struct heki_mod *hmod)
 	}
 }
 
+static void vsm_resolve_func(char *name, Elf64_Sym *sym);
+
 static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 					   int flags)
 {
@@ -1140,7 +1192,7 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	 * of the guest module. After the copy is created, it will be compared
 	 * with the module contents passed by the guest to validate them.
 	 */
-	err = validate_guest_module(info, flags, hmod);
+	err = validate_guest_module(info, flags, hmod, vsm_resolve_func);
 	if (err) {
 		pr_warn("%s: Load guest module failed\n", __func__);
 		err = -EINVAL;
@@ -1162,6 +1214,7 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	 *	MOD_DATA	contains the module structure (hmod->mod).
 	 */
 	hmod->mem[MOD_DATA].retain = true;
+	hmod->mem[MOD_RODATA].retain = true;
 unmap:
 	/* Free everything that we don't need beyond this point. */
 	vsm_unmap_all(hmod->mem, MOD_ELF + 1);
@@ -1173,6 +1226,66 @@ unlock:
 	if (err < 0)
 		vfree(ranges);
 	return err;
+}
+
+static int vsm_cmp_func(const void *name, const void *ksym)
+{
+	return strcmp(name, kernel_symbol_name(ksym));
+}
+
+static void vsm_resolve_func(char *name, Elf64_Sym *sym)
+{
+	struct heki_kinfo *kinfo = vtl0.mem[HEKI_KERNEL_INFO].va;
+	struct kernel_symbol *ksym;
+	struct heki_mod *hmod;
+	struct heki_mem *mem;
+	struct module *mod = NULL;
+	void *addr;
+	int offset;
+
+	/* Search the kernel symbol tables. */
+	mem = &vtl0.mem[HEKI_KERNEL_DATA];
+
+	ksym = bsearch(name, kinfo->ksymtab_start,
+		       kinfo->ksymtab_end - kinfo->ksymtab_start,
+		       sizeof(struct kernel_symbol), vsm_cmp_func);
+	if (ksym)
+		goto found;
+
+	ksym = bsearch(name, kinfo->ksymtab_gpl_start,
+		       kinfo->ksymtab_gpl_end - kinfo->ksymtab_gpl_start,
+		       sizeof(struct kernel_symbol), vsm_cmp_func);
+	if (ksym)
+		goto found;
+
+	/* Search the symbol tables of other modules. */
+	list_for_each_entry(hmod, &vtl0.modules, node) {
+		mem = &hmod->mem[MOD_RODATA];
+		mod = hmod->mod;
+
+		ksym = bsearch(name, mod->syms, mod->num_syms,
+			       sizeof(struct kernel_symbol), vsm_cmp_func);
+		if (ksym)
+			goto found;
+
+		ksym = bsearch(name, mod->gpl_syms, mod->num_gpl_syms,
+			       sizeof(struct kernel_symbol), vsm_cmp_func);
+		if (ksym)
+			goto found;
+	}
+	return;
+found:
+	offset = ksym->value_offset;
+	addr = &ksym->value_offset;
+	if (!mod) {
+		/*
+		 * Modules are mapped in VTL1 at the same addresses as the
+		 * corresponding modules in VTL0. So, there is no need to
+		 * translate for modules.
+		 */
+		addr = vsm_vtl1_va_to_vtl0_va(mem, addr);
+	}
+	sym->st_value = (unsigned long)addr + offset;
 }
 
 /********************** Boot Secondary CPUs **********************/
