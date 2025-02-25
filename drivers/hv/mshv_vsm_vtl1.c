@@ -54,6 +54,7 @@
 #define DEFAULT_REG_PIN_MASK	((u64)-1)
 
 bool vtl0_end_of_boot;
+static bool boot_in_progress;
 
 struct hv_intercept_message_header {
 	u32 vp_index;
@@ -1687,6 +1688,7 @@ static int mshv_vsm_boot_aps(unsigned int cpu_online_mask_pfn,
 		return -EINVAL;
 	}
 
+	boot_in_progress = true;
 	per_cpu = this_cpu_ptr(&vsm_per_cpu);
 	per_cpu->stay_in_vtl1 = true;
 	/* Validate boot_signal_pfn parameter */
@@ -1770,6 +1772,7 @@ unmap_signal:
 out:
 	per_cpu = this_cpu_ptr(&vsm_per_cpu);
 	per_cpu->stay_in_vtl1 = false;
+	boot_in_progress = false;
 	return status;
 }
 
@@ -2043,7 +2046,8 @@ static int mshv_vsm_vtl_task(void *unused)
 								 NULL, 0);
 			}
 		} else {
-			per_cpu->suppress_tick = true;
+			if (!boot_in_progress)
+				per_cpu->suppress_tick = true;
 		}
 		set_current_state(TASK_INTERRUPTIBLE);
 		schedule();
