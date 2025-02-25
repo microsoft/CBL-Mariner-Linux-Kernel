@@ -44,6 +44,8 @@
 #define CR0_PIN_MASK	((u64)(X86_CR0_PE | X86_CR0_WP | X86_CR0_PG))
 #define DEFAULT_REG_PIN_MASK	((u64)-1)
 
+bool vtl0_end_of_boot;
+
 struct hv_intercept_message_header {
 	u32 vp_index;
 	u8 instruction_length;
@@ -856,7 +858,13 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 		break;
 	case VSM_VTL_CALL_FUNC_ID_LOCK_REGS:
 		pr_debug("%s : VSM_LOCK_REGS\n", __func__);
-		status = mshv_vsm_lock_regs();
+		if (!vtl0_end_of_boot)
+			status = mshv_vsm_lock_regs();
+		break;
+	case VSM_VTL_CALL_FUNC_ID_SIGNAL_END_OF_BOOT:
+		pr_debug("%s: VSM_SIGNAL_END_OF_BOOT\n", __func__);
+		vtl0_end_of_boot = true;
+		status = 0;
 		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
