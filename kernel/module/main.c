@@ -250,7 +250,7 @@ static __maybe_unused void *any_section_objs(const struct load_info *info,
 #define symversion(base, idx) ((base != NULL) ? ((base) + (idx)) : NULL)
 #endif
 
-static const char *kernel_symbol_name(const struct kernel_symbol *sym)
+const char *kernel_symbol_name(const struct kernel_symbol *sym)
 {
 #ifdef CONFIG_HAVE_ARCH_PREL32_RELOCATIONS
 	return offset_to_ptr(&sym->name_offset);
@@ -1435,6 +1435,43 @@ static int simplify_symbols(struct module *mod, const struct load_info *info)
 	}
 
 	return ret;
+}
+
+static int simplify_guest_symbols(struct module *mod, struct load_info *info,
+				  resolve_func resolve)
+{
+	Elf_Shdr *symsec = &info->sechdrs[info->index.sym];
+	Elf_Sym *sym = (void *)symsec->sh_addr;
+	unsigned long nsym = symsec->sh_size / sizeof(Elf_Sym);
+	unsigned long secbase;
+	unsigned int i;
+
+	for (i = 1; i < nsym; i++) {
+		const char *name = info->strtab + sym[i].st_name;
+
+		switch (sym[i].st_shndx) {
+		case SHN_COMMON:
+		case SHN_ABS:
+			break;
+
+		case SHN_LIVEPATCH:
+			/* Livepatch is not yet supported. */
+			return -EINVAL;
+
+		case SHN_UNDEF:
+			resolve((char *)name, &sym[i]);
+			break;
+
+		default:
+			if (sym[i].st_shndx == info->index.pcpu)
+				secbase = (unsigned long)mod_percpu(mod);
+			else
+				secbase = info->sechdrs[sym[i].st_shndx].sh_addr;
+			sym[i].st_value += secbase;
+			break;
+		}
+	}
+	return 0;
 }
 
 static int apply_relocations(struct module *mod, const struct load_info *info)
@@ -3085,8 +3122,24 @@ void __attribute__((weak)) module_id_unmap(struct heki_mod *hmod)
 {
 }
 
+/*
+ * From the original guest module, extract the percpu field. This enables
+ * us to resolve module per-cpu symbols. The original guest module resides
+ * in the original module's data section.
+ */
+static void get_mod_percpu(struct module *mod, struct load_info *info,
+			   struct heki_mod *hmod)
+{
+	void *data = mod->mem[MOD_DATA].base;
+	unsigned long offset = (void *)mod - data;
+	struct module *orig_mod;
+
+	orig_mod = (void *)hmod->mem[MOD_DATA].va + offset;
+	mod->percpu = orig_mod->percpu;
+}
+
 int validate_guest_module(struct load_info *info, int flags,
-			  struct heki_mod *hmod)
+			  struct heki_mod *hmod, resolve_func resolve)
 {
 	struct heki_mem *mem = hmod->mem;
 	struct module *mod;
@@ -3130,6 +3183,21 @@ int validate_guest_module(struct load_info *info, int flags,
 		goto unmap_mod;
 	}
 	hmod->mod = mod;
+
+	err = find_module_sections(mod, info);
+	if (err) {
+		pr_warn("%s: Module sections not found for %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
+	get_mod_percpu(mod, info, hmod);
+
+	err = simplify_guest_symbols(mod, info, resolve);
+	if (err < 0) {
+		pr_warn("%s: Module symbols not processed for %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
 
 	/* Compare the original module contents and their copies. */
 	for_each_mod_mem_type(type) {
