@@ -1541,6 +1541,8 @@ struct task_struct {
 #ifdef CONFIG_USER_EVENTS
 	struct user_event_mm		*user_event_mm;
 #endif
+	/* Heki kinfo */
+	void				*kinfo;
 
 	/*
 	 * New fields for task_struct should be added above here, so that

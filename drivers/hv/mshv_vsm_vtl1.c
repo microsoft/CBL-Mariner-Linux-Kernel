@@ -1186,6 +1186,9 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	info->len = info_mem->size;
 	info->trusted_keys = vtl0.trusted_keys;
 
+	/* Load kinfo for post-relocation fixes. */
+	current->kinfo = vtl0.mem[HEKI_KERNEL_INFO].va;
+
 	/*
 	 * The ELF buffer will be used to construct a copy of the guest module
 	 * in the host. The trusted keys will be used to verify the signature
@@ -1216,6 +1219,7 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	hmod->mem[MOD_DATA].retain = true;
 	hmod->mem[MOD_RODATA].retain = true;
 unmap:
+	current->kinfo = NULL;
 	/* Free everything that we don't need beyond this point. */
 	vsm_unmap_all(hmod->mem, MOD_ELF + 1);
 	if (err < 0)

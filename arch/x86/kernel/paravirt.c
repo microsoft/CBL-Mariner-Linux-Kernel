@@ -11,6 +11,7 @@
 #include <linux/export.h>
 #include <linux/efi.h>
 #include <linux/bcd.h>
+#include <linux/heki.h>
 #include <linux/highmem.h>
 #include <linux/kprobes.h>
 #include <linux/pgtable.h>
@@ -93,12 +94,21 @@ unsigned int paravirt_patch(u8 type, void *insn_buff, unsigned long addr,
 	 * corresponding structure.
 	 */
 	void *opfunc = *((void **)&pv_ops + type);
+	void *pv_bug = paravirt_BUG;
+	void *pv_nop = _paravirt_nop;
+	struct heki_kinfo *kinfo = current->kinfo;
 	unsigned ret;
+
+	if (kinfo) {
+		opfunc = *((void **)&kinfo->arch.pv_ops + type);
+		pv_bug = kinfo->arch.pv_bug;
+		pv_nop = kinfo->arch.pv_nop;
+	}
 
 	if (opfunc == NULL)
 		/* If there's no function, patch it with paravirt_BUG() */
-		ret = paravirt_patch_call(insn_buff, paravirt_BUG, addr, len);
-	else if (opfunc == _paravirt_nop)
+		ret = paravirt_patch_call(insn_buff, pv_bug, addr, len);
+	else if (opfunc == pv_nop)
 		ret = 0;
 	else
 		/* Otherwise call the function. */
