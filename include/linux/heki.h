@@ -236,7 +236,7 @@ static inline void heki_free_module_init(struct module *mod) { }
 static inline void heki_unload_module(struct module *mod) { }
 static inline void heki_copy_secondary_key(const void *data, size_t size) { }
 
-static void heki_register_hypervisor(struct heki_hypervisor *hypervisor) { }
+static inline void heki_register_hypervisor(struct heki_hypervisor *hypervisor) { }
 
 static inline void heki_store_blacklist_raw_hashes(const char *hash)
 {
