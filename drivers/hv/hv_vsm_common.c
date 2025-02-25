@@ -34,6 +34,21 @@ int hv_vsm_get_register(u32 reg_name, u64 *result)
 	return 0;
 }
 
+int hv_vsm_set_register(u32 reg_name, u64 value)
+{
+	struct hv_register_assoc reg = {
+		.name = reg_name,
+		.value.reg64 = value,
+	};
+	union hv_input_vtl input_vtl = {
+		.as_uint8 = 0,
+	};
+
+	return hv_call_set_vp_registers(HV_VP_INDEX_SELF,
+					HV_PARTITION_ID_SELF,
+					1, input_vtl, &reg);
+}
+
 int hv_vsm_get_code_page_offsets(void)
 {
 	u64 result;
