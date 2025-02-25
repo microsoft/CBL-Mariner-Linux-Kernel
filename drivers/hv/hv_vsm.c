@@ -5,12 +5,15 @@
  * Copyright © 2024 Microsoft Corporation
  */
 
+#include <linux/module.h>
+
 #include <hyperv/hvgdk_mini.h>
 #include <hyperv/hv_vsm.h>
 
 #include <asm/mshyperv.h>
 
 #include "mshv.h"
+#include "hv_vsm.h"
 
 static int __init vsm_arch_has_vsm_access(void)
 {
@@ -44,19 +47,18 @@ static int __init vsm_get_max_vtl(int *max_vtl)
 	return 0;
 }
 
-void __init vsm_init(void)
+int __init vsm_init(void)
 {
 	int max_vtl;
 
 	if (!vsm_arch_has_vsm_access())
-		return;
+		return 0;
 
 	if (vsm_get_max_vtl(&max_vtl))
-		return;
+		return 0;
 
 	if (max_vtl == 0)
-		return;
+		return 0;
 
-	/* VSM is not supported and can't be left available. */
-	panic("VSM is enabled but not supported\n");
+	return hv_vsm_boot_init();
 }

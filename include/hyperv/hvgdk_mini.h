@@ -438,6 +438,7 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_GET_LOGICAL_PROCESSOR_RUN_TIME		0x0004
 #define HVCALL_NOTIFY_LONG_SPIN_WAIT			0x0008
 #define HVCALL_SEND_IPI					0x000b
+#define HVCALL_ENABLE_PARTITION_VTL			0x000d
 #define HVCALL_ENABLE_VP_VTL				0x000f
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE_EX		0x0013
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST_EX		0x0014
@@ -1010,6 +1011,36 @@ struct hv_init_vp_context {
 	u64 msr_cr_pat;
 #endif /* !CONFIG_ARM64 */
 } __packed;
+
+union hv_enable_partition_vtl_flags
+{
+    u8 as_uint8;
+    struct {
+        u8 enable_mbec:1;
+        u8 enable_supervisor_shadow_stack:1;
+        u8 enable_hardware_hvpt:1;
+        u8 reserved:5;
+    } __packed;
+};
+
+struct hv_input_enable_partition_vtl {
+	u64					partition_id;
+	union hv_input_vtl			target_vtl;
+	union hv_enable_partition_vtl_flags	flags;
+	u16					rsvd_z16;
+	u32					rsvd_z32;
+} __packed;
+
+union hv_register_vsm_vp_status {
+	__u64 as_uint64;
+	struct {
+		__u64 active_vtl : 4;
+		__u64 active_mbec_enabled : 1;
+		__u64 reserved_z0 : 11;
+		__u64 enabled_vtl_set : 16;
+		__u64 reserved_z1 : 32;
+	} __packed;
+};
 
 struct hv_enable_vp_vtl {
 	u64				partition_id;
