@@ -262,6 +262,21 @@ static int hv_vtl_wakeup_secondary_cpu(int apicid, unsigned long start_eip)
 	return hv_vtl_bringup_vcpu(vp_id, cpu, start_eip);
 }
 
+int hv_secure_vtl_enable_secondary_cpu(u32 target_vp_index)
+{
+	struct hv_enable_vp_vtl *input;
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(input, 0, sizeof(*input));
+
+	input->partition_id = HV_PARTITION_ID_SELF;
+	input->vp_index = target_vp_index;
+	input->target_vtl.target_vtl = HV_VTL_SECURE;
+	hv_vtl_populate_vp_context(input, target_vp_index, target_vp_index);
+
+	return  __hv_vtl_enable_vcpu(input);
+}
+
 int __init hv_vtl_early_init(u8 vtl)
 {
 	/*
