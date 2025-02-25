@@ -2479,7 +2479,6 @@ config PAGE_TABLE_ISOLATION
 
 config RETPOLINE
 	bool "Avoid speculative indirect branches in kernel"
-	depends on !HEKI
 	select OBJTOOL if HAVE_OBJTOOL
 	default y
 	help
