@@ -119,8 +119,20 @@ out:
 	return ret;
 }
 
+static int hv_vsm_signal_end_of_boot(void)
+{
+	struct hv_vtlcall_param args = {0};
+
+	if (!hv_vsm_boot_success)
+		return -EINVAL;
+
+	args.a0 = VSM_VTL_CALL_FUNC_ID_SIGNAL_END_OF_BOOT;
+	return hv_vsm_vtlcall(&args);
+}
+
 static struct heki_hypervisor hyperv_heki_hypervisor = {
 	.lock_crs = hv_vsm_lock_crs,
+	.finish_boot = hv_vsm_signal_end_of_boot,
 };
 
 static int __init hv_vsm_init_heki(void)

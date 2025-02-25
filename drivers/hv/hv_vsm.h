@@ -14,6 +14,7 @@
 #define VSM_VTL_CALL_FUNC_ID_ENABLE_APS_VTL	0x1FFE0
 #define VSM_VTL_CALL_FUNC_ID_BOOT_APS		0x1FFE1
 #define VSM_VTL_CALL_FUNC_ID_LOCK_REGS		0x1FFE2
+#define VSM_VTL_CALL_FUNC_ID_SIGNAL_END_OF_BOOT	0x1FFE3
 
 extern bool hv_vsm_boot_success;
 extern bool hv_vsm_mbec_enabled;
