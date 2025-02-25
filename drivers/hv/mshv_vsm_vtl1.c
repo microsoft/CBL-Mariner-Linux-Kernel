@@ -1138,6 +1138,86 @@ void module_id_unmap(struct heki_mod *hmod)
 	}
 }
 
+static int vsm_set_module_permissions(struct heki_mod *hmod, int type,
+				      unsigned long attributes, bool free)
+{
+	struct heki_mem *mem = &hmod->mem[type];
+	unsigned long permissions;
+	struct heki_range *range;
+	int i, n, err = 0;
+
+	if (!mem->nranges)
+		return 0;
+
+	for (i = 0; i < mem->nranges; i++) {
+		range = &mem->ranges[i];
+
+		permissions = 0;
+		if (attributes & MEM_ATTR_READ) {
+			permissions |= (HV_PAGE_READABLE |
+					HV_PAGE_USER_EXECUTABLE);
+		}
+		if (attributes & MEM_ATTR_WRITE)
+			permissions |= HV_PAGE_WRITABLE;
+		if (attributes & MEM_ATTR_EXEC)
+			permissions |= HV_PAGE_EXECUTABLE;
+
+		n = (range->epa - range->pa) >> PAGE_SHIFT;
+		err = hv_modify_vtl_protection_mask(range->pa, n, permissions);
+		if (err) {
+			pr_warn("%s: %s: Didn't set permissions for type %d\n",
+				__func__, hmod->name, type);
+			break;
+		}
+	}
+
+	if (free && !mem->retain) {
+		mem->ranges = NULL;
+		mem->nranges = 0;
+	}
+
+	return err;
+}
+
+static int vsm_set_guest_module_permissions(struct heki_mod *hmod)
+{
+	unsigned long permissions;
+	int err = 0;
+
+	for_each_mod_mem_type(type) {
+		switch (type) {
+		case MOD_TEXT:
+			permissions = MEM_ATTR_READ | MEM_ATTR_EXEC;
+			break;
+		case MOD_DATA:
+			permissions = MEM_ATTR_READ | MEM_ATTR_WRITE;
+			break;
+		case MOD_RODATA:
+			permissions = MEM_ATTR_READ;
+			break;
+		case MOD_RO_AFTER_INIT:
+			permissions = MEM_ATTR_READ | MEM_ATTR_WRITE;
+			break;
+		case MOD_INIT_TEXT:
+			permissions = MEM_ATTR_READ | MEM_ATTR_EXEC;
+			break;
+		case MOD_INIT_DATA:
+			permissions = MEM_ATTR_READ | MEM_ATTR_WRITE;
+			break;
+		case MOD_INIT_RODATA:
+			permissions = MEM_ATTR_READ;
+			break;
+		default:
+			continue;
+		}
+
+		err = vsm_set_module_permissions(hmod, type, permissions, false);
+		if (err)
+			break;
+	}
+	return err;
+}
+
 static void vsm_resolve_func(char *name, Elf64_Sym *sym);
 
 static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
@@ -1202,12 +1282,20 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 		goto unmap;
 	}
 
+	/* Set permissions for all module sections in the EPT. */
+	strscpy(hmod->name, info->name, MODULE_NAME_LEN);
+	hmod->ranges = ranges;
+
+	err = vsm_set_guest_module_permissions(hmod);
+	if (err) {
+		pr_warn("%s: Could not set module permissions\n", __func__);
+		goto unmap;
+	}
+
 	/*
 	 * Add the guest module to a modules list and assign an
 	 * authentication token for it. Return the token.
 	 */
-	strscpy(hmod->name, info->name, MODULE_NAME_LEN);
-	hmod->ranges = ranges;
 	hmod->token = ++vtl0.token;
 	list_add(&hmod->node, &vtl0.modules);
 	err = hmod->token;
