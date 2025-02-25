@@ -116,4 +116,6 @@ int rcutree_dead_cpu(unsigned int cpu);
 int rcutree_dying_cpu(unsigned int cpu);
 void rcu_cpu_starting(unsigned int cpu);
 
+int rcu_pending(int user);
+
 #endif /* __LINUX_RCUTREE_H */
