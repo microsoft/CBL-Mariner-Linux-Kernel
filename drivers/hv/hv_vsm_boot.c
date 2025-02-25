@@ -14,6 +14,8 @@
 #include <linux/slab.h>
 #include <linux/cpumask.h>
 #include <linux/vmalloc.h>
+#include <linux/verification.h>
+#include <crypto/pkcs7.h>
 
 #include <asm/mshyperv.h>
 
@@ -64,6 +66,9 @@
 
 static struct file *sk_loader, *sk;
 static struct page *boot_signal_page, *cpu_online_page, *cpu_present_page;
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+static struct file *sk_loader_sig, *sk_sig;
+#endif
 static phys_addr_t vsm_skm_pa;
 static void *vsm_skm_va;
 static u8 *boot_signal;
@@ -751,6 +756,30 @@ static int __init hv_vsm_enable_vp_vtl(void)
 	return (int)(status & HV_HYPERCALL_RESULT_MASK);
 }
 
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+static int verify_vsm_signature(char *buffer, unsigned int buff_size, char *signature,
+				unsigned int sig_size)
+{
+	int ret = 0;
+	struct pkcs7_message *pkcs7;
+
+	if (!buffer || !signature)
+		return -EINVAL;
+	pkcs7 = pkcs7_parse_message(signature, sig_size);
+	if (IS_ERR(pkcs7)) {
+		pr_err("%s: pkcs7_parse_message failed. Error code: %ld", __func__, PTR_ERR(pkcs7));
+		return PTR_ERR(pkcs7);
+	}
+	ret = verify_pkcs7_signature(buffer, buff_size, signature, sig_size, NULL,
+				     VERIFYING_UNSPECIFIED_SIGNATURE, NULL, NULL);
+	if (ret) {
+		pr_err("%s: verify_pkcs7_signature failed. Error code: %d", __func__, ret);
+		return ret;
+	}
+	return ret;
+}
+#endif
+
 static int __init hv_vsm_load_secure_kernel(void)
 {
 	/*
@@ -759,15 +788,29 @@ static int __init hv_vsm_load_secure_kernel(void)
 	 */
 	loff_t size_skloader, size_sk;
 	char *skloader_buf = NULL, *sk_buf = NULL;
-	int err;
+	int ret = 0;
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	loff_t size_skloader_sig, size_sk_sig;
+	char *skloader_sig_buf = NULL, *sk_sig_buf = NULL;
+#endif
 
 	// Find the size of skloader and sk
 	size_skloader = vfs_llseek(sk_loader, 0, SEEK_END);
 	size_sk = vfs_llseek(sk, 0, SEEK_END);
 
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	size_skloader_sig = vfs_llseek(sk_loader_sig, 0, SEEK_END);
+	size_sk_sig = vfs_llseek(sk_sig, 0, SEEK_END);
+#endif
+
 	// Seek back to the beginning of the file
 	vfs_llseek(sk_loader, 0, SEEK_SET);
 	vfs_llseek(sk, 0, SEEK_SET);
+
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	vfs_llseek(sk_loader_sig, 0, SEEK_SET);
+	vfs_llseek(sk_sig, 0, SEEK_SET);
+#endif
 
 	// Allocate memory for the buffer
 	skloader_buf = kvmalloc(size_skloader, GFP_KERNEL);
@@ -778,31 +821,81 @@ static int __init hv_vsm_load_secure_kernel(void)
 	sk_buf = kvmalloc(size_sk, GFP_KERNEL);
 	if (!sk_buf) {
 		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
-		kvfree(skloader_buf);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto free_skl;
 	}
 
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	skloader_sig_buf = kvmalloc(size_skloader_sig, GFP_KERNEL);
+	if (!skloader_sig_buf) {
+		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
+		ret = -ENOMEM;
+		goto free_sk;
+	}
+	sk_sig_buf = kvmalloc(size_sk_sig, GFP_KERNEL);
+	if (!sk_sig_buf) {
+		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
+		ret = -ENOMEM;
+		goto free_skl_sig;
+	}
+#endif
+
 	// Read from the file into the buffer
-	err = kernel_read(sk_loader, skloader_buf, size_skloader, &sk_loader->f_pos);
-	if (err != size_skloader) {
+	ret = kernel_read(sk_loader, skloader_buf, size_skloader, &sk_loader->f_pos);
+	if (ret != size_skloader) {
 		pr_err("%s Unable to read skloader.bin file\n", __func__);
-		kvfree(skloader_buf);
-		kvfree(sk_buf);
-		return -1;
+		goto free_bufs;
 	}
-	err = kernel_read(sk, sk_buf, size_sk, &sk->f_pos);
-	if (err != size_sk) {
+	ret = kernel_read(sk, sk_buf, size_sk, &sk->f_pos);
+	if (ret != size_sk) {
 		pr_err("%s Unable to read vmlinux.bin file\n", __func__);
-		kvfree(skloader_buf);
-		kvfree(sk_buf);
-		return -1;
+		goto free_bufs;
 	}
+
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	ret = kernel_read(sk_loader_sig, skloader_sig_buf, size_skloader_sig,
+			  &sk_loader_sig->f_pos);
+	if (ret != size_skloader_sig) {
+		pr_err("%s Unable to read skloader.bin.p7s file\n", __func__);
+		goto free_bufs;
+	}
+	ret = kernel_read(sk_sig, sk_sig_buf, size_sk_sig, &sk_sig->f_pos);
+	if (ret != size_sk_sig) {
+		pr_err("%s Unable to read vmlinux.bin.p7s file\n", __func__);
+		goto free_bufs;
+	}
+
+	ret = verify_vsm_signature(skloader_buf, size_skloader, skloader_sig_buf,
+				   size_skloader_sig);
+
+	if (ret) {
+		pr_err("%s: Failed to verify Secure Loader signature.", __func__);
+		goto free_bufs;
+	}
+
+	ret = verify_vsm_signature(sk_buf, size_sk, sk_sig_buf, size_sk_sig);
+
+	if (ret) {
+		pr_err("%s: Failed to verify Secure Kernel signature.", __func__);
+		goto free_bufs;
+	}
+#endif
 
 	memcpy(vsm_skm_va, skloader_buf, size_skloader);
 	memcpy(vsm_skm_va + (2 * 1024 * 1024), sk_buf, size_sk);
-	kvfree(skloader_buf);
+	ret = 0;
+
+free_bufs:
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	kvfree(sk_sig_buf);
+free_skl_sig:
+	kvfree(skloader_sig_buf);
+free_sk:
+#endif
 	kvfree(sk_buf);
-	return 0;
+free_skl:
+	kvfree(skloader_buf);
+	return ret;
 }
 
 int __init hv_vsm_boot_init(void)
@@ -829,9 +922,23 @@ int __init hv_vsm_boot_init(void)
 	if (IS_ERR(sk)) {
 		pr_err("%s: File usr/lib/firmware/vmlinux.bin not found\n", __func__);
 		ret = -ENOENT;
-		goto close_file;
+		goto close_skl_file;
 	}
 
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	sk_loader_sig = filp_open("/usr/lib/firmware/skloader.bin.p7s", O_RDONLY, 0);
+	if (IS_ERR(sk_loader_sig)) {
+		pr_err("%s: File usr/lib/firmware/skloader.bin.p7s not found\n", __func__);
+		ret = -ENOENT;
+		goto close_sk_file;
+	}
+	sk_sig = filp_open("/usr/lib/firmware/vmlinux.bin.p7s", O_RDONLY, 0);
+	if (IS_ERR(sk_sig)) {
+		pr_err("%s: File usr/lib/firmware/vmlinux.bin.p7s not found\n", __func__);
+		ret = -ENOENT;
+		goto close_skl_sig_file;
+	}
+#endif
 	ret = hv_vsm_get_code_page_offsets();
 	if (ret) {
 		pr_err("%s: Unbable to retrieve vsm page offsets\n", __func__);
@@ -936,8 +1043,14 @@ out:
 	free_cpumask_var(mask);
 
 close_files:
+#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
+	filp_close(sk_sig, NULL);
+close_skl_sig_file:
+	filp_close(sk_loader_sig, NULL);
+close_sk_file:
+#endif
 	filp_close(sk, NULL);
-close_file:
+close_skl_file:
 	filp_close(sk_loader, NULL);
 free_mem:
 	vunmap(vsm_skm_va);
