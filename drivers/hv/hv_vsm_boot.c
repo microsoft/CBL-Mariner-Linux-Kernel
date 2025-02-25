@@ -162,71 +162,12 @@ static void hv_vsm_dump_secure_kernel_memory(void)
 
 static void __init __hv_vsm_init_vtlcall(struct hv_vtlcall_param *args)
 {
-	u64 hcall_addr;
-
-	hcall_addr = (u64)((u8 *)hv_hypercall_pg + vsm_code_page_offsets.vtl_call_offset);
-	register u64 hypercall_addr asm("rax") = hcall_addr;
-
-	asm __volatile__ (	\
-	/* Keep copies of all the registers */
-		"pushq	%%rdi\n"
-		"pushq	%%rsi\n"
-		"pushq	%%rdx\n"
-		"pushq	%%rbx\n"
-		"pushq	%%rcx\n"
-		"pushq	%%rax\n"
-		"pushq	%%r8\n"
-		"pushq	%%r9\n"
-		"pushq	%%r10\n"
-		"pushq	%%r11\n"
-		"pushq	%%r12\n"
-		"pushq	%%r13\n"
-		"pushq	%%r14\n"
-		"pushq	%%r15\n"
-		"pushq  %%rbp\n"
-	/*
-	 * The vtlcall_param structure is in rdi, which is modified below, so copy it into a
-	 * register that stays constant in the instructon block immediately following.
-	 */
-		"movq	%1, %%r12\n"
-
-	/* Copy values from vtlcall_param structure into registers used to communicate with VTL1 */
-		"movq	0x00(%%r12), %%rdi\n"
-		"movq	0x08(%%r12), %%rsi\n"
-		"movq	0x10(%%r12), %%rdx\n"
-		"movq	0x18(%%r12), %%r8\n"
-	/* Make rcx 0 */
-		"xorl	%%ecx, %%ecx\n"
-	/* VTL call */
-		CALL_NOSPEC
-	/* Restore r12 with vtlcall_param after VTL call */
-		"movq	112(%%rsp), %%r12\n"
-
-	/* Copy values from registers used to communicate with VTL1 into vtlcall_param structure */
-		"movq	%%rdi,  0x00(%%r12)\n"
-		"movq	%%rsi,  0x08(%%r12)\n"
-		"movq	%%rdx,  0x10(%%r12)\n"
-		"movq	%%r8,  0x18(%%r12)\n"
-
-	/* Restore all modified registers */
-		"popq   %%rbp\n"
-		"popq	%%r15\n"
-		"popq	%%r14\n"
-		"popq	%%r13\n"
-		"popq	%%r12\n"
-		"popq	%%r11\n"
-		"popq	%%r10\n"
-		"popq	%%r9\n"
-		"popq	%%r8\n"
-		"popq	%%rax\n"
-		"popq	%%rcx\n"
-		"popq	%%rbx\n"
-		"popq	%%rdx\n"
-		"popq	%%rsi\n"
-		"popq	%%rdi\n"
-		: ASM_CALL_CONSTRAINT
-		: "D"(args), THUNK_TARGET(hypercall_addr)
-		: "cc", "memory");
+	asm volatile("pushq %%rbp\n"
+		     CALL_NOSPEC
+		     "popq %%rbp\n"
+			:
+			: "D" (args), THUNK_TARGET(__hv_vsm_vtlcall)
+			: "cc", "memory", "rbx", "r12", "r13", "r14", "r15");
 }
 
 static int __init hv_vsm_init_vtlcall(struct hv_vtlcall_param *args)

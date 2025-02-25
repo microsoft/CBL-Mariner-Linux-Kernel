@@ -36,7 +36,7 @@
  *
  * Microsoft Hypervisor preserves %rsp during VTL switches.
  */
-static void __hv_vsm_vtlcall(struct hv_vtlcall_param *args)
+void __hv_vsm_vtlcall(struct hv_vtlcall_param *args)
 {
 	register u64 r8 asm("r8");
 	u64 hcall_addr;
