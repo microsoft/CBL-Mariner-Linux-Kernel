@@ -13,6 +13,7 @@ struct machine_ops {
 	void (*shutdown)(void);
 	void (*crash_shutdown)(struct pt_regs *);
 	void (*emergency_restart)(void);
+	void (*kexec)(void);
 };
 
 extern struct machine_ops machine_ops;

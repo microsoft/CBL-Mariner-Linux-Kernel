@@ -29,6 +29,7 @@
 #include <asm/set_memory.h>
 #include <asm/cpu.h>
 #include <asm/efi.h>
+#include <asm/reboot.h>
 
 #ifdef CONFIG_ACPI
 /*
@@ -364,6 +365,8 @@ void machine_kexec(struct kimage *image)
 		restore_boot_irq_mode();
 #endif
 	}
+
+	machine_ops.kexec();
 
 	control_page = page_address(image->control_code_page);
 	__memcpy(control_page, relocate_kernel, KEXEC_CONTROL_CODE_MAX_SIZE);
