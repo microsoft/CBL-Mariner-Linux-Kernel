@@ -38,6 +38,10 @@
 #define VSM_PAGE_AT(addr, idx)  ((addr) + (idx) * PAGE_SIZE)
 /* Compute the page frame number (PFN) from a page address */
 #define VSM_PAGE_TO_PFN(addr)  ((addr) >> PAGE_SHIFT)
+
+#define CR4_PIN_MASK	~((u64)(X86_CR4_MCE | X86_CR4_PGE | X86_CR4_PCE | X86_CR4_VMXE))
+#define CR0_PIN_MASK	((u64)(X86_CR0_PE | X86_CR0_WP | X86_CR0_PG))
+
 extern struct boot_params boot_params;
 
 union hv_register_vsm_vp_secure_vtl_config {
@@ -73,6 +77,17 @@ struct hv_vsm_per_cpu {
 	struct hv_vtl_cpu_context cpu_context;
 	struct hv_vtlcall_param vtl_params;
 	struct task_struct *vsm_task;
+	u64 cr0_saved;
+	u64 cr4_saved;
+	u64 msr_lstar_saved;
+	u64 msr_cstar_saved;
+	u64 msr_star_saved;
+	u64 msr_apic_base_saved;
+	u64 msr_efer_saved;
+	u64 msr_sysenter_cs_saved;
+	u64 msr_sysenter_eip_saved;
+	u64 msr_sysenter_esp_saved;
+	u64 msr_sfmask_saved;
 	/* Shut down tick when exiting VTL1 */
 	bool suppress_tick;
 	/* CPU should stay in VTL1 and not exit to VTL0 even if idle is invoked */
@@ -249,6 +264,71 @@ static int hv_modify_vtl_protection_mask(u64 start, u64 number_of_pages, u32 pag
 	local_irq_restore(flags);
 	/* Done */
 	return hv_result(status);
+}
+
+static void __save_vtl0_registers(void)
+{
+	struct hv_vsm_per_cpu *per_cpu = this_cpu_ptr(&vsm_per_cpu);
+	u64 result;
+
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_CR0, &result);
+	per_cpu->cr0_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_CR4, &result);
+	per_cpu->cr4_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_LSTAR, &result);
+	per_cpu->msr_lstar_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_STAR, &result);
+	per_cpu->msr_star_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_CSTAR, &result);
+	per_cpu->msr_cstar_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_APIC_BASE, &result);
+	per_cpu->msr_apic_base_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_EFER, &result);
+	per_cpu->msr_efer_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_SYSENTER_CS, &result);
+	per_cpu->msr_sysenter_cs_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_SYSENTER_ESP, &result);
+	per_cpu->msr_sysenter_esp_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_SYSENTER_EIP, &result);
+	per_cpu->msr_sysenter_eip_saved = result;
+	hv_vsm_get_vtl0_register(HV_X64_REGISTER_SFMASK, &result);
+	per_cpu->msr_sfmask_saved = result;
+}
+
+static int mshv_vsm_lock_regs(void)
+{
+	union hv_register_cr_intercept_control ctrl;
+	int ret;
+
+	ctrl.as_uint64 = 0;
+	ctrl.cr0_write = 1;
+	ctrl.cr4_write = 1;
+	ctrl.gdtr_write = 1;
+	ctrl.idtr_write = 1;
+	ctrl.ldtr_write = 1;
+	ctrl.tr_write = 1;
+	ctrl.msr_lstar_write = 1;
+	ctrl.msr_star_write = 1;
+	ctrl.msr_cstar_write = 1;
+	ctrl.apic_base_msr_write = 1;
+	ctrl.msr_efer_write = 1;
+	ctrl.msr_sysenter_cs_write = 1;
+	ctrl.msr_sysenter_eip_write = 1;
+	ctrl.msr_sysenter_esp_write = 1;
+	ctrl.msr_sfmask_write = 1;
+
+	__save_vtl0_registers();
+
+	ret = hv_vsm_set_register(HV_X64_REGISTER_CR_INTERCEPT_CONTROL, ctrl.as_uint64);
+	if (ret)
+		return ret;
+
+	ret = hv_vsm_set_register(HV_X64_REGISTER_CR_INTERCEPT_CR4_MASK, (u64)CR4_PIN_MASK);
+	if (ret)
+		return ret;
+
+	ret = hv_vsm_set_register(HV_X64_REGISTER_CR_INTERCEPT_CR0_MASK, (u64)CR0_PIN_MASK);
+	return ret;
 }
 
 /********************** Boot Secondary CPUs **********************/
@@ -512,6 +592,10 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 	case VSM_VTL_CALL_FUNC_ID_BOOT_APS:
 		pr_debug("%s : VSM_VTL_CALL_FUNC_ID_BOOT_APS\n", __func__);
 		status = mshv_vsm_boot_aps(_vtl_params->a1, _vtl_params->a2);
+		break;
+	case VSM_VTL_CALL_FUNC_ID_LOCK_REGS:
+		pr_debug("%s : VSM_LOCK_REGS\n", __func__);
+		status = mshv_vsm_lock_regs();
 		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
