@@ -15,8 +15,10 @@
 extern __initconst const u8 system_certificate_list[];
 extern __initconst const unsigned long module_cert_size;
 
+#ifdef CONFIG_SYSTEM_REVOCATION_LIST
 extern __initconst const u8 revocation_certificate_list[];
 extern __initconst const unsigned long revocation_certificate_list_size;
+#endif
 
 static struct heki_kinfo heki_kinfo;
 
@@ -44,6 +46,7 @@ static int __init heki_copy_boot_certs(void)
 	 */
 	memcpy(heki_module_certs, system_certificate_list, module_cert_size);
 
+#ifdef CONFIG_SYSTEM_REVOCATION_LIST
 	if (revocation_certificate_list_size <= 0) {
 		pr_info("No revocation certificates found.\n");
 		return 0;
@@ -62,6 +65,7 @@ static int __init heki_copy_boot_certs(void)
 	 */
 	memcpy(heki_revocation_certs, revocation_certificate_list,
 	       revocation_certificate_list_size);
+#endif
 	return 0;
 }
 core_initcall(heki_copy_boot_certs);
