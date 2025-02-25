@@ -60,6 +60,8 @@ enum heki_kdata_type {
  */
 #define MOD_ELF		MOD_MEM_NUM_TYPES
 
+#define HEKI_MODULE_RESERVE_SIZE	0x40000000UL
+
 /*
  * A hypervisor that supports Heki will instantiate this structure to
  * provide hypervisor specific functions for Heki.
@@ -88,6 +90,15 @@ struct heki_hypervisor {
 /*
  * The ranges contain VTL0 pages. VTL0 pages are mapped into VTL1 address space
  * so VTL1 can access VTL0 memory at va.
+ *
+ * Each module section (text, data, etc) is represented by a heki_mem. Module
+ * sections are reconstructed in VTL1 and compared with the corresponding
+ * VTL0 sections. Reconstruction involves module symbol resolution and module
+ * relocation. These steps involve symbol addresses. To make the reconstruction
+ * simpler, we map the VTL1 module sections at the same virtual addresses as
+ * their corresponding sections in VTL0. We call this identity mapping. This
+ * keeps the addresses the same in VTL0 and VTL1. A VTL1 section is accessed
+ * at ranges->va since that is the starting va for the section.
  */
 struct heki_mem {
 	void			*va;
@@ -95,6 +106,18 @@ struct heki_mem {
 	long			offset;
 	struct heki_range	*ranges;
 	unsigned long		nranges;
+	struct page		**pages;
+	bool			retain;
+};
+
+/* This is created for each guest module in the host. */
+struct heki_mod {
+	struct list_head node;
+	struct heki_range *ranges;
+	char name[MODULE_NAME_LEN];
+	long token;
+	struct heki_mem mem[MOD_ELF + 1];
+	struct module *mod;
 };
 
 #ifdef CONFIG_HEKI

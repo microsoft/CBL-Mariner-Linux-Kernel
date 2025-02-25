@@ -44,6 +44,7 @@ int mod_verify_sig(const void *mod, struct load_info *info)
 {
 	struct module_signature ms;
 	size_t sig_len, modlen = info->len;
+	struct key *trusted_keys = info->trusted_keys;
 	int ret;
 
 	pr_devel("==>%s(,%zu)\n", __func__, modlen);
@@ -60,9 +61,11 @@ int mod_verify_sig(const void *mod, struct load_info *info)
 	sig_len = be32_to_cpu(ms.sig_len);
 	modlen -= sig_len + sizeof(ms);
 	info->len = modlen;
+	if (!trusted_keys)
+		trusted_keys = VERIFY_USE_SECONDARY_KEYRING;
 
 	return verify_pkcs7_signature(mod, modlen, mod + modlen, sig_len,
-				      VERIFY_USE_SECONDARY_KEYRING,
+				      trusted_keys,
 				      VERIFYING_MODULE_SIGNATURE,
 				      NULL, NULL);
 }
