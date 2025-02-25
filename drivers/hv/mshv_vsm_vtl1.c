@@ -16,6 +16,8 @@
 #include <asm/fpu/api.h>
 #include <asm/cpu.h>
 #include <asm/mpspec.h>
+#include <asm/bootparam.h>
+#include <asm/e820/types.h>
 #include "hv_vsm.h"
 
 #define HV_VTL1_IOCTL	0xE1
@@ -31,6 +33,12 @@
 #define HV_PAGE_USER_EXECUTABLE		0x8
 #define HV_PAGE_EXECUTABLE		(HV_PAGE_KERNEL_EXECUTABLE | HV_PAGE_USER_EXECUTABLE)
 #define HV_PAGE_FULL_ACCESS		(HV_PAGE_READABLE | HV_PAGE_WRITABLE | HV_PAGE_EXECUTABLE)
+
+/* Compute the address of the page at the given index with the given base */
+#define VSM_PAGE_AT(addr, idx)  ((addr) + (idx) * PAGE_SIZE)
+/* Compute the page frame number (PFN) from a page address */
+#define VSM_PAGE_TO_PFN(addr)  ((addr) >> PAGE_SHIFT)
+extern struct boot_params boot_params;
 
 union hv_register_vsm_vp_secure_vtl_config {
 	u64 as_u64;
@@ -74,6 +82,16 @@ struct hv_vsm_per_cpu {
 };
 
 static DEFINE_PER_CPU(struct hv_vsm_per_cpu, vsm_per_cpu);
+
+struct hv_input_modify_vtl_protection_mask {
+	u64 partition_id;
+	u32 map_flags;
+	union hv_input_vtl target_vtl;
+	u8 reserved8_z;
+	u16 reserved16_z;
+
+	__aligned(8) u64 gpa_page_list[];
+};
 
 static int mshv_vsm_enable_aps(unsigned int cpu_present_mask_pfn)
 {
@@ -153,6 +171,70 @@ static int mshv_vsm_enable_aps(unsigned int cpu_present_mask_pfn)
 out:
 	vunmap(cpu_present_data);
 	return ret;
+}
+
+static int hv_modify_vtl_protection_mask(u64 start, u64 number_of_pages, u32 page_access)
+{
+	struct hv_input_modify_vtl_protection_mask *hvin;
+	u64 status, pages_processed, total_pages_processed;
+	unsigned long flags;
+	size_t max_pages_per_request;
+	int i;
+
+	/* Check parameters */
+	if (number_of_pages <= 0 || number_of_pages >= UINT_MAX)
+		return -EINVAL;
+
+	pr_debug("%s start = 0x%llx, page_count = %lld, perm = 0x%x\n",
+		 __func__, start, number_of_pages, page_access);
+
+	/* Compute the maximum number of pages that can be processed in one go */
+	max_pages_per_request = (PAGE_SIZE - sizeof(*hvin)) / sizeof(u64);
+
+	/* Disable interrupts */
+	local_irq_save(flags);
+
+	/* Acquire the input page */
+	hvin = (struct hv_input_modify_vtl_protection_mask *)(*this_cpu_ptr(hyperv_pcpu_input_arg));
+	memset(hvin, 0, sizeof(*hvin));
+
+	/* Fill in the hypercall parameters */
+	hvin->partition_id = HV_PARTITION_ID_SELF;
+	hvin->target_vtl.as_uint8 = 1;
+	hvin->map_flags = page_access;
+
+	/*
+	 * Batch-process pages based on the maximum number of pages that can be
+	 * processed in a single hypercall
+	 */
+	pages_processed = 0;
+	total_pages_processed = 0;
+
+	while (total_pages_processed < number_of_pages) {
+		for (i = 0; ((i < max_pages_per_request) &&
+			     ((total_pages_processed + i) < number_of_pages)); i++)
+			hvin->gpa_page_list[i] =
+				VSM_PAGE_TO_PFN(VSM_PAGE_AT(start, total_pages_processed + i));
+
+		/* Perform the hypercall */
+		status = hv_do_rep_hypercall(HVCALL_MODIFY_VTL_PROTECTION_MASK, i, 0, hvin, NULL);
+
+		/*
+		 * Update page accounting for the next iteration, if any
+		 * N.B.: pages_processed is correct even if Hyper-V returned an error.
+		 */
+		pages_processed = hv_repcomp(status);
+		total_pages_processed += pages_processed;
+
+		/* See how things went */
+		if (!hv_result_success(status))
+			break;
+	}
+
+	/* Enable interrupts */
+	local_irq_restore(flags);
+	/* Done */
+	return hv_result(status);
 }
 
 /********************** Boot Secondary CPUs **********************/
@@ -570,7 +652,9 @@ static struct miscdevice mshv_vsm_dev = {
 
 static int __init mshv_vtl1_init(void)
 {
-	int ret = 0;
+	int i, ret = 0;
+	struct boot_e820_entry *e820_table;
+	u32 permissions = 0;
 
 	ret = misc_register(&mshv_vsm_dev);
 
@@ -594,6 +678,28 @@ static int __init mshv_vtl1_init(void)
 	// ToDo: Introduce clean up function
 	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "hyperv/vsm:init",
 				mshv_vsm_per_cpu_init, NULL);
+	if (ret < 0)
+		return ret;
+
+	/* Protect VTL1 memory from VTL0 */
+	e820_table = boot_params.e820_table;
+	permissions = HV_PAGE_ACCESS_NONE;
+
+	for (i = 0; i < E820_MAX_ENTRIES_ZEROPAGE; i++) {
+		if (e820_table[i].type == E820_TYPE_RAM) {
+			u64 start, end, page_count;
+
+			start = e820_table[i].addr;
+			end = e820_table[i].addr + e820_table[i].size;
+			pr_debug("VSM: Protect VTL1 memory region 0x%llx:0x%llx", start, end);
+
+			page_count = e820_table[i].size / PAGE_SIZE;
+			ret = hv_modify_vtl_protection_mask(start, page_count, permissions);
+			if (ret)
+				pr_err("Could not protect VTL1 mem addr:0x%llx, pg_count 0x%llx",
+				       start, page_count);
+		}
+	}
 
 	return ret;
 }
