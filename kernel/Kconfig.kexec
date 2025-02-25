@@ -17,7 +17,7 @@ config HAVE_IMA_KEXEC
 
 config KEXEC
 	bool "Enable kexec system call"
-	depends on ARCH_SUPPORTS_KEXEC
+	depends on ARCH_SUPPORTS_KEXEC && !HEKI
 	select KEXEC_CORE
 	help
 	  kexec is a system call that implements the ability to shutdown your
@@ -88,7 +88,7 @@ config KEXEC_BZIMAGE_VERIFY_SIG
 config KEXEC_JUMP
 	bool "kexec jump"
 	depends on ARCH_SUPPORTS_KEXEC_JUMP
-	depends on KEXEC && HIBERNATION
+	depends on KEXEC && HIBERNATION && !HEKI
 	help
 	  Jump between original kernel and kexeced kernel and invoke
 	  code in physical address mode via KEXEC
