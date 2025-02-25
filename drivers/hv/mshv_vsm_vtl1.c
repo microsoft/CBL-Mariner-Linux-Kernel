@@ -228,36 +228,6 @@ static int mshv_vsm_enable_aps(unsigned int cpu_present_mask_pfn)
 	}
 	cpu_present_vtl0 = (struct cpumask *)cpu_present_data;
 
-	/* Loop through VTL0's present CPUs and make them present in VTL1 as well */
-	for_each_cpu(cpu, cpu_present_vtl0) {
-		if (!cpu_possible(cpu)) {
-			pr_err("%s: CPU%u cannot be enabled because CPU%u is not possible",
-			       __func__, cpu, cpu);
-			ret = -EINVAL;
-			goto out;
-		}
-
-		if (!(cpu_present(cpu))) {
-			ret = generic_processor_info(cpu);
-
-			if (ret != cpu) {
-				pr_err("%s: Failed adding CPU%u. Error code: %d",
-				       __func__, cpu, ret);
-				ret = -EINVAL;
-				goto out;
-			}
-
-			ret = arch_register_cpu(cpu);
-
-			if (ret) {
-				pr_err("%s: Failed registering CPU%u. Error code: %d",
-				       __func__, cpu, ret);
-				ret = -EINVAL;
-				goto out;
-			}
-		}
-	}
-
 	/* Loop through present Processors and enable VTL1 in each one */
 	for_each_present_cpu(cpu) {
 		/*

@@ -175,7 +175,19 @@ static void hv_vtl_populate_vp_context(struct hv_enable_vp_vtl *input, u32 targe
 
 static int hv_vtl1_wakeup_secondary_cpu(int apicid, unsigned long start_eip)
 {
-	WRITE_ONCE(hv_secure_vtl_boot_signal[apicid], HV_SECURE_VTL_BOOT_TOKEN);
+	int cpu;
+
+	/* Find the logical CPU for the APIC ID */
+	for_each_present_cpu(cpu) {
+		if (arch_match_cpu_phys_id(cpu, apicid))
+			break;
+	}
+	if (cpu >= nr_cpu_ids) {
+		pr_err("No valid CPU found: %d with APIC ID %d in VTL1...\n", cpu, apicid);
+		return -EINVAL;
+	}
+
+	WRITE_ONCE(hv_secure_vtl_boot_signal[cpu], HV_SECURE_VTL_BOOT_TOKEN);
 	return 0;
 }
 
