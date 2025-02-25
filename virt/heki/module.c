@@ -188,3 +188,27 @@ void heki_unload_module(struct module *mod)
 
 	mutex_unlock(&heki.lock);
 }
+
+void heki_copy_secondary_key(const void *data, size_t size)
+{
+	struct heki_hypervisor *hypervisor = heki.hypervisor;
+	struct heki_args args = {};
+
+	if (!data || !hypervisor)
+		return;
+
+	mutex_lock(&heki.lock);
+
+	heki_walk((unsigned long)data,
+		  (unsigned long)data + size,
+		  heki_get_ranges, &args);
+
+	if (hypervisor->copy_secondary_key(args.head_pa, args.nranges))
+		pr_warn("Failed to load secondary key data.\n");
+	else
+		pr_warn("Loaded secondary key data\n");
+
+	mutex_unlock(&heki.lock);
+
+	heki_cleanup_args(&args);
+}
