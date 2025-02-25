@@ -85,6 +85,8 @@ void heki_load_kdata(void)
 	heki_kinfo.ksymtab_gpl_end =
 			(struct kernel_symbol *)__stop___ksymtab_gpl;
 
+	heki_load_arch_kinfo(&heki_kinfo);
+
 	args.attributes = HEKI_KERNEL_INFO;
 	heki_walk((unsigned long)&heki_kinfo,
 		  (unsigned long)&heki_kinfo + sizeof(heki_kinfo),
