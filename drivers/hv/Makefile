@@ -30,3 +30,4 @@ endif
 obj-$(subst m,y,$(CONFIG_HYPERV)) += hv_common.o
 
 obj-$(subst m,y,$(CONFIG_HYPERV_VSM)) += hv_vsm.o
+obj-$(subst m,y,$(CONFIG_HYPERV_VSM)) += hv_vsm_securekernel.o
