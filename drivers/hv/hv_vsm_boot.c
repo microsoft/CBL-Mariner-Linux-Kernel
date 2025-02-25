@@ -17,7 +17,10 @@
 #include <linux/verification.h>
 #include <linux/acpi.h>
 #include <crypto/pkcs7.h>
-#include <asm/e820/types.h>
+
+#define E820_X_MAX E820MAX
+#include <uapi/asm/bootparam.h>
+#include <uapi/asm/e820.h>
 
 #include <asm/mshyperv.h>
 
@@ -68,10 +71,10 @@
 #define VSM_BOOT_SIGNAL	0xDC
 #define VSM_MAX_BOOT_CPUS	96
 
-static struct file *sk_loader, *sk;
+static struct file *sk;
 static struct page *boot_signal_page, *cpu_online_page, *cpu_present_page;
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-static struct file *sk_loader_sig, *sk_sig;
+static struct file *sk_sig;
 #endif
 static phys_addr_t vsm_skm_pa;
 static void *vsm_skm_va;
@@ -80,16 +83,6 @@ static u8 *boot_signal;
 bool hv_vsm_boot_success;
 bool hv_vsm_mbec_enabled = true;
 bool hv_vsm_boot_panic;
-
-#define VSM_E820_MAX_ENTRIES		8
-/* Boot parameters for skloader */
-struct hv_vsm_boot_params {
-	u64	num_possible_cpus;
-	u64	sk_start;
-	u64	rsdp;
-	u8	e820_entries;
-	struct boot_e820_entry e820_table[VSM_E820_MAX_ENTRIES];
-};
 
 static int hv_vsm_get_partition_status(u16 *enabled_vtl_set, u8 *max_vtl, u16 *mbec_enabled_vtl_set)
 {
@@ -186,49 +179,30 @@ static int __init hv_vsm_init_vtlcall(struct hv_vtlcall_param *args)
 	return (int)args->a3;
 }
 
-static __init void hv_vsm_add_acpi_e820(struct hv_vsm_boot_params
-		*vsm_boot_params)
+static void __init add_e820_entry(struct boot_params *bootparams,
+				  u64 start_addr, u64 end_addr, u32 type)
+{
+	struct boot_e820_entry *entry = &bootparams->e820_table[bootparams->e820_entries++];
+
+	entry->addr = start_addr;
+	entry->size = end_addr - start_addr;
+	entry->type = type;
+}
+
+static void __init hv_vsm_add_acpi_e820(struct boot_params *bp)
 {
 	int i;
-	struct boot_e820_entry *entry, *hv_vsm_entry;
+	struct boot_e820_entry *entry;
 
 	for (i = 0; i < boot_params.e820_entries; i++) {
 		entry = &boot_params.e820_table[i];
 
-		if (entry->type != E820_TYPE_ACPI)
+		if (entry->type != E820_ACPI)
 			continue;
 
-		if (vsm_boot_params->e820_entries >= VSM_E820_MAX_ENTRIES) {
-			pr_warn("%s: HV VSM e820 table full. Skipping...\n", __func__);
-			continue;
-		}
-
-		hv_vsm_entry = &vsm_boot_params->e820_table[vsm_boot_params->e820_entries++];
-		hv_vsm_entry->addr = entry->addr;
-		hv_vsm_entry->size = entry->size;
-		hv_vsm_entry->type = entry->type;
+		add_e820_entry(bp, entry->addr, entry->addr + entry->size,
+			       E820_ACPI);
 	}
-}
-
-static __init void hv_vsm_add_e820(struct hv_vsm_boot_params
-		*vsm_boot_params)
-{
-	vsm_boot_params->e820_table[0].addr = 0;
-	vsm_boot_params->e820_table[0].size = sk_res.start;
-	vsm_boot_params->e820_table[0].type = E820_TYPE_RESERVED;
-
-	vsm_boot_params->e820_table[1].addr = sk_res.start;
-	vsm_boot_params->e820_table[1].size =
-		sk_res.end - sk_res.start + 1;
-	vsm_boot_params->e820_table[1].type = E820_TYPE_RAM;
-
-	vsm_boot_params->e820_table[2].addr = sk_res.end + 1;
-	vsm_boot_params->e820_table[2].size =
-		(max_pfn << PAGE_SHIFT) - sk_res.end;
-	vsm_boot_params->e820_table[2].type = E820_TYPE_RESERVED;
-
-	vsm_boot_params->e820_entries = 3;
-	hv_vsm_add_acpi_e820(vsm_boot_params);
 }
 
 static __init void hv_vsm_boot_vtl1(void)
@@ -236,17 +210,11 @@ static __init void hv_vsm_boot_vtl1(void)
 	struct hv_vtlcall_param args = {0};
 	u16 vp_enabled_vtl_set = 0;
 	u8 active_mbec_enabled = 0;
-	struct hv_vsm_boot_params *vtl1_boot_params =
-		vsm_skm_va + VSM_SKLOADER_BOOT_PARAMS_OFFSET;
 
-	vtl1_boot_params->num_possible_cpus = num_possible_cpus();
-	vtl1_boot_params->sk_start = sk_res.start;
-	vtl1_boot_params->rsdp = acpi_os_get_root_pointer();
-	hv_vsm_add_e820(vtl1_boot_params);
+	args.a0 = 0;
+	args.a1 = (u64)VSM_VA_FROM_PA(vsm_skm_pa) + VSM_BOOTPARAMS_OFFSET;
 
-	args.a0 = vsm_skm_pa + VSM_SKLOADER_BOOT_PARAMS_OFFSET;
-
-	pr_info("VSM boot params at %llx (phys:%llx)\n", (u64)vtl1_boot_params, args.a0);
+	pr_info("VSM boot params at %llx (phys:%llx)\n", args.a1, args.a0);
 
 	hv_vsm_init_vtlcall(&args);
 
@@ -509,8 +477,7 @@ static void __init hv_vsm_reserve_sk_mem(void)
 static void __init hv_vsm_init_cpu(struct hv_init_vp_context *vp_ctx)
 {
 	/* Offset rip by any secure kernel header length */
-	vp_ctx->rip = (u64)VSM_VA_FROM_PA(PAGE_AT(vsm_skm_pa,
-		VSM_FIRST_CODE_PAGE));
+	vp_ctx->rip = (u64)VSM_VA_FROM_PA(vsm_skm_pa) + VSM_SKERNEL_OFFSET;
 
 	/* ToDo: Check if can be replaced with CR0_STATE */
 	vp_ctx->cr0 =
@@ -787,80 +754,72 @@ static int verify_vsm_signature(char *buffer, unsigned int buff_size, char *sign
 }
 #endif
 
+static void __init vsm_build_boot_params(void)
+{
+	struct boot_params *bootparams = vsm_skm_va + VSM_BOOTPARAMS_OFFSET;
+	char *cmdline = vsm_skm_va + VSM_CMDLINE_OFFSET;
+	u64 cmd_line_ptr = (u64)VSM_VA_FROM_PA(vsm_skm_pa + VSM_CMDLINE_OFFSET);
+	u64 start_phys_mem = sk_res.start;
+	u64 end_phys_mem = sk_res.end + 1;
+	u64 total_mem = max_pfn << PAGE_SHIFT;
+
+	snprintf(cmdline, VSM_CMDLINE_SIZE,
+		 "debug rootwait console=ttyS1,115200 earlyprintk=ttyS1,115200 cpuidle.off=1 cpufreq.off=1 idle=halt initcall_blacklist=do_init_real_mode,sbf_init maxcpus=1 noxsave possible_cpus=%u",
+		 num_possible_cpus());
+
+	bootparams->hdr.type_of_loader = 0xFF;
+	bootparams->hdr.hardware_subarch = X86_SUBARCH_LGUEST;
+	bootparams->hdr.cmd_line_ptr = cmd_line_ptr & 0xFFFFFFFF;
+	bootparams->ext_cmd_line_ptr = (cmd_line_ptr >> 32) & 0xFFFFFFFF;
+	bootparams->acpi_rsdp_addr = acpi_os_get_root_pointer();
+	bootparams->e820_entries = 0;
+
+	add_e820_entry(bootparams, 0, start_phys_mem, E820_RESERVED);
+	add_e820_entry(bootparams, start_phys_mem, end_phys_mem, E820_RAM);
+	add_e820_entry(bootparams, end_phys_mem, total_mem, E820_RESERVED);
+
+	hv_vsm_add_acpi_e820(bootparams);
+}
+
 static int __init hv_vsm_load_secure_kernel(void)
 {
-	/*
-	 * Till we combine the skloader and kernel into one binary, we have to load them separately
-	 * ToDo: Load them as one binary
-	 */
-	loff_t size_skloader, size_sk;
-	char *skloader_buf = NULL, *sk_buf = NULL;
+	loff_t size_sk;
+	char *sk_buf = NULL;
 	int ret;
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	loff_t size_skloader_sig, size_sk_sig;
-	char *skloader_sig_buf = NULL, *sk_sig_buf = NULL;
+	loff_t size_sk_sig;
+	char *sk_sig_buf = NULL;
 #endif
 
-	BUILD_BUG_ON(sizeof(struct hv_vsm_boot_params) > VSM_SKLOADER_BOOT_PARAMS_SIZE);
-
-	// Find the size of skloader and sk
-	size_skloader = vfs_llseek(sk_loader, 0, SEEK_END);
-	if (size_skloader > VSM_SKLOADER_SIZE) {
-		pr_err("%s: Skloader too big:%lld\n", __func__, size_skloader);
-		hv_vsm_boot_panic = true;
-		return -ENOMEM;
-	}
 	size_sk = vfs_llseek(sk, 0, SEEK_END);
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	size_skloader_sig = vfs_llseek(sk_loader_sig, 0, SEEK_END);
 	size_sk_sig = vfs_llseek(sk_sig, 0, SEEK_END);
 #endif
 
 	// Seek back to the beginning of the file
-	vfs_llseek(sk_loader, 0, SEEK_SET);
 	vfs_llseek(sk, 0, SEEK_SET);
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	vfs_llseek(sk_loader_sig, 0, SEEK_SET);
 	vfs_llseek(sk_sig, 0, SEEK_SET);
 #endif
 
-	// Allocate memory for the buffer
-	skloader_buf = kvmalloc(size_skloader, GFP_KERNEL);
-	if (!skloader_buf) {
-		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
-		hv_vsm_boot_panic = true;
-	}
 	sk_buf = kvmalloc(size_sk, GFP_KERNEL);
 	if (!sk_buf) {
 		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
 		hv_vsm_boot_panic = true;
-		goto free_skl;
+		return -ENOMEM;
 	}
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	skloader_sig_buf = kvmalloc(size_skloader_sig, GFP_KERNEL);
-	if (!skloader_sig_buf) {
-		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
-		hv_vsm_boot_panic = true;
-		goto free_sk;
-	}
 	sk_sig_buf = kvmalloc(size_sk_sig, GFP_KERNEL);
 	if (!sk_sig_buf) {
 		pr_err("%s: Unable to allocate memory for copying secure kernel\n", __func__);
 		hv_vsm_boot_panic = true;
-		goto free_skl_sig;
+		goto free_sk;
 	}
 #endif
 
-	// Read from the file into the buffer
-	ret = kernel_read(sk_loader, skloader_buf, size_skloader, &sk_loader->f_pos);
-	if (ret != size_skloader) {
-		pr_err("%s Unable to read skloader.bin file\n", __func__);
-		hv_vsm_boot_panic = true;
-		goto free_bufs;
-	}
 	ret = kernel_read(sk, sk_buf, size_sk, &sk->f_pos);
 	if (ret != size_sk) {
 		pr_err("%s Unable to read vmlinux.bin file\n", __func__);
@@ -869,13 +828,6 @@ static int __init hv_vsm_load_secure_kernel(void)
 	}
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	ret = kernel_read(sk_loader_sig, skloader_sig_buf, size_skloader_sig,
-			  &sk_loader_sig->f_pos);
-	if (ret != size_skloader_sig) {
-		pr_err("%s Unable to read skloader.bin.p7s file\n", __func__);
-		hv_vsm_boot_panic = true;
-		goto free_bufs;
-	}
 	ret = kernel_read(sk_sig, sk_sig_buf, size_sk_sig, &sk_sig->f_pos);
 	if (ret != size_sk_sig) {
 		pr_err("%s Unable to read vmlinux.bin.p7s file\n", __func__);
@@ -883,17 +835,7 @@ static int __init hv_vsm_load_secure_kernel(void)
 		goto free_bufs;
 	}
 
-	ret = verify_vsm_signature(skloader_buf, size_skloader, skloader_sig_buf,
-				   size_skloader_sig);
-
-	if (ret) {
-		pr_err("%s: Failed to verify Secure Loader signature.", __func__);
-		hv_vsm_boot_panic = true;
-		goto free_bufs;
-	}
-
 	ret = verify_vsm_signature(sk_buf, size_sk, sk_sig_buf, size_sk_sig);
-
 	if (ret) {
 		pr_err("%s: Failed to verify Secure Kernel signature.", __func__);
 		hv_vsm_boot_panic = true;
@@ -901,20 +843,16 @@ static int __init hv_vsm_load_secure_kernel(void)
 	}
 #endif
 
-	memcpy(vsm_skm_va, skloader_buf, size_skloader);
-	memcpy(vsm_skm_va + (2 * 1024 * 1024), sk_buf, size_sk);
+	vsm_build_boot_params();
+	memcpy(vsm_skm_va + VSM_SKERNEL_OFFSET, sk_buf, size_sk);
 	ret = 0;
 
 free_bufs:
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
 	kvfree(sk_sig_buf);
-free_skl_sig:
-	kvfree(skloader_sig_buf);
 free_sk:
 #endif
 	kvfree(sk_buf);
-free_skl:
-	kvfree(skloader_buf);
 	return ret;
 }
 
@@ -929,35 +867,21 @@ int __init hv_vsm_boot_init(void)
 
 	hv_vsm_reserve_sk_mem();
 
-	sk_loader = filp_open("/usr/lib/firmware/skloader.bin", O_RDONLY, 0);
-	if (IS_ERR(sk_loader)) {
-		pr_err("%s: File usr/lib/firmware/skloader.bin not found\n", __func__);
-		ret = -ENOENT;
-		hv_vsm_boot_panic = true;
-		goto free_mem;
-	}
 	sk = filp_open("/usr/lib/firmware/vmlinux.bin", O_RDONLY, 0);
 	if (IS_ERR(sk)) {
 		pr_err("%s: File usr/lib/firmware/vmlinux.bin not found\n", __func__);
 		ret = -ENOENT;
 		hv_vsm_boot_panic = true;
-		goto close_skl_file;
+		goto free_mem;
 	}
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	sk_loader_sig = filp_open("/usr/lib/firmware/skloader.bin.p7s", O_RDONLY, 0);
-	if (IS_ERR(sk_loader_sig)) {
-		pr_err("%s: File usr/lib/firmware/skloader.bin.p7s not found\n", __func__);
-		ret = -ENOENT;
-		hv_vsm_boot_panic = true;
-		goto close_sk_file;
-	}
 	sk_sig = filp_open("/usr/lib/firmware/vmlinux.bin.p7s", O_RDONLY, 0);
 	if (IS_ERR(sk_sig)) {
 		pr_err("%s: File usr/lib/firmware/vmlinux.bin.p7s not found\n", __func__);
 		ret = -ENOENT;
 		hv_vsm_boot_panic = true;
-		goto close_skl_sig_file;
+		goto close_sk_file;
 	}
 #endif
 	ret = hv_vsm_get_code_page_offsets();
@@ -1044,7 +968,6 @@ int __init hv_vsm_boot_init(void)
 	}
 
 	ret = hv_vsm_load_secure_kernel();
-
 	if (ret)
 		goto out;
 
@@ -1073,13 +996,9 @@ out:
 close_files:
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
 	filp_close(sk_sig, NULL);
-close_skl_sig_file:
-	filp_close(sk_loader_sig, NULL);
 close_sk_file:
 #endif
 	filp_close(sk, NULL);
-close_skl_file:
-	filp_close(sk_loader, NULL);
 free_mem:
 	vunmap(vsm_skm_va);
 	vsm_skm_pa = 0;
