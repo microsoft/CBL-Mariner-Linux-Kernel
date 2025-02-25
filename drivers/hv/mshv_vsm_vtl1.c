@@ -14,6 +14,7 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/heki.h>
+#include <linux/sort.h>
 #include <linux/mem_attr.h>
 #include <asm/mshyperv.h>
 #include <asm/fpu/api.h>
@@ -531,8 +532,53 @@ static int hv_modify_vtl_protection_mask(u64 start, u64 number_of_pages, u32 pag
 	return hv_result(status);
 }
 
+/*
+ * VTL0 passes kernel data structures to VTL1. Each kernel data structure is
+ * assigned a unique identifier. That identifier is specified in the
+ * attributes field. All of the ranges that contain a single kernel data
+ * structure must be virtually contiguous and in the correct order. Check for
+ * for that.
+ */
+static bool vsm_contiguous(struct heki_range *ranges, unsigned long nranges)
+{
+	struct heki_range *range = ranges;
+	struct heki_range *erange = ranges + nranges;
+	unsigned long attributes;
+	unsigned long eva;
+
+	while (range < erange) {
+		attributes = range->attributes;
+		eva = range->va;
+		while (range < erange && range->attributes == attributes) {
+			if (eva != range->va)
+				return false;
+			eva = range->va + (range->epa - range->pa);
+			range++;
+		}
+	}
+	return true;
+}
+
+static int cmp_ranges(const void *a, const void *b)
+{
+	const struct heki_range *ra = (const struct heki_range *) a;
+	const struct heki_range *rb = (const struct heki_range *) b;
+
+	/* Sort on attributes first, then on VA. */
+	if (ra->attributes > rb->attributes)
+		return 1;
+	if (ra->attributes < rb->attributes)
+		return -1;
+	if (ra->va > rb->va)
+		return 1;
+	if (ra->va < rb->va)
+		return -1;
+	return 0;
+}
+
 /* Read in guest ranges. */
-static struct heki_range *__vsm_read_ranges(u64 pa, unsigned long nranges)
+static struct heki_range *__vsm_read_ranges(u64 pa, unsigned long nranges,
+					    bool need_sort)
 {
 	struct heki_page *heki_page;
 	struct heki_range *ranges;
@@ -572,7 +618,151 @@ static struct heki_range *__vsm_read_ranges(u64 pa, unsigned long nranges)
 
 		vunmap(heki_page);
 	}
+
+	if (need_sort) {
+		/* Sort the ranges in ascending <type, VA> order. */
+		sort(ranges, nranges, sizeof(*ranges), cmp_ranges, NULL);
+
+		/* Check contiguity for each type. */
+		if (!vsm_contiguous(ranges, nranges)) {
+			vfree(ranges);
+			return NULL;
+		}
+	}
 	return ranges;
+}
+
+/*
+ * Each heki_mem instance describes a single VTL0 kernel data structure.
+ * Map the data structure into VTL1 address space.
+ */
+static int vsm_map(struct heki_mem *mem)
+{
+	struct heki_range *ranges = mem->ranges;
+	unsigned long nranges = mem->nranges;
+	struct heki_range *range;
+	struct page **pages;
+	unsigned long npages;
+	u64 spa, epa, pa;
+	int i, p;
+
+	mem->offset = ranges[0].va & (PAGE_SIZE - 1);
+
+	/* Count the number of pages. */
+	npages = 0;
+	for (i = 0; i < nranges; i++) {
+		range = &ranges[i];
+
+		spa = ALIGN_DOWN(range->pa, PAGE_SIZE);
+		epa = ALIGN(range->epa, PAGE_SIZE);
+		npages += (epa - spa) >> PAGE_SHIFT;
+	}
+
+	/* Allocate an array of page struct pointers. */
+	pages = kzalloc(sizeof(*pages) * npages, GFP_KERNEL);
+	if (!pages)
+		return -ENOMEM;
+
+	/* Get the page structure pointers. */
+	for (p = 0, i = 0; i < nranges; i++) {
+		range = &ranges[i];
+
+		spa = ALIGN_DOWN(range->pa, PAGE_SIZE);
+		epa = ALIGN(range->epa, PAGE_SIZE);
+		for (pa = spa; pa < epa; pa += PAGE_SIZE, p++)
+			pages[p] = pfn_to_page(pa >> PAGE_SHIFT);
+		mem->size += range->epa - range->pa;
+	}
+
+	/* Map the pages into VTL1. */
+	mem->va = vmap(pages, npages, VM_MAP, PAGE_KERNEL);
+	kfree(pages);
+
+	if (!mem->va)
+		return -ENOMEM;
+
+	mem->va += mem->offset;
+	return 0;
+}
+
+static void vsm_unmap(struct heki_mem *mem)
+{
+	if (!mem->va)
+		return;
+
+	mem->va -= mem->offset;
+	vunmap(mem->va);
+	mem->va = NULL;
+}
+
+static void vsm_unmap_all(struct heki_mem *mems, unsigned long nmems);
+
+/*
+ * A number of VTL0 kernel data structures can be passed to VTL1 in a single
+ * call. Map all of them into VTL1 address space.
+ */
+static int vsm_map_all(struct heki_range *ranges, unsigned long nranges,
+		       struct heki_mem *mems, unsigned long nmems)
+{
+	struct heki_range *range;
+	struct heki_mem *mem;
+	long id = -1;
+	int i, ret;
+
+	memset(mems, 0, sizeof(*mem) * nmems);
+
+	/*
+	 * The attributes field contains an identifier that identifies a VTL0
+	 * kernel data structure. Collect the ranges of each VTL0 kernel data
+	 * structure into its own mem.
+	 */
+	for (i = 0; i < nranges; i++) {
+		range = &ranges[i];
+
+		if (id == range->attributes) {
+			mem->nranges++;
+		} else {
+			id = range->attributes;
+			if (id >= nmems) {
+				pr_warn("%s: Illegal ID %lx\n", __func__, id);
+				return -EINVAL;
+			}
+
+			mem = &mems[id];
+			if (mem->nranges) {
+				pr_warn("%s: ID %lx repeated\n", __func__, id);
+				return -EINVAL;
+			}
+			mem->ranges = range;
+			mem->nranges = 1;
+		}
+	}
+
+	/* Map the data structures. */
+	for (id = 0; id < nmems; id++) {
+		mem = &mems[id];
+		if (!mem->nranges)
+			continue;
+
+		ret = vsm_map(mem);
+		if (ret) {
+			vsm_unmap_all(mems, nmems);
+			return ret;
+		}
+	}
+	return 0;
+}
+
+static void vsm_unmap_all(struct heki_mem *mems, unsigned long nmems)
+{
+	struct heki_mem *mem;
+	int id;
+
+	for (id = 0; id < nmems; id++) {
+		mem = &mems[id];
+		if (mem->nranges)
+			vsm_unmap(mem);
+	}
 }
 
 static int mshv_vsm_protect_memory(u64 pa, unsigned long nranges)
@@ -582,7 +772,8 @@ static int mshv_vsm_protect_memory(u64 pa, unsigned long nranges)
 	u32 permissions;
 	int i, err = 0;
 
-	ranges = __vsm_read_ranges(pa, nranges);
+	/* No need to sort the ranges. */
+	ranges = __vsm_read_ranges(pa, nranges, false);
 	if (!ranges)
 		return -EINVAL;
 
