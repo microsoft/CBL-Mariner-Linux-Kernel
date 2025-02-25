@@ -1781,15 +1781,14 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 static int mshv_vsm_vtl_task(void *unused)
 {
 	struct hv_vp_assist_page *hvp;
+	struct hv_vsm_per_cpu *per_cpu;
+	struct hv_vtl_cpu_context *cpu_context;
+	struct hv_vtlcall_param *vtl_params;
 
 	while (true) {
 		hvp = hv_vp_assist_page[smp_processor_id()];
 		switch (hvp->vtl_entry_reason) {
 		case VTL_ENTRY_REASON_LOWER_VTL_CALL:
-			struct hv_vsm_per_cpu *per_cpu;
-			struct hv_vtl_cpu_context *cpu_context;
-			struct hv_vtlcall_param *vtl_params;
-
 			/*
 			 *  VTL0 can pass four arguments to VTL1 in registers rdi,
 			 *  rsi, rdx and r8 respectively. r8 is also used to pass
