@@ -33,6 +33,9 @@ static size_t heki_blacklist_hash_count;
 
 static int __init heki_copy_boot_certs(void)
 {
+	if (!module_cert_size)
+		return 0;
+
 	heki_module_certs = vmalloc(module_cert_size);
 	if (!heki_module_certs) {
 		pr_warn("Failed to alloc module certificates.\n");
