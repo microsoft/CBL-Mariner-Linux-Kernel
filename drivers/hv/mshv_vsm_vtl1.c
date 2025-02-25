@@ -13,6 +13,8 @@
 #include <linux/fs.h>
 #include <asm/mshyperv.h>
 #include <asm/fpu/api.h>
+#include <asm/cpu.h>
+#include <asm/mpspec.h>
 #include "hv_vsm.h"
 
 #define HV_VTL1_IOCTL	0xE1
@@ -66,9 +68,90 @@ struct hv_vsm_per_cpu {
 	bool suppress_tick;
 	/* CPU should stay in VTL1 and not exit to VTL0 even if idle is invoked */
 	bool stay_in_vtl1;
+	bool vtl1_enabled;
 };
 
 static DEFINE_PER_CPU(struct hv_vsm_per_cpu, vsm_per_cpu);
+
+static int mshv_vsm_enable_aps(unsigned int cpu_present_mask_pfn)
+{
+	unsigned int cpu, total_cpus_enabled = 0;
+	struct hv_vsm_per_cpu *per_cpu;
+	const struct cpumask *cpu_present_vtl0;
+	struct page *cpu_present_page;
+	void *cpu_present_data = NULL;
+	int ret;
+
+	/* Validate cpu_present_mask_pfn parameter */
+	cpu_present_page = pfn_to_page(cpu_present_mask_pfn);
+	cpu_present_data = vmap(&cpu_present_page, 1, VM_MAP, PAGE_KERNEL);
+	if (!cpu_present_data) {
+		pr_err("%s: Could not map shared page", __func__);
+		return -EINVAL;
+	}
+	cpu_present_vtl0 = (struct cpumask *)cpu_present_data;
+
+	/* Loop through VTL0's present CPUs and make them present in VTL1 as well */
+	for_each_cpu(cpu, cpu_present_vtl0) {
+		if (!cpu_possible(cpu)) {
+			pr_err("%s: CPU%u cannot be enabled because CPU%u is not possible",
+			       __func__, cpu, cpu);
+			ret = -EINVAL;
+			goto out;
+		}
+
+		if (!(cpu_present(cpu))) {
+			ret = generic_processor_info(cpu);
+
+			if (ret != cpu) {
+				pr_err("%s: Failed adding CPU%u. Error code: %d",
+				       __func__, cpu, ret);
+				ret = -EINVAL;
+				goto out;
+			}
+
+			ret = arch_register_cpu(cpu);
+
+			if (ret) {
+				pr_err("%s: Failed registering CPU%u. Error code: %d",
+				       __func__, cpu, ret);
+				ret = -EINVAL;
+				goto out;
+			}
+		}
+	}
+
+	/* Loop through present Processors and enable VTL1 in each one */
+	for_each_present_cpu(cpu) {
+		/*
+		 * Skip enabling of VTL1 for boot processor as it is already enabled by
+		 * VTL0 and boot completed
+		 */
+		if (cpu_online(cpu))
+			continue;
+		per_cpu = per_cpu_ptr(&vsm_per_cpu, cpu);
+		if (per_cpu->vtl1_enabled) {
+			pr_info("%s: CPU%u is already enabled for VTL1. Will skip to next CPU",
+				__func__, cpu);
+			continue;
+		}
+
+		ret = hv_secure_vtl_enable_secondary_cpu((u32)cpu);
+
+		if (ret) {
+			pr_err("%s: Failed to enable VTL1 for CPU%u", __func__, cpu);
+			goto out;
+		}
+
+		per_cpu->vtl1_enabled = true;
+		total_cpus_enabled++;
+	}
+
+	pr_debug("%s: Enabled %u CPUs", __func__, total_cpus_enabled);
+out:
+	vunmap(cpu_present_data);
+	return ret;
+}
 
 /* DO NOT MODIFY THIS FUNCTION WITHOUT DISASSEMBLING AND SEEING WHAT IS GOING ON */
 static void __mshv_vsm_vtl_return(void)
@@ -209,11 +292,22 @@ out:
 
 static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 {
+	int status = -EINVAL;
+
 	switch (_vtl_params->a0) {
+	case VSM_VTL_CALL_FUNC_ID_ENABLE_APS_VTL:
+		pr_debug("%s : VSM_VTL_CALL_FUNC_ID_ENABLE_APS_VTL\n", __func__);
+		status = mshv_vsm_enable_aps(_vtl_params->a1);
+		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
 		break;
 	}
+	if (status < 0)
+		pr_err("%s: func id:0x%llx failed\n", __func__, _vtl_params->a0);
+	else
+		pr_debug("%s: func id:0x%llx is ok\n", __func__, _vtl_params->a0);
+	_vtl_params->a3 = status;
 }
 
 static int mshv_vsm_vtl_task(void *unused)
