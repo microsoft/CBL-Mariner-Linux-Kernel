@@ -158,7 +158,7 @@ struct heki_mod {
 #ifdef CONFIG_HEKI
 
 /* Currently 83 hashes get added to the blacklist keyring */
-#define HEKI_MAX_TOTAL_HASHES 100
+#define HEKI_MAX_TOTAL_HASHES 400
 
 /*
  * If the active hypervisor supports Heki, it will plug its heki_hypervisor
