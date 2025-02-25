@@ -202,6 +202,14 @@ out:
 	return ret;
 }
 
+/*
+ * This placeholder are overridden by arch specific code to allow setting up
+ * of interrupt handler for secure interrupts and intercepts
+ */
+void __weak hv_setup_vsm_handler(void (*handler)(void))
+{
+}
+
 static int hv_modify_vtl_protection_mask(u64 start, u64 number_of_pages, u32 page_access)
 {
 	struct hv_input_modify_vtl_protection_mask *hvin;
