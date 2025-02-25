@@ -2,6 +2,10 @@
 #
 # Hypervisor Enforced Kernel Integrity (Heki)
 
+menuconfig HEKI_MENU
+	bool "Virtualization hardening"
+if HEKI_MENU
+
 config HEKI
 	bool "Hypervisor Enforced Kernel Integrity (Heki)"
 	help
@@ -9,3 +13,15 @@ config HEKI
 	  advantage of security features provided by the hypervisor for guests.
 	  This feature is helpful in maintaining guest virtual machine security
 	  even after the guest kernel has been compromised.
+
+config HEKI_KUNIT_TEST
+	bool "KUnit tests for Heki" if !KUNIT_ALL_TESTS
+	depends on KUNIT
+	depends on X86
+	depends on HEKI
+	default KUNIT_ALL_TESTS
+	help
+	  Build KUnit tests for HEKI.
+	  See the KUnit documentation in Documentation/dev-tools/kunit
+	  If you are unsure how to answer this question, answer N.
+endif
