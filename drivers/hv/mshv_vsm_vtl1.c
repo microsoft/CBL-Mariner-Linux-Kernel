@@ -93,6 +93,20 @@ struct hv_input_modify_vtl_protection_mask {
 	__aligned(8) u64 gpa_page_list[];
 };
 
+static int hv_vsm_get_vtl0_register(u32 reg_name, u64 *result)
+{
+	u8 input_vtl = 0x1 << 4;
+
+	return __hv_vsm_get_register(reg_name, result, input_vtl);
+}
+
+static int hv_vsm_set_vtl0_register(u32 reg_name, u64 value)
+{
+	u8 input_vtl = 0x1 << 4;
+
+	return __hv_vsm_set_register(reg_name, value, input_vtl);
+}
+
 static int mshv_vsm_enable_aps(unsigned int cpu_present_mask_pfn)
 {
 	unsigned int cpu, total_cpus_enabled = 0;
