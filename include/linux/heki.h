@@ -54,7 +54,7 @@ struct heki_page {
 };
 
 enum heki_kdata_type {
-	HEKI_MODULE_CERTS,
+	HEKI_SYSTEM_CERTS,
 	HEKI_REVOCATION_CERTS,
 	HEKI_BLACKLIST_HASHES,
 	HEKI_KERNEL_INFO,
