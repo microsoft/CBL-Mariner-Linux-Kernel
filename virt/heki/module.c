@@ -13,7 +13,7 @@
 #include "common.h"
 
 extern __initconst const u8 system_certificate_list[];
-extern __initconst const unsigned long module_cert_size;
+extern __initconst const unsigned long system_certificate_list_size;
 
 #ifdef CONFIG_SYSTEM_REVOCATION_LIST
 extern __initconst const u8 revocation_certificate_list[];
@@ -22,8 +22,8 @@ extern __initconst const unsigned long revocation_certificate_list_size;
 
 static struct heki_kinfo heki_kinfo;
 
-static u8 *heki_module_certs;
-static unsigned long heki_module_cert_size;
+static u8 *heki_system_certs;
+static unsigned long heki_system_cert_size;
 
 static u8 *heki_revocation_certs;
 static unsigned long heki_revocation_cert_size;
@@ -33,21 +33,20 @@ static size_t heki_blacklist_hash_count;
 
 static int __init heki_copy_boot_certs(void)
 {
-	if (!module_cert_size)
+	if (!system_certificate_list_size)
 		return 0;
-
-	heki_module_certs = vmalloc(module_cert_size);
-	if (!heki_module_certs) {
-		pr_warn("Failed to alloc module certificates.\n");
+	heki_system_certs = vmalloc(system_certificate_list_size);
+	if (!heki_system_certs) {
+		pr_warn("Failed to alloc system certificates.\n");
 		return -ENOMEM;
 	}
-	heki_module_cert_size = module_cert_size;
+	heki_system_cert_size = system_certificate_list_size;
 
 	/*
-	 * Copy the module certificates because they will be freed at
+	 * Copy the system certificates because they will be freed at
 	 * the end of init.
 	 */
-	memcpy(heki_module_certs, system_certificate_list, module_cert_size);
+	memcpy(heki_system_certs, system_certificate_list, system_certificate_list_size);
 
 #ifdef CONFIG_SYSTEM_REVOCATION_LIST
 	if (revocation_certificate_list_size <= 0) {
@@ -78,14 +77,14 @@ void heki_load_kdata(void)
 	struct heki_hypervisor *hypervisor = heki.hypervisor;
 	struct heki_args args = {};
 
-	if (!hypervisor || !heki_module_certs)
+	if (!hypervisor || !heki_system_certs)
 		return;
 
 	mutex_lock(&heki.lock);
 
-	args.attributes = HEKI_MODULE_CERTS;
-	heki_walk((unsigned long)heki_module_certs,
-		  (unsigned long)heki_module_certs + heki_module_cert_size,
+	args.attributes = HEKI_SYSTEM_CERTS;
+	heki_walk((unsigned long)heki_system_certs,
+		  (unsigned long)heki_system_certs + heki_system_cert_size,
 		  heki_get_ranges, &args);
 
 	if (heki_revocation_cert_size > 0) {
@@ -132,7 +131,7 @@ void heki_load_kdata(void)
 	mutex_unlock(&heki.lock);
 
 	heki_cleanup_args(&args);
-	vfree(heki_module_certs);
+	vfree(heki_system_certs);
 	vfree(heki_revocation_certs);
 	vfree(heki_blacklist_hashes);
 	heki_blacklist_hashes = NULL;

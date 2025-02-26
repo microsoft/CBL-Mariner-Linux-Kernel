@@ -969,7 +969,7 @@ int restrict_link_by_trusted(struct key *dest_keyring, const struct key_type *ty
 
 static int mshv_vsm_create_trusted_keys(void)
 {
-	struct heki_mem *mem = &vtl0.mem[HEKI_MODULE_CERTS];
+	struct heki_mem *mem = &vtl0.mem[HEKI_SYSTEM_CERTS];
 	void *certs = mem->va;
 	unsigned long certs_size = mem->size;
 	struct key_restriction *restriction;
