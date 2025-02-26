@@ -988,7 +988,7 @@ int __init hv_vsm_boot_init(void)
 	int ret;
 
 	if (!vsm_arch_has_vsm_access())
-		panic("Arch does not support VSM\n");
+		return 0;
 
 	hv_vsm_reserve_sk_mem();
 
