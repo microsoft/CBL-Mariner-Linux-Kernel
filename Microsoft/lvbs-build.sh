@@ -111,14 +111,13 @@ elif [ "$ARTIFACT" == "vtl1" ]; then
 	make olddefconfig
         make -j23 vmlinux
 	if [ "$install_image" = true ]; then
-	   objcopy -O binary -R .note -R .comment -S vmlinux vmlinux.bin
-           sudo rm -f /usr/lib/firmware/vmlinux.bin
-           sudo cp vmlinux.bin /usr/lib/firmware
+	   sudo rm -f /usr/lib/firmware/vmlinux
+	   sudo objcopy -R .note -R .comment -S vmlinux /usr/lib/firmware/vmlinux
 	   if [ "$sign_image" = true ];
            then
                 echo "Signing the secure kernel"
-		sudo rm -f /usr/lib/firmware/vmlinux.bin.p7s
-                sudo $kernel_src_dir/scripts/sign-file -dp sha256 $kernel_src_dir/certs/signing_key.pem $kernel_src_dir/certs/signing_key.x509 /usr/lib/firmware/vmlinux.bin
+		sudo rm -f /usr/lib/firmware/vmlinux.p7s
+                sudo $kernel_src_dir/scripts/sign-file -dp sha256 $kernel_src_dir/certs/signing_key.pem $kernel_src_dir/certs/signing_key.x509 /usr/lib/firmware/vmlinux
            fi
            sudo dracut -H -f /boot/initramfs-$kernel_version".img" $kernel_version
         fi
