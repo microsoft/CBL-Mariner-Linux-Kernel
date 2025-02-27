@@ -255,7 +255,7 @@ struct kimage *do_kimage_alloc_init(void)
 	struct kimage *image;
 
 	/* Allocate a controlling structure */
-	image = kzalloc(sizeof(*image), GFP_KERNEL);
+	image = alloc_pages_exact(sizeof(*image), GFP_KERNEL);
 	if (!image)
 		return NULL;
 
@@ -653,7 +653,7 @@ void kimage_free(struct kimage *image)
 	if (image->file_mode)
 		kimage_file_post_load_cleanup(image);
 
-	kfree(image);
+	free_pages_exact(image, sizeof(*image));
 }
 
 static kimage_entry_t *kimage_dst_used(struct kimage *image,
