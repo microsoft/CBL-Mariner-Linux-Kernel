@@ -10,6 +10,7 @@
 #define pr_fmt(fmt) "vsm: " fmt
 
 #include <linux/hyperv.h>
+#include <linux/elf.h>
 #include <linux/kthread.h>
 #include <linux/file.h>
 #include <linux/fs.h>
@@ -19,6 +20,7 @@
 #include <linux/vmalloc.h>
 #include <linux/verification.h>
 #include <linux/acpi.h>
+#include <linux/namei.h>
 #include <crypto/pkcs7.h>
 
 #define E820_X_MAX E820MAX
@@ -80,21 +82,205 @@ enum {
 	VSM_PAGES_COUNT
 };
 
+#define VSM_PAGES_SIZE		(VSM_PAGES_COUNT << VSM_PAGE_SHIFT)
+
 #define HV_VTL1_ENABLE_BIT      BIT(1)
 
 #define VSM_BOOT_SIGNAL	0xDC
 #define VSM_MAX_BOOT_CPUS	96
 
-static struct file *sk;
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-static struct file *sk_sig;
-#endif
+#define LEGACY_SK_PATH		"/usr/lib/firmware/vmlinux"
+
+static char sk_path[PATH_MAX] __initdata;
+
 static phys_addr_t vsm_skm_pa;
 static void *vsm_skm_va;
 static u8 *boot_signal;
 
 bool hv_vsm_boot_success;
 bool hv_vsm_mbec_enabled = true;
+
+static Elf64_Addr __init hv_vsm_elf_min_load_paddr(void *image)
+{
+	Elf64_Ehdr *ehdr = image;
+	Elf64_Phdr *phdr = image + ehdr->e_phoff;
+	Elf64_Addr paddr = ULLONG_MAX;
+	int i;
+
+	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
+		if (phdr->p_type != PT_LOAD)
+			continue;
+
+		if (phdr->p_paddr < paddr)
+			paddr = phdr->p_paddr;
+	}
+
+	return paddr;
+}
+
+static size_t __init hv_vsm_elf_binary_size(void *image)
+{
+	Elf64_Ehdr *ehdr = image;
+	Elf64_Phdr *phdr = image + ehdr->e_phoff;
+	Elf64_Addr min_paddr, max_paddr = 0;
+	int i;
+
+	min_paddr = hv_vsm_elf_min_load_paddr(image);
+	if (min_paddr == ULLONG_MAX)
+		return 0;
+
+	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
+		if (phdr->p_type != PT_LOAD)
+			continue;
+
+		max_paddr = max(max_paddr, phdr->p_paddr + phdr->p_filesz);
+	}
+
+	return max_paddr - min_paddr;
+}
+
+static void * __init hv_vsm_read_file(const char *path, size_t *size)
+{
+	struct file *filp;
+	char *buffer;
+	int ret = 0;
+
+	filp = filp_open(path, O_RDONLY, 0);
+	if (IS_ERR(filp))
+		return ERR_CAST(filp);
+
+	*size = i_size_read(file_inode(filp));
+
+	buffer = kvmalloc(*size, GFP_KERNEL);
+	if (!buffer) {
+		ret = -ENOMEM;
+		goto close_filp;
+	}
+
+	if (kernel_read(filp, buffer, *size, &filp->f_pos) != *size) {
+		ret = -EIO;
+		goto free_buf;
+	}
+
+close_filp:
+	filp_close(filp, NULL);
+	return ret ? ERR_PTR(ret) : buffer;
+
+free_buf:
+	kvfree(buffer);
+	goto close_filp;
+}
+
+static int __init hv_vsm_load_elf(void *image, Elf64_Addr *sk_entry_pa)
+{
+	Elf64_Ehdr *ehdr = image;
+	Elf64_Phdr *phdr = image + ehdr->e_phoff;
+	Elf64_Addr min_paddr;
+	size_t size;
+	void *base_addr;
+	int i;
+
+	/* Align the base load address up to the first segment alignment */
+	base_addr = PTR_ALIGN(vsm_skm_va + phdr->p_align, phdr->p_align);
+	if (base_addr < vsm_skm_va + VSM_PAGES_SIZE) {
+		pr_err("VSM pages overlap with secure kernel load address\n");
+		return -ENOSPC;
+	}
+
+	size = hv_vsm_elf_binary_size(image);
+	if (vsm_skm_va + VSM_SK_INITIAL_MAP_SIZE - base_addr < size) {
+		pr_err("secure kernel does not fit: %lu > %lu\n", size,
+		       vsm_skm_va + VSM_SK_INITIAL_MAP_SIZE - base_addr);
+		return -EFBIG;
+	}
+
+	pr_debug("secure kernel binary size: %#lx\n", size);
+
+	min_paddr = hv_vsm_elf_min_load_paddr(image);
+	if (min_paddr == ULLONG_MAX) {
+		pr_err("Secure kernel does not have loadable segments\n");
+		return -EINVAL;
+	}
+
+	pr_debug("secure kernel minimal paddr: %#llx\n", min_paddr);
+
+	pr_debug("loading secure kernel ELF segments:\n");
+
+	for (i = 0; i < ehdr->e_phnum; i++, phdr++) {
+		void *load_addr;
+
+		if (phdr->p_type != PT_LOAD)
+			continue;
+
+		if (phdr->p_align % SZ_2M) {
+			pr_err("LOAD segment is not aligned by 2MB\n");
+			return -EINVAL;
+		}
+
+		/*
+		 * Adjust the load address by min_paddr to compensate the
+		 * offset.
+		 */
+		load_addr = base_addr + (phdr->p_paddr - min_paddr);
+
+		pr_debug("  p_offset: %#016llx, p_filesz: %#016llx, p_memsz: %#016llx to pa %#016llx\n",
+			 phdr->p_offset, phdr->p_filesz, phdr->p_memsz,
+			 virt_to_phys(load_addr));
+		memcpy(load_addr, image + phdr->p_offset, phdr->p_filesz);
+
+		if (phdr->p_memsz == phdr->p_filesz)
+			continue;
+
+		pr_debug("    zeroing %#016llx bytes at pa %#016llx\n",
+			 phdr->p_memsz - phdr->p_filesz,
+			 virt_to_phys(load_addr + phdr->p_filesz));
+		memset(load_addr + phdr->p_filesz, 0,
+		       phdr->p_memsz - phdr->p_filesz);
+	}
+
+	*sk_entry_pa = virt_to_phys(base_addr + (ehdr->e_entry - min_paddr));
+	pr_debug("secure kernel entry pa: %#llx\n", *sk_entry_pa);
+
+	return 0;
+}
+
+static void __init *hv_vsm_read_elf(const char *path, size_t *size)
+{
+	void *image;
+	Elf64_Ehdr *ehdr;
+	int ret;
+
+	if (!path)
+		return ERR_PTR(-EINVAL);
+
+	image = hv_vsm_read_file(path, size);
+	if (IS_ERR(image)) {
+		pr_err("Failed to read %s file: %ld\n", path,
+		       PTR_ERR(image));
+		return image;
+	}
+
+	ehdr = image;
+	if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) ||
+	    (ehdr->e_type != ET_EXEC && ehdr->e_type != ET_DYN) ||
+	    !elf_check_arch(ehdr)) {
+		pr_err("Not a valid ELF file: %s\n", path);
+		ret = -ENOEXEC;
+		goto out_free;
+	}
+
+	if (ehdr->e_ident[EI_CLASS] != ELFCLASS64) {
+		pr_err("Not a 64-bit compatible ELF file: %s\n", path);
+		ret = -ENOEXEC;
+		goto out_free;
+	}
+
+	return image;
+
+out_free:
+	kvfree(image);
+	return ERR_PTR(ret);
+}
 
 static int hv_vsm_get_partition_status(u16 *enabled_vtl_set, u8 *max_vtl, u16 *mbec_enabled_vtl_set)
 {
@@ -442,10 +628,11 @@ static void __init hv_vsm_reserve_sk_mem(void)
 		sk_res.start, sk_res.end, resource_size(&sk_res) >> 20);
 }
 
-static void __init hv_vsm_init_cpu(struct hv_init_vp_context *vp_ctx)
+static void __init hv_vsm_init_cpu(struct hv_init_vp_context *vp_ctx,
+				   Elf64_Addr sk_entry_pa)
 {
 	/* Offset rip by any secure kernel header length */
-	vp_ctx->rip = (u64)VSM_VA_FROM_PA(vsm_skm_pa) + VSM_SKERNEL_OFFSET;
+	vp_ctx->rip = VSM_VA_FROM_PA(sk_entry_pa);
 
 	/* ToDo: Check if can be replaced with CR0_STATE */
 	vp_ctx->cr0 =
@@ -667,19 +854,20 @@ static void __init hv_vsm_init_page_tables(struct hv_init_vp_context *vp_ctx)
 #endif
 }
 
-static void __init hv_vsm_arch_init_vp_context(struct hv_init_vp_context *vp_ctx)
+static void __init hv_vsm_arch_init_vp_context(struct hv_init_vp_context *vp_ctx,
+					       Elf64_Addr sk_entry_pa)
 {
 	compiletime_assert(VSM_SK_PTE_PAGES_COUNT <= VSM_ENTRIES_PER_PT,
 			   "VSM page table can't accommodate secure kernel.");
 	compiletime_assert(sizeof(struct boot_params) <= VSM_PAGE_SIZE,
 			   "VSM page can't accommodate boot params.");
 
-	hv_vsm_init_cpu(vp_ctx);
+	hv_vsm_init_cpu(vp_ctx, sk_entry_pa);
 	hv_vsm_init_gdt(vp_ctx);
 	hv_vsm_init_page_tables(vp_ctx);
 }
 
-static int __init hv_vsm_enable_vp_vtl(void)
+static int __init hv_vsm_enable_vp_vtl(Elf64_Addr sk_entry_pa)
 {
 	u64 status = 0;
 	unsigned long flags;
@@ -692,7 +880,7 @@ static int __init hv_vsm_enable_vp_vtl(void)
 	hvin->vp_index = HV_VP_INDEX_SELF;
 	hvin->target_vtl.target_vtl = HV_VTL_SECURE;
 
-	hv_vsm_arch_init_vp_context(&hvin->vp_context);
+	hv_vsm_arch_init_vp_context(&hvin->vp_context, sk_entry_pa);
 
 	local_irq_save(flags);
 
@@ -704,7 +892,7 @@ static int __init hv_vsm_enable_vp_vtl(void)
 }
 
 #ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-static int verify_vsm_signature(char *buffer, unsigned int buff_size, char *signature,
+static int verify_vsm_signature(const char *buffer, unsigned int buff_size, char *signature,
 				unsigned int sig_size)
 {
 	int ret = 0;
@@ -724,6 +912,58 @@ static int verify_vsm_signature(char *buffer, unsigned int buff_size, char *sign
 		return ret;
 	}
 	return ret;
+}
+
+static int __init hv_vsm_verify_image(const void *image, size_t size,
+				      const char *sk_path)
+{
+	char *sk_sig_path;
+	struct file *sk_sig;
+	size_t size_sk_sig;
+	char *sk_sig_buf = NULL;
+	int ret;
+
+	sk_sig_path = kasprintf(GFP_KERNEL, "%s.p7s", sk_path);
+	if (!sk_sig_path)
+		return -ENOMEM;
+
+	sk_sig = filp_open(sk_sig_path, O_RDONLY, 0);
+	if (IS_ERR(sk_sig)) {
+		ret = -ENOENT;
+		goto free_sk_sig_path;
+	}
+
+	size_sk_sig = i_size_read(file_inode(sk_sig));
+
+	sk_sig_buf = kvmalloc(size_sk_sig, GFP_KERNEL);
+	if (!sk_sig_buf) {
+		ret = -ENOMEM;
+		goto close_sk_sig;
+	}
+
+	ret = kernel_read(sk_sig, sk_sig_buf, size_sk_sig, &sk_sig->f_pos);
+	if (ret != size_sk_sig) {
+		ret = -EINVAL;
+		goto free_sk_sig_buf;
+	}
+
+	ret = verify_vsm_signature(image, size, sk_sig_buf, size_sk_sig);
+	if (ret)
+		pr_err("Failed to verify Secure Kernel signature.");
+
+free_sk_sig_buf:
+	kfree(sk_sig_buf);
+close_sk_sig:
+	filp_close(sk_sig, NULL);
+free_sk_sig_path:
+	kfree(sk_sig_path);
+	return ret;
+}
+#else
+static int __init hv_vsm_verify_image(void *image, size_t size,
+				      const char *sk_path)
+{
+	return 0;
 }
 #endif
 
@@ -754,128 +994,65 @@ static void __init vsm_build_boot_params(void)
 	hv_vsm_add_acpi_e820(bootparams);
 }
 
-static int __init hv_vsm_load_secure_kernel(void)
+static int __init hv_vsm_load_secure_kernel(Elf64_Addr *sk_entry_pa)
 {
-	loff_t size_sk;
-	char *sk_buf = NULL;
+	struct path p;
+	size_t size;
+	void *image;
 	int ret;
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	loff_t size_sk_sig;
-	char *sk_sig_buf = NULL;
-#endif
 
-	size_sk = vfs_llseek(sk, 0, SEEK_END);
+	snprintf(sk_path, PATH_MAX, "/lib/modules/%s/secure/vmlinux",
+		 init_utsname()->release);
 
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	size_sk_sig = vfs_llseek(sk_sig, 0, SEEK_END);
-#endif
-
-	// Seek back to the beginning of the file
-	vfs_llseek(sk, 0, SEEK_SET);
-
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	vfs_llseek(sk_sig, 0, SEEK_SET);
-#endif
-
-	sk_buf = kvmalloc(size_sk, GFP_KERNEL);
-	if (!sk_buf) {
-		pr_err("Unable to allocate memory for copying secure kernel\n");
-		return -ENOMEM;
+	if (kern_path(sk_path, LOOKUP_FOLLOW, &p)) {
+		pr_info("File %s not found, trying %s\n", sk_path, LEGACY_SK_PATH);
+		strscpy(sk_path, LEGACY_SK_PATH, PATH_MAX);
+		if (kern_path(sk_path, LOOKUP_FOLLOW, &p)) {
+			pr_err("File %s not found\n", sk_path);
+			return -ENOENT;
+		}
 	}
 
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	sk_sig_buf = kvmalloc(size_sk_sig, GFP_KERNEL);
-	if (!sk_sig_buf) {
-		pr_err("Unable to allocate memory for copying secure kernel\n");
-		ret = -ENOMEM;
-		goto free_sk;
-	}
-#endif
+	path_put(&p);
 
-	ret = kernel_read(sk, sk_buf, size_sk, &sk->f_pos);
-	if (ret != size_sk) {
-		pr_err("Unable to read vmlinux.bin file\n");
-		ret = -EINVAL;
-		goto free_bufs;
-	}
+	image = hv_vsm_read_elf(sk_path, &size);
+	if (IS_ERR(image))
+		return PTR_ERR(image);
 
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	ret = kernel_read(sk_sig, sk_sig_buf, size_sk_sig, &sk_sig->f_pos);
-	if (ret != size_sk_sig) {
-		pr_err("Unable to read vmlinux.bin.p7s file\n");
-		ret = -EINVAL;
-		goto free_bufs;
-	}
-
-	ret = verify_vsm_signature(sk_buf, size_sk, sk_sig_buf, size_sk_sig);
+	ret = hv_vsm_verify_image(image, size, sk_path);
 	if (ret) {
-		pr_err("Failed to verify Secure Kernel signature.");
-		goto free_bufs;
+		pr_err("Failed to verify %s image: %d\n", sk_path, ret);
+		goto free_image;
 	}
-#endif
 
 	vsm_build_boot_params();
-	memcpy(vsm_skm_va + VSM_SKERNEL_OFFSET, sk_buf, size_sk);
-	ret = 0;
 
-free_bufs:
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	kvfree(sk_sig_buf);
-free_sk:
-#endif
-	kvfree(sk_buf);
+	ret = hv_vsm_load_elf(image, sk_entry_pa);
+
+free_image:
+	kvfree(image);
 	return ret;
 }
 
 static int __init hv_vsm_bootstrap_vtl(void)
 {
-	char *sk_path, *sk_sig_path;
 	u16 partition_enabled_vtl_set = 0, partition_mbec_enabled_vtl_set = 0;
 	u16 vp_enabled_vtl_set = 0;
 	u8 partition_max_vtl, active_mbec_enabled = 0;
-	int ret = 0, is_legacy_sk_path = 0;
+	Elf64_Addr sk_entry_pa;
+	int ret;
 
-	sk_path = kasprintf(GFP_KERNEL, "/lib/modules/%s/secure/vmlinux.bin",
-			    init_utsname()->release);
-	if (!sk_path)
-		return -ENOMEM;
-
-	sk = filp_open(sk_path, O_RDONLY, 0);
-	if (IS_ERR(sk)) {
-		pr_err("File %s not found, trying %s\n", sk_path, "/usr/lib/firmware/vmlinux.bin");
-		is_legacy_sk_path = 1;
-		sk = filp_open("/usr/lib/firmware/vmlinux.bin", O_RDONLY, 0);
-		if (IS_ERR(sk)) {
-			pr_err("File /usr/lib/firmware/vmlinux.bin not found\n");
-			ret = -ENOENT;
-			goto free_mem;
-		}
-	}
-
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	sk_sig_path = kasprintf(GFP_KERNEL, "%s.p7s", is_legacy_sk_path ? "/usr/lib/firmware/vmlinux.bin" : sk_path);
-	if (!sk_sig_path) {
-		ret = -ENOMEM;
-		goto close_sk_file;
-	}
-	sk_sig = filp_open(sk_sig_path, O_RDONLY, 0);
-	if (IS_ERR(sk_sig)) {
-		pr_err("File %s not found\n", sk_sig_path);
-		ret = -ENOENT;
-		goto close_sk_file;
-	}
-#endif
 	ret = hv_vsm_get_code_page_offsets();
 	if (ret) {
 		pr_err("Unable to retrieve vsm page offsets\n");
-		goto close_files;
+		return ret;
 	}
 
 	/* Check and enable VTL1 at the partition level */
 	ret = hv_vsm_get_partition_status(&partition_enabled_vtl_set, &partition_max_vtl,
 					  &partition_mbec_enabled_vtl_set);
 	if (ret)
-		goto close_files;
+		return ret;
 
 	if (partition_enabled_vtl_set & HV_VTL1_ENABLE_BIT) {
 		pr_info("Partition VTL1 is already enabled\n");
@@ -884,77 +1061,60 @@ static int __init hv_vsm_bootstrap_vtl(void)
 		if (ret) {
 			pr_err("Enabling Partition VTL1 failed with status 0x%x\n",
 			       ret);
-			ret = -EINVAL;
-			goto close_files;
+			return -EINVAL;
 		}
 		ret = hv_vsm_get_partition_status(&partition_enabled_vtl_set, &partition_max_vtl,
 						  &partition_mbec_enabled_vtl_set);
 		if (ret)
-			goto close_files;
+			return ret;
 		if (!(partition_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
 			pr_err("Tried Enabling Partition VTL 1 and still failed");
-			ret = -EINVAL;
-			goto close_files;
+			return -EINVAL;
 		}
 		if (!partition_mbec_enabled_vtl_set) {
 			pr_err("Tried Enabling Partition MBEC and failed");
-			ret = -EINVAL;
-			goto close_files;
+			return -EINVAL;
 		}
 	}
 
 	/* Check and enable VTL1 for the primary virtual processor */
 	ret = hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
 	if (ret)
-		goto close_files;
+		return ret;
+
+	ret = hv_vsm_load_secure_kernel(&sk_entry_pa);
+	if (ret)
+		return ret;
 
 	if (vp_enabled_vtl_set & HV_VTL1_ENABLE_BIT) {
 		pr_info("VP VTL1 is already enabled\n");
 	} else {
-		ret = hv_vsm_enable_vp_vtl();
+		ret = hv_vsm_enable_vp_vtl(sk_entry_pa);
 		if (ret) {
 			pr_err("Enabling VP VTL1 failed with status 0x%x\n", ret);
 			/* ToDo: Should we disable VTL1 at partition level in this case */
-			ret = -EINVAL;
-			goto close_files;
+			return -EINVAL;
 		}
 		ret = hv_vsm_get_vp_status(&vp_enabled_vtl_set, &active_mbec_enabled);
-		if (ret) {
-			goto close_files;
-		}
+		if (ret)
+			return ret;
 		if (!(vp_enabled_vtl_set & HV_VTL1_ENABLE_BIT)) {
 			pr_err("Tried Enabling VP VTL 1 and still failed");
-			ret = -EINVAL;
-			goto close_files;
+			return -EINVAL;
 		}
 	}
 
-	ret = hv_vsm_load_secure_kernel();
-	if (ret)
-		goto close_files;
-
 	ret = hv_vsm_boot_vtl1();
 	if (ret)
-		goto close_files;
+		return ret;
 
 	/* Enable VTL1 for secondary processors */
 	ret = hv_vsm_enable_ap_vtl();
 	if (ret)
-		goto close_files;
+		return ret;
 
 	/* Boot secondary processors in VTL1 */
-	ret = hv_vsm_boot_ap_vtl();
-
-close_files:
-#ifndef CONFIG_HYPERV_VSM_DISABLE_IMG_VERIFY
-	filp_close(sk_sig, NULL);
-close_sk_file:
-#endif
-	filp_close(sk, NULL);
-free_mem:
-	kfree(sk_sig_path);
-	kfree(sk_path);
-	return ret;
+	return hv_vsm_boot_ap_vtl();
 }
 
 int __init hv_vsm_boot_init(void)
