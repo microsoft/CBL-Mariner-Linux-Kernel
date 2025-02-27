@@ -80,7 +80,7 @@ static int kimage_alloc_init(struct kimage **rimage, unsigned long entry,
 out_free_control_pages:
 	kimage_free_page_list(&image->control_pages);
 out_free_image:
-	kfree(image);
+	free_pages_exact(image, sizeof(*image));
 	return ret;
 }
 

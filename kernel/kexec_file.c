@@ -318,7 +318,7 @@ out_free_control_pages:
 out_free_post_load_bufs:
 	kimage_file_post_load_cleanup(image);
 out_free_image:
-	kfree(image);
+	free_pages_exact(image, sizeof(*image));
 	return ret;
 }
 
