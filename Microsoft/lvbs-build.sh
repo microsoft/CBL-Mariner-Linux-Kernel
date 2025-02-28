@@ -107,7 +107,7 @@ elif [ "$ARTIFACT" == "vtl0" ]; then
 	    fi
 	fi
 elif [ "$ARTIFACT" == "vtl1" ]; then
-        cp Microsoft/mshv_sk_config .config
+        cp Microsoft/azl3_secure_config .config
 	make olddefconfig
         make -j23 vmlinux
 	if [ "$install_image" = true ]; then
