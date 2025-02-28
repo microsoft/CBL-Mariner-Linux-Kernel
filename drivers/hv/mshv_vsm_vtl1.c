@@ -1664,6 +1664,29 @@ unlock:
 
 #ifdef CONFIG_KEXEC_FILE
 
+static int vsm_kexec_verify_sig(struct heki_mem *kernel_blob_mem)
+{
+	void *kernel;
+	unsigned long kernel_size;
+	int ret = 0;
+
+	kernel = kernel_blob_mem->va;
+	kernel_size = kernel_blob_mem->size;
+
+	/*
+	 * Verify the kexec kernel signature using the VTL1 built-in trusted
+	 * keys.
+	 */
+	ret = kexec_kernel_verify_pe_sig(kernel, kernel_size);
+	if (ret)
+		pr_err("%s: kexec signature not verified\n", __func__);
+	else
+		pr_err("%s: Verified kexec signature successfully\n", __func__);
+
+	vsm_unmap(kernel_blob_mem);
+	return ret;
+}
+
 static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 			      unsigned long crash)
 {
@@ -1684,6 +1707,14 @@ static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 		return -ENOMEM;
 
 	ret = vsm_group_ranges(ranges, nranges, kexec_mem, HEKI_KEXEC_MAX);
+	if (ret)
+		goto free_ranges;
+
+	ret = vsm_map(&kexec_mem[HEKI_KEXEC_KERNEL_BLOB]);
+	if (ret)
+		goto free_ranges;
+
+	ret = vsm_kexec_verify_sig(&kexec_mem[HEKI_KEXEC_KERNEL_BLOB]);
 	if (ret)
 		goto free_ranges;
 
