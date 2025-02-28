@@ -1687,13 +1687,57 @@ static int vsm_kexec_verify_sig(struct heki_mem *kernel_blob_mem)
 	return ret;
 }
 
+static int vsm_protect_mem(struct heki_mem *mem, unsigned long perm)
+{
+	struct heki_range *range;
+	unsigned long spa, epa, npages;
+	int i, ret;
+
+	for (i = 0; i < mem->nranges; i++) {
+		range = &mem->ranges[i];
+		spa = ALIGN_DOWN(range->pa, PAGE_SIZE);
+		epa = ALIGN(range->epa, PAGE_SIZE);
+		npages = (epa - spa) >> PAGE_SHIFT;
+
+		ret = hv_modify_vtl_protection_mask(spa, npages, perm);
+		if (ret) {
+			pr_err("%s: Failed pa=0x%lx, npages=%lu\n",
+			       __func__, spa, npages);
+			return ret;
+		}
+	}
+	return 0;
+}
+
+static int vsm_kexec_pages_protect(struct heki_mem *kexec_mem,
+				   unsigned long perm)
+{
+	enum heki_kexec_type type;
+	int ret = 0;
+
+	/* Make all kexec pages read-only to prevent tampering. */
+	for (type = 0; type < HEKI_KEXEC_MAX; type++) {
+		if (type == HEKI_KEXEC_KERNEL_BLOB)
+			continue;
+
+		ret = vsm_protect_mem(&kexec_mem[type], perm);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
 static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 			      unsigned long crash)
 {
+	unsigned long read_only, read_write;
 	struct heki_range *ranges;
 	struct heki_mem *kexec_mem;
 	bool is_crash = !!crash;
 	int ret;
+
+	read_only = HV_PAGE_READABLE | HV_PAGE_USER_EXECUTABLE;
+	read_write = read_only | HV_PAGE_WRITABLE;
 
 	if (is_crash)
 		kexec_mem = vtl0.crash_kexec_mem;
@@ -1718,6 +1762,10 @@ static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 	if (ret)
 		goto free_ranges;
 
+	ret = vsm_kexec_pages_protect(kexec_mem, read_only);
+	if (ret)
+		goto kexec_pages_unprotect;
+
 	if (crash)
 		vtl0.crash_kexec_ranges = ranges;
 	else
@@ -1725,6 +1773,8 @@ static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 
 	return 0;
 
+kexec_pages_unprotect:
+	vsm_kexec_pages_protect(kexec_mem, read_write);
 free_ranges:
 	vfree(ranges);
 	return ret;
