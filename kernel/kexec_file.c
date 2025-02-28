@@ -27,6 +27,7 @@
 #include <linux/kernel_read_file.h>
 #include <linux/syscalls.h>
 #include <linux/vmalloc.h>
+#include <linux/heki.h>
 #include "kexec_internal.h"
 
 #ifdef CONFIG_KEXEC_SIG
@@ -408,6 +409,9 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 	 * after image has been loaded
 	 */
 	kimage_file_post_load_cleanup(image);
+	ret = heki_kexec_validate(image);
+	if (ret)
+		goto out;
 exchange:
 	image = xchg(dest_image, image);
 out:

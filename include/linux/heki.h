@@ -18,6 +18,7 @@
 #include <linux/module.h>
 #include <linux/vmalloc.h>
 #include <linux/xarray.h>
+#include <linux/kexec.h>
 
 struct load_info;
 
@@ -61,6 +62,15 @@ enum heki_kdata_type {
 	HEKI_KERNEL_DATA,
 	HEKI_KDATA_MAX,
 };
+
+#ifdef CONFIG_KEXEC_FILE
+
+enum heki_kexec_type {
+	HEKI_KEXEC_IMAGE,
+	HEKI_KEXEC_MAX,
+};
+
+#endif
 
 /*
  * Attribute value for module info that does not conflict with any of the
@@ -120,6 +130,11 @@ struct heki_hypervisor {
 
 	/* Copy secondary key data. */
 	int (*copy_secondary_key)(phys_addr_t pa, unsigned long npages);
+
+#ifdef CONFIG_KEXEC_FILE
+	/* Validate kexec segments. */
+	int (*kexec_validate)(phys_addr_t pa, unsigned long nranges, bool crash);
+#endif
 };
 
 /*
@@ -215,6 +230,9 @@ void heki_unload_module(struct module *mod);
 void heki_copy_secondary_key(const void *data, size_t size);
 void heki_store_blacklist_raw_hashes(const char *hash);
 void heki_get_ranges(struct heki_args *args);
+#ifdef CONFIG_KEXEC_FILE
+int heki_kexec_validate(struct kimage *image);
+#endif
 
 /* Arch-specific functions. */
 void heki_arch_init(void);
@@ -242,6 +260,10 @@ static inline void heki_register_hypervisor(struct heki_hypervisor *hypervisor) 
 static inline void heki_store_blacklist_raw_hashes(const char *hash)
 {
 }
+
+#ifdef CONFIG_KEXEC_FILE
+static inline int heki_kexec_validate(struct kimage *image) { return 0; }
+#endif
 
 #endif /* CONFIG_HEKI */
 
