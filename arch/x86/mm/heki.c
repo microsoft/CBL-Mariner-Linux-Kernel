@@ -84,3 +84,30 @@ void heki_load_arch_kinfo(struct heki_kinfo *kinfo)
 	arch_kinfo->indirect_thunk_array_addr =
 		(retpoline_thunk_t *)kallsyms_lookup_name("__x86_indirect_thunk_array");
 }
+
+#ifdef CONFIG_KEXEC_FILE
+
+void heki_load_arch_pages(struct kimage *image, struct heki_args *args)
+{
+	unsigned long va;
+
+	/* These page table pages are used to map relocate_kernel(). */
+
+	va = (unsigned long) image->arch.p4d;
+	if (va)
+		heki_load_pages(__pa(va) >> PAGE_SHIFT, args);
+
+	va = (unsigned long) image->arch.pud;
+	if (va)
+		heki_load_pages(__pa(va) >> PAGE_SHIFT, args);
+
+	va = (unsigned long) image->arch.pmd;
+	if (va)
+		heki_load_pages(__pa(va) >> PAGE_SHIFT, args);
+
+	va = (unsigned long) image->arch.pte;
+	if (va)
+		heki_load_pages(__pa(va) >> PAGE_SHIFT, args);
+}
+
+#endif
