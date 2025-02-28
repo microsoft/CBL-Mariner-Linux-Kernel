@@ -18,6 +18,7 @@
 #include <linux/mm.h>
 #include <linux/efi.h>
 #include <linux/random.h>
+#include <linux/heki.h>
 
 #include <asm/bootparam.h>
 #include <asm/setup.h>
@@ -402,6 +403,9 @@ static void *bzImage64_load(struct kimage *image, char *kernel,
 				  .top_down = true };
 	struct kexec_buf pbuf = { .image = image, .buf_min = MIN_PURGATORY_ADDR,
 				  .buf_max = ULONG_MAX, .top_down = true };
+
+	/* Copy kernel blob. Needed for signature verification in VTL1. */
+	heki_copy_kernel(kernel, kernel_len);
 
 	header = (struct setup_header *)(kernel + setup_hdr_offset);
 	setup_sects = header->setup_sects;
