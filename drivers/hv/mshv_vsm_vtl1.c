@@ -187,6 +187,12 @@ struct vtl0 {
 	struct load_info info;
 	long token;
 	struct heki_mod *hmod;
+#ifdef CONFIG_KEXEC_FILE
+	struct heki_mem kexec_mem[HEKI_KEXEC_MAX];
+	struct heki_range *kexec_ranges;
+	struct heki_mem crash_kexec_mem[HEKI_KEXEC_MAX];
+	struct heki_range *crash_kexec_ranges;
+#endif /* CONFIG_KEXEC_FILE */
 } vtl0;
 
 struct hv_input_modify_vtl_protection_mask {
@@ -1656,6 +1662,45 @@ unlock:
 	return 0;
 }
 
+#ifdef CONFIG_KEXEC_FILE
+
+static int vsm_kexec_validate(u64 pa, unsigned long nranges,
+			      unsigned long crash)
+{
+	struct heki_range *ranges;
+	struct heki_mem *kexec_mem;
+	bool is_crash = !!crash;
+	int ret;
+
+	if (is_crash)
+		kexec_mem = vtl0.crash_kexec_mem;
+	else
+		kexec_mem = vtl0.kexec_mem;
+
+	/* Load the new kexec data. */
+
+	ranges = __vsm_read_ranges(pa, nranges, true);
+	if (!ranges)
+		return -ENOMEM;
+
+	ret = vsm_group_ranges(ranges, nranges, kexec_mem, HEKI_KEXEC_MAX);
+	if (ret)
+		goto free_ranges;
+
+	if (crash)
+		vtl0.crash_kexec_ranges = ranges;
+	else
+		vtl0.kexec_ranges = ranges;
+
+	return 0;
+
+free_ranges:
+	vfree(ranges);
+	return ret;
+}
+
+#endif /* CONFIG_KEXEC_FILE */
+
 /********************** Boot Secondary CPUs **********************/
 static int mshv_vsm_boot_aps(unsigned int cpu_online_mask_pfn,
 							unsigned int boot_signal_pfn)
@@ -1950,6 +1995,13 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 		pr_debug("%s : VSM_COPY_SECONDARY_KEY\n", __func__);
 		status = mshv_vsm_save_secondary_key(_vtl_params->a1, _vtl_params->a2);
 		break;
+#ifdef CONFIG_KEXEC_FILE
+	case VSM_VTL_CALL_FUNC_ID_KEXEC_VALIDATE:
+		pr_debug("%s : VSM_KEXEC_VALIDATE\n", __func__);
+		status = vsm_kexec_validate(_vtl_params->a1, _vtl_params->a2,
+					    _vtl_params->a3);
+		break;
+#endif /* CONFIG_KEXEC_FILE */
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
 		break;
