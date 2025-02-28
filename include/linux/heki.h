@@ -68,6 +68,7 @@ enum heki_kdata_type {
 enum heki_kexec_type {
 	HEKI_KEXEC_IMAGE,
 	HEKI_KEXEC_KERNEL_BLOB,
+	HEKI_KEXEC_PAGES,
 	HEKI_KEXEC_MAX,
 };
 
@@ -231,9 +232,11 @@ void heki_unload_module(struct module *mod);
 void heki_copy_secondary_key(const void *data, size_t size);
 void heki_store_blacklist_raw_hashes(const char *hash);
 void heki_get_ranges(struct heki_args *args);
+void heki_load_pages(unsigned long pfn, struct heki_args *args);
 #ifdef CONFIG_KEXEC_FILE
 int heki_kexec_validate(struct kimage *image);
 void heki_copy_kernel(void *kernel, unsigned long kernel_len);
+void heki_load_arch_pages(struct kimage *image, struct heki_args *args);
 #endif
 
 /* Arch-specific functions. */
