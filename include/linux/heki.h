@@ -67,6 +67,7 @@ enum heki_kdata_type {
 
 enum heki_kexec_type {
 	HEKI_KEXEC_IMAGE,
+	HEKI_KEXEC_KERNEL_BLOB,
 	HEKI_KEXEC_MAX,
 };
 
@@ -232,6 +233,7 @@ void heki_store_blacklist_raw_hashes(const char *hash);
 void heki_get_ranges(struct heki_args *args);
 #ifdef CONFIG_KEXEC_FILE
 int heki_kexec_validate(struct kimage *image);
+void heki_copy_kernel(void *kernel, unsigned long kernel_len);
 #endif
 
 /* Arch-specific functions. */
@@ -263,6 +265,7 @@ static inline void heki_store_blacklist_raw_hashes(const char *hash)
 
 #ifdef CONFIG_KEXEC_FILE
 static inline int heki_kexec_validate(struct kimage *image) { return 0; }
+static inline void heki_copy_kernel(void *kernel, unsigned long kernel_len) {}
 #endif
 
 #endif /* CONFIG_HEKI */
