@@ -57,6 +57,8 @@ extern int init_cifs_idmap(void);
 extern void exit_cifs_idmap(void);
 extern int init_cifs_spnego(void);
 extern void exit_cifs_spnego(void);
+extern void smb3_crypto_register(void);
+extern void smb3_crypto_unregister(void);
 extern const char *build_path_from_dentry(struct dentry *, void *);
 char *__build_path_from_dentry_optional_prefix(struct dentry *direntry, void *page,
 					       const char *tree, int tree_len,
