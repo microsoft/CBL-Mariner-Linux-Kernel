@@ -114,7 +114,7 @@ static int do_kexec_load(unsigned long entry, unsigned long nr_segments,
 	 * do_kexec_load() can be used to unload an image that was loaded
 	 * by the kexec_file_load syscall.
 	 */
-	heki_kexec_unload(image_type);
+	heki_kexec_invalidate(image_type);
 
 	if (nr_segments == 0) {
 		/* Uninstall image */
