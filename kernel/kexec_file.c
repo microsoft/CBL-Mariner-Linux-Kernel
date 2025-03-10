@@ -353,6 +353,8 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 		dest_image = &kexec_image;
 	}
 
+	heki_kexec_invalidate(image_type);
+
 	if (flags & KEXEC_FILE_UNLOAD)
 		goto exchange;
 
