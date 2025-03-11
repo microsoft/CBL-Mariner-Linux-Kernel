@@ -114,6 +114,9 @@ static int __init hv_vsm_seckernel_mem_init(char *__unused)
 	unsigned long long securekernel_size = 0, securekernel_base = 0;
 	int ret;
 
+	/* Secure Kernel memory is already reserved. Avoid duplicate reservation */
+	if (sk_res.start)
+		return 0;
 	/*
 	 * Reserve Secure Kernel memory.
 	 * Check command line first, if secure kernel memory was defined
