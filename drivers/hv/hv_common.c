@@ -67,95 +67,6 @@ static void hv_kmsg_dump_unregister(void);
 
 static struct ctl_table_header *hv_ctl_table_hdr;
 
-int hv_result_to_errno(u64 hv_status)
-{
-	switch (hv_result(hv_status)) {
-	case HV_STATUS_SUCCESS:
-		return 0;
-	case HV_STATUS_INVALID_PARAMETER:
-	case HV_STATUS_UNKNOWN_PROPERTY:
-	case HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE:
-	case HV_STATUS_INVALID_VP_INDEX:
-	case HV_STATUS_INVALID_REGISTER_VALUE:
-	case HV_STATUS_INVALID_LP_INDEX:
-	case HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED:
-		return -EINVAL;
-	case HV_STATUS_ACCESS_DENIED:
-	case HV_STATUS_OPERATION_DENIED:
-		return -EACCES;
-	case HV_STATUS_NOT_ACKNOWLEDGED:
-	case HV_STATUS_INVALID_VP_STATE:
-	case HV_STATUS_INVALID_PARTITION_STATE:
-		return -EBADFD;
-	}
-	return -ENOTRECOVERABLE;
-}
-EXPORT_SYMBOL_GPL(hv_result_to_errno);
-
-const char *hv_result_to_string(u64 hv_status)
-{
-	switch (hv_result(hv_status)) {
-	case HV_STATUS_SUCCESS:
-		return "HV_STATUS_SUCCESS";
-	case HV_STATUS_INVALID_HYPERCALL_CODE:
-		return "HV_STATUS_INVALID_HYPERCALL_CODE";
-	case HV_STATUS_INVALID_HYPERCALL_INPUT:
-		return "HV_STATUS_INVALID_HYPERCALL_INPUT";
-	case HV_STATUS_INVALID_ALIGNMENT:
-		return "HV_STATUS_INVALID_ALIGNMENT";
-	case HV_STATUS_INVALID_PARAMETER:
-		return "HV_STATUS_INVALID_PARAMETER";
-	case HV_STATUS_ACCESS_DENIED:
-		return "HV_STATUS_ACCESS_DENIED";
-	case HV_STATUS_INVALID_PARTITION_STATE:
-		return "HV_STATUS_INVALID_PARTITION_STATE";
-	case HV_STATUS_OPERATION_DENIED:
-		return "HV_STATUS_OPERATION_DENIED";
-	case HV_STATUS_UNKNOWN_PROPERTY:
-		return "HV_STATUS_UNKNOWN_PROPERTY";
-	case HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE:
-		return "HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE";
-	case HV_STATUS_INSUFFICIENT_MEMORY:
-		return "HV_STATUS_INSUFFICIENT_MEMORY";
-	case HV_STATUS_INVALID_PARTITION_ID:
-		return "HV_STATUS_INVALID_PARTITION_ID";
-	case HV_STATUS_INVALID_VP_INDEX:
-		return "HV_STATUS_INVALID_VP_INDEX";
-	case HV_STATUS_NOT_FOUND:
-		return "HV_STATUS_NOT_FOUND";
-	case HV_STATUS_INVALID_PORT_ID:
-		return "HV_STATUS_INVALID_PORT_ID";
-	case HV_STATUS_INVALID_CONNECTION_ID:
-		return "HV_STATUS_INVALID_CONNECTION_ID";
-	case HV_STATUS_INSUFFICIENT_BUFFERS:
-		return "HV_STATUS_INSUFFICIENT_BUFFERS";
-	case HV_STATUS_NOT_ACKNOWLEDGED:
-		return "HV_STATUS_NOT_ACKNOWLEDGED";
-	case HV_STATUS_INVALID_VP_STATE:
-		return "HV_STATUS_INVALID_VP_STATE";
-	case HV_STATUS_NO_RESOURCES:
-		return "HV_STATUS_NO_RESOURCES";
-	case HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED:
-		return "HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED";
-	case HV_STATUS_INVALID_LP_INDEX:
-		return "HV_STATUS_INVALID_LP_INDEX";
-	case HV_STATUS_INVALID_REGISTER_VALUE:
-		return "HV_STATUS_INVALID_REGISTER_VALUE";
-	case HV_STATUS_OPERATION_FAILED:
-		return "HV_STATUS_OPERATION_FAILED";
-	case HV_STATUS_TIME_OUT:
-		return "HV_STATUS_TIME_OUT";
-	case HV_STATUS_CALL_PENDING:
-		return "HV_STATUS_CALL_PENDING";
-	case HV_STATUS_VTL_ALREADY_ENABLED:
-		return "HV_STATUS_VTL_ALREADY_ENABLED";
-	default:
-		return "Unknown";
-	};
-	return "Unknown";
-}
-EXPORT_SYMBOL_GPL(hv_result_to_string);
-
 /*
  * Per-cpu array holding the tail pointer for the SynIC event ring buffer
  * for each SINT.
@@ -909,3 +820,98 @@ void hv_identify_partition_type(void)
 		ms_hyperv.hv_current_partition = HV_PARTITION_GUEST;
 	}
 }
+
+struct hv_status_info {
+	char *string;
+	int errno;
+	u16 code;
+};
+
+/*
+ * Note on the errno mappings:
+ * A failed hypercall is usually only recoverable (or loggable) near
+ * the call site where the HV_STATUS_* code is known. So the errno
+ * it gets converted to is not too useful further up the stack.
+ * Provide a few mappings that could be useful, and revert to -EIO
+ * as a fallback.
+ */
+static const struct hv_status_info hv_status_infos[] = {
+#define _STATUS_INFO(status, errno) { #status, (errno), (status) }
+	_STATUS_INFO(HV_STATUS_SUCCESS,				0),
+	_STATUS_INFO(HV_STATUS_INVALID_HYPERCALL_CODE,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_INVALID_HYPERCALL_INPUT,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_INVALID_ALIGNMENT,		-EIO),
+	_STATUS_INFO(HV_STATUS_INVALID_PARAMETER,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_ACCESS_DENIED,			-EIO),
+	_STATUS_INFO(HV_STATUS_INVALID_PARTITION_STATE,		-EIO),
+	_STATUS_INFO(HV_STATUS_OPERATION_DENIED,		-EIO),
+	_STATUS_INFO(HV_STATUS_UNKNOWN_PROPERTY,		-EIO),
+	_STATUS_INFO(HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE,	-EIO),
+	_STATUS_INFO(HV_STATUS_INSUFFICIENT_MEMORY,		-ENOMEM),
+	_STATUS_INFO(HV_STATUS_INVALID_PARTITION_ID,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_INVALID_VP_INDEX,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_NOT_FOUND,			-EIO),
+	_STATUS_INFO(HV_STATUS_INVALID_PORT_ID,			-EINVAL),
+	_STATUS_INFO(HV_STATUS_INVALID_CONNECTION_ID,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_INSUFFICIENT_BUFFERS,		-EIO),
+	_STATUS_INFO(HV_STATUS_NOT_ACKNOWLEDGED,		-EIO),
+	_STATUS_INFO(HV_STATUS_INVALID_VP_STATE,		-EIO),
+	_STATUS_INFO(HV_STATUS_NO_RESOURCES,			-EIO),
+	_STATUS_INFO(HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED,	-EIO),
+	_STATUS_INFO(HV_STATUS_INVALID_LP_INDEX,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_INVALID_REGISTER_VALUE,		-EINVAL),
+	_STATUS_INFO(HV_STATUS_INVALID_LP_INDEX,		-EIO),
+	_STATUS_INFO(HV_STATUS_INVALID_REGISTER_VALUE,		-EIO),
+	_STATUS_INFO(HV_STATUS_OPERATION_FAILED,		-EIO),
+	_STATUS_INFO(HV_STATUS_TIME_OUT,			-EIO),
+	_STATUS_INFO(HV_STATUS_CALL_PENDING,			-EIO),
+	_STATUS_INFO(HV_STATUS_VTL_ALREADY_ENABLED,		-EIO),
+#undef _STATUS_INFO
+};
+
+static inline const struct hv_status_info *find_hv_status_info(u64 hv_status)
+{
+	int i;
+	u16 code = hv_result(hv_status);
+
+	for (i = 0; i < ARRAY_SIZE(hv_status_infos); ++i) {
+		const struct hv_status_info *info = &hv_status_infos[i];
+
+		if (info->code == code)
+			return info;
+	}
+
+	return NULL;
+}
+
+/* Convert a hypercall result into a linux-friendly error code. */
+int hv_result_to_errno(u64 status)
+{
+	const struct hv_status_info *info;
+
+	/* hv_do_hypercall() may return U64_MAX, hypercalls aren't possible */
+	if (unlikely(status == U64_MAX))
+		return -EOPNOTSUPP;
+
+	info = find_hv_status_info(status);
+	if (info)
+		return info->errno;
+
+	return -EIO;
+}
+EXPORT_SYMBOL_GPL(hv_result_to_errno);
+
+const char *hv_result_to_string(u64 status)
+{
+	const struct hv_status_info *info;
+
+	if (unlikely(status == U64_MAX))
+		return "Hypercall page missing!";
+
+	info = find_hv_status_info(status);
+	if (info)
+		return info->string;
+
+	return "Unknown";
+}
+EXPORT_SYMBOL_GPL(hv_result_to_string);
