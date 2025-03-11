@@ -89,7 +89,7 @@ int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages)
 				     page_count, 0, input_page, NULL);
 	local_irq_restore(flags);
 	if (!hv_result_success(status)) {
-		pr_err("Failed to deposit pages: %s\n", hv_result_to_string(status));
+		hv_status_err(status, "\n");
 		ret = hv_result_to_errno(status);
 		goto err_free_allocations;
 	}
@@ -140,8 +140,8 @@ int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
 
 		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
 			if (!hv_result_success(status)) {
-				pr_err("%s: cpu %u apic ID %u, %s\n", __func__,
-				       lp_index, apic_id, hv_result_to_string(status));
+				hv_status_err(status, "cpu %u apic ID: %u\n",
+					      lp_index, apic_id);
 				ret = hv_result_to_errno(status);
 			}
 			break;
@@ -183,8 +183,8 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 
 		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
 			if (!hv_result_success(status)) {
-				pr_err("%s: vcpu %u, lp %u, %s\n", __func__,
-				       vp_index, flags, hv_result_to_string(status));
+				hv_status_err(status, "vcpu: %u, lp: %u\n",
+					      vp_index, flags);
 				ret = hv_result_to_errno(status);
 			}
 			break;
