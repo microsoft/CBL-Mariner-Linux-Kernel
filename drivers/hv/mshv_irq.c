@@ -14,9 +14,6 @@
 #include "mshv_eventfd.h"
 #include "mshv_root.h"
 
-MODULE_AUTHOR("Microsoft");
-MODULE_LICENSE("GPL");
-
 /* called from the ioctl code, user wants to update the guest irq table */
 int mshv_update_routing_table(struct mshv_partition *partition,
 			      const struct mshv_user_irq_entry *ue,
