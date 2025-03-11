@@ -34,6 +34,10 @@
 #include "mshv.h"
 #include "mshv_root.h"
 
+MODULE_AUTHOR("Microsoft");
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Microsoft Hyper-V root partition VMM interface /dev/mshv");
+
 static bool hv_nofull_mmio;
 module_param(hv_nofull_mmio, bool, 0);
 MODULE_PARM_DESC(hv_nofull_mmio, "If set only map 1 page upon guest mmio fault");
