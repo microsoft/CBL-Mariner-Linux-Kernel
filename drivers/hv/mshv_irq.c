@@ -2,8 +2,7 @@
 /*
  * Copyright (c) 2023, Microsoft Corporation.
  *
- * Authors:
- *   Vineeth Remanan Pillai <viremana@linux.microsoft.com>
+ * Authors: Microsoft Linux virtualization team
  */
 
 #include <linux/kernel.h>
