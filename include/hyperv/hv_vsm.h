@@ -8,7 +8,7 @@
 #ifndef __HV_VSM_H__
 #define __HV_VSM_H__
 
-#ifdef CONFIG_HYPERV_VSM
+#if IS_ENABLED(CONFIG_HYPERV_VSM)
 void vsm_init(void);
 #else /* CONFIG_HYPERV_VSM */
 static inline void vsm_init(void) {}
