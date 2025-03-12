@@ -34,13 +34,9 @@
 #include "mshv.h"
 #include "mshv_root.h"
 
-bool hv_nofull_mmio;	 /* don't map entire mmio region upon fault */
-static int __init setup_hv_full_mmio(char *str)
-{
-	hv_nofull_mmio = true;
-	return 0;
-}
-__setup("hv_nofull_mmio", setup_hv_full_mmio);
+static bool hv_nofull_mmio;
+module_param(hv_nofull_mmio, bool, 0);
+MODULE_PARM_DESC(hv_nofull_mmio, "If set only map 1 page upon guest mmio fault");
 
 struct mshv_root mshv_root = {};
 
