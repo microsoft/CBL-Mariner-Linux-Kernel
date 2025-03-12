@@ -319,6 +319,7 @@ union hv_hypervisor_version_info {
 #define HV_FEATURE_FREQUENCY_MSRS_AVAILABLE		BIT(8)
 #define HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE		BIT(10)
 #define HV_FEATURE_DEBUG_MSRS_AVAILABLE			BIT(11)
+#define HV_FEATURE_EXT_GVA_RANGES_FLUSH			BIT(14)
 /*
  * Support for returning hypercall output block via XMM
  * registers is available
@@ -344,6 +345,41 @@ union hv_hypervisor_version_info {
 #define HV_X64_ENLIGHTENED_VMCS_RECOMMENDED		BIT(14)
 #define HV_X64_USE_MMIO_HYPERCALLS			BIT(21)
 
+/*
+ * CPU management features identification.
+ * These are HYPERV_CPUID_CPU_MANAGEMENT_FEATURES.EAX bits.
+ */
+#define HV_X64_START_LOGICAL_PROCESSOR			BIT(0)
+#define HV_X64_CREATE_ROOT_VIRTUAL_PROCESSOR		BIT(1)
+#define HV_X64_PERFORMANCE_COUNTER_SYNC			BIT(2)
+#define HV_X64_RESERVED_IDENTITY_BIT			BIT(31)
+
+/*
+ * Virtual processor will never share a physical core with another virtual
+ * processor, except for virtual processors that are reported as sibling SMT
+ * threads.
+ */
+#define HV_X64_NO_NONARCH_CORESHARING			BIT(18)
+
+/* Nested features. These are HYPERV_CPUID_NESTED_FEATURES.EAX bits. */
+#define HV_X64_NESTED_DIRECT_FLUSH			BIT(17)
+#define HV_X64_NESTED_GUEST_MAPPING_FLUSH		BIT(18)
+#define HV_X64_NESTED_MSR_BITMAP			BIT(19)
+
+/* Nested features #2. These are HYPERV_CPUID_NESTED_FEATURES.EBX bits. */
+#define HV_X64_NESTED_EVMCS1_PERF_GLOBAL_CTRL		BIT(0)
+
+/*
+ * This is specific to AMD and specifies that enlightened TLB flush is
+ * supported. If guest opts in to this feature, ASID invalidations only
+ * flushes gva -> hpa mapping entries. To flush the TLB entries derived
+ * from NPT, hypercalls should be used (HvFlushGuestPhysicalAddressSpace
+ * or HvFlushGuestPhysicalAddressList).
+ */
+#define HV_X64_NESTED_ENLIGHTENED_TLB			BIT(22)
+
+/* HYPERV_CPUID_ISOLATION_CONFIG.EAX bits. */
+#define HV_PARAVISOR_PRESENT				BIT(0)
 
 /* HYPERV_CPUID_ISOLATION_CONFIG.EBX bits. */
 #define HV_ISOLATION_TYPE				GENMASK(3, 0)
@@ -507,12 +543,19 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HV_HYPERCALL_RESULT_MASK	GENMASK_ULL(15, 0)
 #define HV_HYPERCALL_FAST_BIT		BIT(16)
 #define HV_HYPERCALL_VARHEAD_OFFSET	17
-#define HV_HYPERCALL_NESTED		BIT(31)
+#define HV_HYPERCALL_VARHEAD_MASK	GENMASK_ULL(26, 17)
+#define HV_HYPERCALL_RSVD0_MASK		GENMASK_ULL(31, 27)
+#define HV_HYPERCALL_NESTED		BIT_ULL(31)
 #define HV_HYPERCALL_REP_COMP_OFFSET	32
 #define HV_HYPERCALL_REP_COMP_1		BIT_ULL(32)
 #define HV_HYPERCALL_REP_COMP_MASK	GENMASK_ULL(43, 32)
+#define HV_HYPERCALL_RSVD1_MASK		GENMASK_ULL(47, 44)
 #define HV_HYPERCALL_REP_START_OFFSET	48
 #define HV_HYPERCALL_REP_START_MASK	GENMASK_ULL(59, 48)
+#define HV_HYPERCALL_RSVD2_MASK		GENMASK_ULL(63, 60)
+#define HV_HYPERCALL_RSVD_MASK		(HV_HYPERCALL_RSVD0_MASK | \
+					 HV_HYPERCALL_RSVD1_MASK | \
+					 HV_HYPERCALL_RSVD2_MASK)
 
 /* HvFlushGuestPhysicalAddressSpace hypercalls */
 struct hv_guest_mapping_flush {
@@ -587,6 +630,18 @@ struct ms_hyperv_tsc_page {	 /* HV_REFERENCE_TSC_PAGE */
 
 /* Define the number of synthetic interrupt sources. */
 #define HV_SYNIC_SINT_COUNT (16)
+
+/* Define the expected SynIC version. */
+#define HV_SYNIC_VERSION_1		(0x1)
+/* Valid SynIC vectors are 16-255. */
+#define HV_SYNIC_FIRST_VALID_VECTOR	(16)
+
+#define HV_SYNIC_CONTROL_ENABLE		(1ULL << 0)
+#define HV_SYNIC_SIMP_ENABLE		(1ULL << 0)
+#define HV_SYNIC_SIEFP_ENABLE		(1ULL << 0)
+#define HV_SYNIC_SINT_MASKED		(1ULL << 16)
+#define HV_SYNIC_SINT_AUTO_EOI		(1ULL << 17)
+#define HV_SYNIC_SINT_VECTOR_MASK	(0xFF)
 
 /* Hyper-V defined statically assigned SINTs */
 #define HV_SYNIC_INTERCEPTION_SINT_INDEX 0x00000000
@@ -812,6 +867,14 @@ struct hv_message {
 /* Define the synthetic interrupt message page layout. */
 struct hv_message_page {
 	struct hv_message sint_message[HV_SYNIC_SINT_COUNT];
+} __packed;
+
+/* Define timer message payload structure. */
+struct hv_timer_message_payload {
+	u32 timer_index;
+	u32 reserved;
+	u64 expiration_time;  /* When the timer expired */
+	u64 delivery_time;    /* When the message was delivered */
 } __packed;
 
 struct hv_x64_segment_register {
