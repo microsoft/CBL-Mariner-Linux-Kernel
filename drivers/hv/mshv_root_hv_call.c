@@ -4,14 +4,7 @@
  *
  * Hypercall helper functions used by the mshv_root module.
  *
- * Authors:
- *   Nuno Das Neves <nunodasneves@linux.microsoft.com>
- *   Wei Liu <wei.liu@kernel.org>
- *   Jinank Jain <jinankjain@microsoft.com>
- *   Vineeth Remanan Pillai <viremana@linux.microsoft.com>
- *   Asher Kariv <askariv@microsoft.com>
- *   Muminul Islam <Muminul.Islam@microsoft.com>
- *   Anatol Belski <anbelski@linux.microsoft.com>
+ * Authors: Microsoft Linux virtualization team
  */
 
 #include <linux/kernel.h>
