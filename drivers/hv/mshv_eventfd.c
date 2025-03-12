@@ -624,7 +624,7 @@ static int mshv_irqfd_assign(struct mshv_partition *pt,
 	irqfd->irqfd_partn = pt;
 	irqfd->irqfd_irqnum = args->gsi;
 	INIT_WORK(&irqfd->irqfd_shutdown, mshv_irqfd_shutdown);
-	seqcount_spinlock_init(&irqfd->irqfd_irqe_sc, &pt->irqfds.lock);
+	seqcount_spinlock_init(&irqfd->irqfd_irqe_sc, &pt->pt_irqfds_lock);
 
 	f = fdget(args->fd);
 	if (!f.file) {
