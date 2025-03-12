@@ -4,12 +4,7 @@
  *
  * mshv_root module's main interrupt handler and associated functionality.
  *
- * Authors:
- *   Nuno Das Neves <nunodasneves@linux.microsoft.com>
- *   Lillian Grassin-Drake <ligrassi@microsoft.com>
- *   Vineeth Remanan Pillai <viremana@linux.microsoft.com>
- *   Wei Liu <wei.liu@kernel.org>
- *   Stanislav Kinsburskii <skinsburskii@linux.microsoft.com>
+ * Authors: Microsoft Linux virtualization team
  */
 
 #include <linux/kernel.h>
