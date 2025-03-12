@@ -53,31 +53,21 @@ struct mshv_vp {
 };
 
 #define vp_fmt(fmt) "p%lluvp%u: " fmt
-#define vp_dev(v) ((v)->vp_partition->pt_module_dev)
-#define vp_emerg(v, fmt, ...) \
-	dev_emerg(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		  (v)->vp_index, ##__VA_ARGS__)
-#define vp_crit(v, fmt, ...) \
-	dev_crit(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		 (v)->vp_index, ##__VA_ARGS__)
-#define vp_alert(v, fmt, ...) \
-	dev_alert(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		  (v)->vp_index, ##__VA_ARGS__)
-#define vp_err(v, fmt, ...) \
-	dev_err(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		(v)->vp_index, ##__VA_ARGS__)
-#define vp_warn(v, fmt, ...) \
-	dev_warn(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		 (v)->vp_index, ##__VA_ARGS__)
-#define vp_notice(v, fmt, ...) \
-	dev_notice(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		   (v)->vp_index, ##__VA_ARGS__)
-#define vp_info(v, fmt, ...) \
-	dev_info(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		 (v)->vp_index, ##__VA_ARGS__)
-#define vp_dbg(v, fmt, ...) \
-	dev_dbg(vp_dev(v), vp_fmt(fmt), (v)->vp_partition->pt_id, \
-		(v)->vp_index, ##__VA_ARGS__)
+#define vp_devprintk(level, v, fmt, ...) \
+do { \
+	const struct mshv_vp *__vp = (v); \
+	const struct mshv_partition *__pt = __vp->vp_partition; \
+	dev_##level(__pt->pt_module_dev, vp_fmt(fmt), __pt->pt_id, \
+		    __vp->vp_index, ##__VA_ARGS__); \
+} while (0)
+#define vp_emerg(v, fmt, ...)	vp_devprintk(emerg, v, fmt, ##__VA_ARGS__)
+#define vp_crit(v, fmt, ...)	vp_devprintk(crit, v, fmt, ##__VA_ARGS__)
+#define vp_alert(v, fmt, ...)	vp_devprintk(alert, v, fmt, ##__VA_ARGS__)
+#define vp_err(v, fmt, ...)	vp_devprintk(err, v, fmt, ##__VA_ARGS__)
+#define vp_warn(v, fmt, ...)	vp_devprintk(warn, v, fmt, ##__VA_ARGS__)
+#define vp_notice(v, fmt, ...)	vp_devprintk(notice, v, fmt, ##__VA_ARGS__)
+#define vp_info(v, fmt, ...)	vp_devprintk(info, v, fmt, ##__VA_ARGS__)
+#define vp_dbg(v, fmt, ...)	vp_devprintk(dbg, v, fmt, ##__VA_ARGS__)
 
 struct mshv_mem_region {
 	struct hlist_node hnode;
@@ -145,23 +135,20 @@ struct mshv_partition {
 };
 
 #define pt_fmt(fmt) "p%llu: " fmt
-#define pt_dev(p) ((p)->pt_module_dev)
-#define pt_emerg(p, fmt, ...) \
-	dev_emerg(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
-#define pt_crit(p, fmt, ...) \
-	dev_crit(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
-#define pt_alert(p, fmt, ...) \
-	dev_alert(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
-#define pt_err(p, fmt, ...) \
-	dev_err(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
-#define pt_warn(p, fmt, ...) \
-	dev_warn(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
-#define pt_notice(p, fmt, ...) \
-	dev_notice(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
-#define pt_info(p, fmt, ...) \
-	dev_info(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
-#define pt_dbg(p, fmt, ...) \
-	dev_dbg(pt_dev(p), pt_fmt(fmt), (p)->pt_id, ##__VA_ARGS__)
+#define pt_devprintk(level, p, fmt, ...) \
+do { \
+	const struct mshv_partition *__pt = (p); \
+	dev_##level(__pt->pt_module_dev, pt_fmt(fmt), __pt->pt_id, \
+		    ##__VA_ARGS__); \
+} while (0)
+#define pt_emerg(p, fmt, ...)	pt_devprintk(emerg, p, fmt, ##__VA_ARGS__)
+#define pt_crit(p, fmt, ...)	pt_devprintk(crit, p, fmt, ##__VA_ARGS__)
+#define pt_alert(p, fmt, ...)	pt_devprintk(alert, p, fmt, ##__VA_ARGS__)
+#define pt_err(p, fmt, ...)	pt_devprintk(err, p, fmt, ##__VA_ARGS__)
+#define pt_warn(p, fmt, ...)	pt_devprintk(warn, p, fmt, ##__VA_ARGS__)
+#define pt_notice(p, fmt, ...)	pt_devprintk(notice, p, fmt, ##__VA_ARGS__)
+#define pt_info(p, fmt, ...)	pt_devprintk(info, p, fmt, ##__VA_ARGS__)
+#define pt_dbg(p, fmt, ...)	pt_devprintk(dbg, p, fmt, ##__VA_ARGS__)
 
 struct mshv_lapic_irq {
 	u32 lapic_vector;
