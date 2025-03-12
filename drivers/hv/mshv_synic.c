@@ -34,10 +34,15 @@ static u32 synic_event_ring_get_queued_port(u32 sint_index)
 	spages = this_cpu_ptr(mshv_root.synic_pages);
 	event_ring_page = &spages->synic_event_ring_page;
 	synic_eventring_tail = (u8 **)this_cpu_ptr(hv_synic_eventring_tail);
+
+	if (unlikely(!*synic_eventring_tail)) {
+		pr_debug("Missing synic event ring tail!\n");
+		return 0;
+	}
 	tail = (*synic_eventring_tail)[sint_index];
 
-	if (unlikely(!(*event_ring_page))) {
-		pr_err("%s: Missing synic event ring page!\n", __func__);
+	if (unlikely(!*event_ring_page)) {
+		pr_debug("Missing synic event ring page!\n");
 		return 0;
 	}
 
