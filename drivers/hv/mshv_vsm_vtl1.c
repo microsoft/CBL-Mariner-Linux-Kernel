@@ -1727,6 +1727,32 @@ static int vsm_kexec_pages_protect(struct heki_mem *kexec_mem,
 	return 0;
 }
 
+static void vsm_kexec_invalidate(struct heki_mem *kexec_mem)
+{
+	unsigned long read_only, read_write;
+	struct heki_range *ranges = NULL;
+	char *kernel_type;
+
+	read_only = HV_PAGE_READABLE | HV_PAGE_USER_EXECUTABLE;
+	read_write = read_only | HV_PAGE_WRITABLE;
+
+	if (kexec_mem == vtl0.crash_kexec_mem) {
+		ranges = vtl0.crash_kexec_ranges;
+		vtl0.crash_kexec_ranges = NULL;
+		kernel_type = "crash";
+	} else {
+		ranges = vtl0.kexec_ranges;
+		vtl0.kexec_ranges = NULL;
+		kernel_type = "normal";
+	}
+
+	if (ranges) {
+		vsm_kexec_pages_protect(kexec_mem, read_write);
+		vfree(ranges);
+		pr_info("Invalidated %s kexec kernel\n", kernel_type);
+	}
+}
+
 static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 			      unsigned long crash)
 {
@@ -1744,11 +1770,24 @@ static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 	else
 		kexec_mem = vtl0.kexec_mem;
 
+	mutex_lock(&vtl0.lock);
+
+	/* Invalidate previously loaded kexec data, if any. */
+
+	vsm_kexec_invalidate(kexec_mem);
+	if (!pa) {
+		/* Unload only. */
+		ret = 0;
+		goto unlock;
+	}
+
 	/* Load the new kexec data. */
 
 	ranges = __vsm_read_ranges(pa, nranges, true);
-	if (!ranges)
-		return -ENOMEM;
+	if (!ranges) {
+		ret = -ENOMEM;
+		goto unlock;
+	}
 
 	ret = vsm_group_ranges(ranges, nranges, kexec_mem, HEKI_KEXEC_MAX);
 	if (ret)
@@ -1771,12 +1810,15 @@ static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 	else
 		vtl0.kexec_ranges = ranges;
 
+	mutex_unlock(&vtl0.lock);
 	return 0;
 
 kexec_pages_unprotect:
 	vsm_kexec_pages_protect(kexec_mem, read_write);
 free_ranges:
 	vfree(ranges);
+unlock:
+	mutex_unlock(&vtl0.lock);
 	return ret;
 }
 
