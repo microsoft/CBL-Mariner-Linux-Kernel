@@ -168,3 +168,19 @@ int heki_kexec_validate(struct kimage *image)
 
 	return ret;
 }
+
+void heki_kexec_invalidate(int image_type)
+{
+	struct heki_hypervisor *hypervisor = heki.hypervisor;
+	bool crash = image_type == KEXEC_TYPE_CRASH;
+
+	if (!hypervisor)
+		return;
+
+	mutex_lock(&heki.lock);
+
+	/* Invalidate previously loaded kexec segments, if any. */
+	hypervisor->kexec_validate(0, 0, crash);
+
+	mutex_unlock(&heki.lock);
+}

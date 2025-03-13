@@ -235,6 +235,7 @@ void heki_get_ranges(struct heki_args *args);
 void heki_load_pages(unsigned long pfn, struct heki_args *args);
 #ifdef CONFIG_KEXEC_FILE
 int heki_kexec_validate(struct kimage *image);
+void heki_kexec_invalidate(int image_type);
 void heki_copy_kernel(void *kernel, unsigned long kernel_len);
 void heki_load_arch_pages(struct kimage *image, struct heki_args *args);
 #endif
@@ -268,6 +269,7 @@ static inline void heki_store_blacklist_raw_hashes(const char *hash)
 
 #ifdef CONFIG_KEXEC_FILE
 static inline int heki_kexec_validate(struct kimage *image) { return 0; }
+static inline void heki_kexec_invalidate(int image_type) {}
 static inline void heki_copy_kernel(void *kernel, unsigned long kernel_len) {}
 #endif
 
