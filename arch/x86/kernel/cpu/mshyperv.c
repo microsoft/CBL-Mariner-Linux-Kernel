@@ -111,6 +111,7 @@ void hv_set_register(unsigned int reg, u64 value)
 EXPORT_SYMBOL_GPL(hv_set_register);
 
 static void (*vmbus_handler)(void);
+static void (*vsm_handler)(void);
 static void (*hv_stimer0_handler)(void);
 static void (*hv_kexec_handler)(void);
 static void (*hv_crash_handler)(struct pt_regs *regs);
@@ -120,9 +121,19 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_hyperv_callback)
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
 	inc_irq_stat(irq_hv_callback_count);
+
+	/*
+	 * If vsm handler is registered, it means we are running secure kernel
+	 * Handle the secure interrupt/intercept and return
+	 */
+	if (vsm_handler) {
+		vsm_handler();
+		goto out;
+	}
+
 	if (vmbus_handler)
 		vmbus_handler();
-
+out:
 	if (ms_hyperv.hints & HV_DEPRECATING_AEOI_RECOMMENDED)
 		apic_eoi();
 
@@ -138,6 +149,11 @@ void hv_remove_vmbus_handler(void)
 {
 	/* We have no way to deallocate the interrupt gate */
 	vmbus_handler = NULL;
+}
+
+void hv_setup_vsm_handler(void(*handler)(void))
+{
+	vsm_handler = handler;
 }
 
 /*
@@ -204,10 +220,6 @@ static void hv_machine_shutdown(void)
 
 	/* The function calls stop_other_cpus(). */
 	native_machine_shutdown();
-
-	/* Disable the hypercall page when there is only 1 active CPU. */
-	if (kexec_in_progress)
-		hyperv_cleanup();
 }
 
 static void hv_machine_crash_shutdown(struct pt_regs *regs)
@@ -217,7 +229,10 @@ static void hv_machine_crash_shutdown(struct pt_regs *regs)
 
 	/* The function calls crash_smp_send_stop(). */
 	native_machine_crash_shutdown(regs);
+}
 
+static void hv_machine_kexec(void)
+{
 	/* Disable the hypercall page when there is only 1 active CPU. */
 	hyperv_cleanup();
 }
@@ -553,6 +568,7 @@ static void __init ms_hyperv_init_platform(void)
 #if IS_ENABLED(CONFIG_HYPERV) && defined(CONFIG_KEXEC_CORE)
 	machine_ops.shutdown = hv_machine_shutdown;
 	machine_ops.crash_shutdown = hv_machine_crash_shutdown;
+	machine_ops.kexec = hv_machine_kexec;
 #endif
 	if (ms_hyperv.features & HV_ACCESS_TSC_INVARIANT) {
 		/*

@@ -361,7 +361,8 @@
 	BRANCH_PROFILE()						\
 	TRACE_PRINTKS()							\
 	BPF_RAW_TP()							\
-	TRACEPOINT_STR()
+	TRACEPOINT_STR()						\
+	KUNIT_TABLE()
 
 /*
  * Data section helpers
@@ -687,7 +688,7 @@
 	EARLYCON_TABLE()						\
 	LSM_TABLE()							\
 	EARLY_LSM_TABLE()						\
-	KUNIT_TABLE()
+	KUNIT_INIT_TABLE()
 
 #define INIT_TEXT							\
 	*(.init.text .init.text.*)					\
@@ -911,6 +912,12 @@
 #define KUNIT_TABLE()							\
 		. = ALIGN(8);						\
 		BOUNDED_SECTION_POST_LABEL(.kunit_test_suites, __kunit_suites, _start, _end)
+
+/* Alignment must be consistent with (kunit_suite *) in include/kunit/test.h */
+#define KUNIT_INIT_TABLE()						\
+		. = ALIGN(8);						\
+		BOUNDED_SECTION_POST_LABEL(.kunit_init_test_suites, \
+				__kunit_init_suites, _start, _end)
 
 #ifdef CONFIG_BLK_DEV_INITRD
 #define INIT_RAM_FS							\
