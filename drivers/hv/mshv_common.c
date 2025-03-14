@@ -2,9 +2,9 @@
 /*
  * Copyright (c) 2024, Microsoft Corporation.
  *
- * This file contains functions that are called from one or more modules: ROOT,
- * DIAG, or VTL. If any of these modules are configured to build, this file is
- * built and just statically linked in.
+ * This file contains functions that will be called from one or more modules.
+ * If any of these modules are configured to build, this file is built and just
+ * statically linked in.
  *
  * Authors: Microsoft Linux virtualization team
  */
