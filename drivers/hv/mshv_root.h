@@ -42,7 +42,7 @@ struct mshv_vp {
 			u64 intercept_suspended: 1;
 			u64 root_sched_blocked: 1; /* root scheduler only */
 			u64 root_sched_dispatched: 1; /* root scheduler only */
-			u64 reserved: 62;
+			u64 reserved: 61;
 		} flags;
 		unsigned int kicked_by_hv;
 		wait_queue_head_t vp_suspend_queue;
@@ -109,8 +109,8 @@ struct mshv_partition {
 	struct hlist_head pt_devices;
 
 	/*
-	 * Since MSHV does not support more than one async hypercall in flight
-	 * for a single partition, it is okay to define per partition
+	 * MSHV does not support more than one async hypercall in flight
+	 * for a single partition. Thus, it is okay to define per partition
 	 * async hypercall status.
 	 */
 	struct completion async_hypercall;
@@ -249,10 +249,6 @@ struct mshv_partition *mshv_partition_get(struct mshv_partition *partition);
 void mshv_partition_put(struct mshv_partition *partition);
 struct mshv_partition *mshv_partition_find(u64 partition_id) __must_hold(RCU);
 
-extern struct mshv_root mshv_root;
-extern enum hv_scheduler_type hv_scheduler_type;
-extern u8 __percpu **hv_synic_eventring_tail;
-
 #ifdef CONFIG_DEBUG_FS
 extern int __init mshv_debugfs_init(void);
 extern void mshv_debugfs_exit(void);
@@ -370,7 +366,6 @@ int hv_call_post_message_direct(u32 vp_index,
 				u8 vtl,
 				u32 sint_index,
 				u8* message);
-
 int hv_map_stats_page(enum hv_stats_object_type type,
 		      const union hv_stats_object_identity *identity,
 		      void **addr);
@@ -411,5 +406,9 @@ void mshv_trace_buffer_complete(const struct hv_eventlog_message_payload *msg);
 #else
 static inline void mshv_trace_buffer_complete(const struct hv_eventlog_message_payload *msg) {}
 #endif /* CONFIG_MSHV_DIAG */
+
+extern struct mshv_root mshv_root;
+extern enum hv_scheduler_type hv_scheduler_type;
+extern u8 * __percpu *hv_synic_eventring_tail;
 
 #endif /* _MSHV_ROOT_H_ */
