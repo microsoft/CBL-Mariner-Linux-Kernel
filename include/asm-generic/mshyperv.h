@@ -250,7 +250,7 @@ int hv_common_cpu_init(unsigned int cpu);
 int hv_common_cpu_die(unsigned int cpu);
 void hv_identify_partition_type(void);
 
-int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages);
+int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages);
 
 /**
  * hv_cpu_number_to_vp_number() - Map CPU to VP.

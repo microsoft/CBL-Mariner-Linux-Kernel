@@ -121,7 +121,7 @@ free_buf:
  *
  * Return: 0 on success, negative error code on failure
  */
-static int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
+int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
 {
 	u64 done;
 	int ret = 0;
@@ -137,6 +137,7 @@ static int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
 
 	return ret;
 }
+EXPORT_SYMBOL_GPL(hv_call_deposit_pages);
 
 int hv_deposit_memory_node(int node, u64 partition_id,
 			   u64 hv_status)
