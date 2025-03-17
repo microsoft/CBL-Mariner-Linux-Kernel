@@ -893,7 +893,7 @@ mshv_vp_ioctl_get_set_state(struct mshv_vp *vp,
 
 	switch (args.type) {
 	case MSHV_VP_STATE_LAPIC:
-		state_data.type = HV_GET_SET_VP_STATE_LOCAL_INTERRUPT_CONTROLLER_STATE;
+		state_data.type = HV_GET_SET_VP_STATE_LAPIC_STATE;
 		data_sz = HV_HYP_PAGE_SIZE;
 		break;
 	case MSHV_VP_STATE_XSAVE:
