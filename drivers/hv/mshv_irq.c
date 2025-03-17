@@ -12,7 +12,6 @@
 #include <asm/mshyperv.h>
 
 #include "mshv_eventfd.h"
-#include "mshv.h"
 #include "mshv_root.h"
 
 MODULE_AUTHOR("Microsoft");

@@ -14,6 +14,8 @@
 #include <asm/mshyperv.h>
 #include <linux/resume_user_mode.h>
 
+#include "mshv.h"
+
 #define HV_GET_REGISTER_BATCH_SIZE	\
 	(HV_HYP_PAGE_SIZE / sizeof(union hv_register_value))
 #define HV_SET_REGISTER_BATCH_SIZE	\

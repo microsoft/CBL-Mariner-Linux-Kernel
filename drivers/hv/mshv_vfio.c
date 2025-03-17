@@ -17,7 +17,7 @@
 #include <linux/vfio.h>
 #include <linux/anon_inodes.h>
 #include <linux/nospec.h>
-#include "mshv.h"
+
 #include "mshv_root.h"
 
 struct mshv_device {

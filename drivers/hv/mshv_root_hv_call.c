@@ -19,7 +19,7 @@
 #include <asm/mshyperv.h>
 
 #include <trace/events/mshv.h>
-#include "mshv.h"
+#include "mshv_root.h"
 
 /* Determined empirically */
 #define HV_INIT_PARTITION_DEPOSIT_PAGES 208
