@@ -39,7 +39,7 @@ struct mshv_vp {
 	struct {
 		atomic64_t vp_signaled_count;
 		struct {
-			u64 intercept_suspend: 1;
+			u64 intercept_suspended: 1;
 			u64 root_sched_blocked: 1; /* root scheduler only */
 			u64 root_sched_dispatched: 1; /* root scheduler only */
 			u64 reserved: 62;
