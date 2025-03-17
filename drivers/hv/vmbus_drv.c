@@ -2642,7 +2642,7 @@ static bool hv_vmbus_skip(void)
 	return false;
 }
 
-static int __init hv_acpi_init(void)
+static int __init hv_vmbus_init(void)
 {
 	int ret;
 
@@ -2695,7 +2695,7 @@ cleanup:
 	return ret;
 }
 
-static void __exit vmbus_exit(void)
+static void __exit hv_vmbus_exit(void)
 {
 	int cpu;
 
@@ -2744,5 +2744,5 @@ static void __exit vmbus_exit(void)
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Microsoft Hyper-V VMBus Driver");
 
-subsys_initcall(hv_acpi_init);
-module_exit(vmbus_exit);
+subsys_initcall(hv_vmbus_init);
+module_exit(hv_vmbus_exit);
