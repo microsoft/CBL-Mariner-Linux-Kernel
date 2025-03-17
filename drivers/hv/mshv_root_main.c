@@ -1342,17 +1342,10 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	if (!vp)
 		goto unmap_stats_pages;
 
-	vp->vp_registers = kmalloc_array(MSHV_VP_MAX_REGISTERS,
-					 sizeof(*vp->vp_registers), GFP_KERNEL);
-	if (!vp->vp_registers) {
-		ret = -ENOMEM;
-		goto free_vp;
-	}
-
 	vp->vp_partition = mshv_partition_get(partition);
 	if (!vp->vp_partition) {
 		ret = -EBADF;
-		goto free_registers;
+		goto free_vp;
 	}
 
 	mutex_init(&vp->vp_mutex);
@@ -1395,8 +1388,6 @@ remove_debugfs_vp:
 	mshv_debugfs_vp_remove(vp);
 put_partition:
 	mshv_partition_put(partition);
-free_registers:
-	kfree(vp->vp_registers);
 free_vp:
 	kfree(vp);
 unmap_stats_pages:
@@ -2811,7 +2802,6 @@ static void destroy_partition(struct mshv_partition *partition)
 				vp->vp_ghcb_page = NULL;
 			}
 
-			kfree(vp->vp_registers);
 			kfree(vp);
 
 			partition->pt_vp_array[i] = NULL;
