@@ -2633,6 +2633,9 @@ static struct syscore_ops hv_synic_syscore_ops = {
 
 static bool hv_vmbus_skip(void)
 {
+	if (ms_hyperv.vtl == 1)
+		return true;
+
 	if (hv_root_partition() && !hv_nested)
 		return true;
 
