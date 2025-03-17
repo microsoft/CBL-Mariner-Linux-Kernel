@@ -435,6 +435,28 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 
 #endif	/* CONFIG_X86 */
 
+/*
+ * Explicitly suspend this vcpu. Hyp will not run it until the suspension is
+ * cleared.
+ */
+static long mshv_vp_set_explicit_suspend(const struct mshv_vp *vp)
+{
+	long ret;
+	struct hv_register_assoc susp_reg = {
+		.name = HV_REGISTER_EXPLICIT_SUSPEND,
+		.value.explicit_suspend.suspended = 1,
+	};
+
+	ret = mshv_set_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
+				    1, &susp_reg);
+	if (ret) {
+		vp_err(vp, "Failed to explicitly suspend vCPU\n");
+		return ret;
+	}
+
+	return 0;
+}
+
 static long mshv_vp_clear_explicit_suspend(struct mshv_vp *vp)
 {
 	struct hv_register_assoc susp_reg = {
@@ -454,110 +476,98 @@ static long mshv_vp_clear_explicit_suspend(struct mshv_vp *vp)
 	return ret;
 }
 
-/*
- * Explicit guest vCPU suspend is asynchronous by nature (as it is requested by
- * dom0 vCPU for guest vCPU) and thus it can race with "intercept" suspend,
- * done by the hypervisor.
- * "Intercept" suspend leads to asynchronous message delivery to dom0 which
- * should be awaited to keep the VP loop consistent (i.e. no message pending
- * upon VP resume).
- * VP intercept suspend can't be done when the VP is explicitly suspended
- * already, and thus can be only two possible race scenarios:
- *   1. implicit suspend bit set -> explicit suspend bit set -> message sent
- *   2. implicit suspend bit set -> message sent -> explicit suspend bit set
- * Checking for implicit suspend bit set after explicit suspend request has
- * succeeded in either case allows us to reliably identify, if there is a
- * message to receive and deliver to VMM.
- */
-static long
-mshv_suspend_vp(const struct mshv_vp *vp, bool *message_in_flight)
+static long mshv_vp_clear_intercept_suspend(struct mshv_vp *vp)
 {
-	struct hv_register_assoc explicit_suspend = {
-		.name = HV_REGISTER_EXPLICIT_SUSPEND
+	struct hv_register_assoc susp_reg = {
+		.name = HV_REGISTER_INTERCEPT_SUSPEND,
+		.value.intercept_suspend.suspended = 0,
 	};
-	struct hv_register_assoc intercept_suspend = {
-		.name = HV_REGISTER_INTERCEPT_SUSPEND
-	};
-	union hv_explicit_suspend_register *es =
-		&explicit_suspend.value.explicit_suspend;
-	union hv_intercept_suspend_register *is =
-		&intercept_suspend.value.intercept_suspend;
-	int ret;
-
-	es->suspended = 1;
+	long ret;
 
 	ret = mshv_set_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
-				    1, &explicit_suspend);
-	if (ret) {
-		vp_err(vp, "Failed to explicitly suspend vCPU\n");
-		return ret;
-	}
+				    1, &susp_reg);
+
+	trace_mshv_root_sched_unsuspend_vp(ret, vp->vp_partition->pt_id,
+					   vp->vp_index);
+	if (ret)
+		vp_err(vp, "Failed to unsuspend\n");
+
+	vp->run.flags.intercept_suspended = 0;
+
+	return ret;
+}
+
+static long mshv_vp_msg_pending(struct mshv_vp *vp, bool *msg_in_flight)
+{
+	struct hv_register_assoc susp_reg = {
+		.name = HV_REGISTER_INTERCEPT_SUSPEND
+	};
+	long ret;
 
 	ret = mshv_get_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
-				    1, &intercept_suspend);
+				    1, &susp_reg);
 	if (ret) {
 		vp_err(vp, "Failed to get intercept suspend state\n");
 		return ret;
 	}
 
-	*message_in_flight = is->suspended;
-
+	*msg_in_flight = susp_reg.value.intercept_suspend.suspended;
 	return 0;
 }
 
 /*
- * This function is used when VPs are scheduled by the hypervisor's
- * scheduler.
+ * This function either runs or resumes a vcpu using core or classic scheduler
+ * of the hypervisor. There are three ways to exit out of this function:
+ *   1. The vcpu was intercept suspended, meaning hypervisor has a message for
+ *	the vmm to process. The vcpu can not run again until intercept cleared.
+ *   2. The thread got woken up via Unix signal.
+ *   3. An error, eg failed hypercall, occured.
  *
- * Caller has to make sure the registers contain cleared
- * HV_REGISTER_INTERCEPT_SUSPEND and HV_REGISTER_EXPLICIT_SUSPEND registers
- * exactly in this order (the hypervisor clears them sequentially) to avoid
- * potential invalid clearing a newly arrived HV_REGISTER_INTERCEPT_SUSPEND
- * after VP is released from HV_REGISTER_EXPLICIT_SUSPEND in case of the
- * opposite order.
+ * Since the vp register page is flushed only in case of intercept suspend or
+ * explicit suspend, we do explicit suspend in case of the Unix signal so the
+ * register page is valid and vmm can examine it. Resuming then happens by
+ * clearing either. Also, a new vp is created in explicit suspend state.
  */
 static long mshv_run_vp_with_hyp_scheduler(struct mshv_vp *vp)
 {
 	long ret;
-	struct hv_register_assoc suspend_regs[2] = {
-			{ .name = HV_REGISTER_INTERCEPT_SUSPEND },
-			{ .name = HV_REGISTER_EXPLICIT_SUSPEND }
-	};
-	size_t count = ARRAY_SIZE(suspend_regs);
 
-	/* Resume VP execution */
-	ret = mshv_set_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
-				    count, suspend_regs);
-	if (ret) {
-		vp_err(vp, "Failed to resume vp execution. %lx\n", ret);
-		return ret;
-	}
+	/* Resume VP execution, or run it for the first time */
+	if (vp->run.flags.intercept_suspended)
+		ret = mshv_vp_clear_intercept_suspend(vp);
+	else
+		ret = mshv_vp_clear_explicit_suspend(vp);
+	if (ret)
+		return ret;	/* error already printed */
 
 	ret = wait_event_interruptible(vp->run.vp_suspend_queue,
 				       vp->run.kicked_by_hv == 1);
 	if (ret) {
 		bool message_in_flight;
 
-		/*
-		 * Otherwise the waiting was interrupted by a signal: suspend
-		 * the vCPU explicitly and copy message in flight (if any).
-		 */
-		ret = mshv_suspend_vp(vp, &message_in_flight);
+		/* Got signal, stop the vp and keep hyp from running it again */
+		ret = mshv_vp_set_explicit_suspend(vp);
 		if (ret)
 			return ret;
 
-		/* Return if no message in flight */
+		/* Check after suspend if there was a message in transit */
+		ret = mshv_vp_msg_pending(vp, &message_in_flight);
+		if (ret)
+			return ret;
+
 		if (!message_in_flight)
 			return -EINTR;
 
 		/* Wait for the message in flight. */
 		wait_event(vp->run.vp_suspend_queue, vp->run.kicked_by_hv == 1);
+
+		/* cpu in intercept suspend state, we can clear explicit susp */
+		ret = mshv_vp_clear_explicit_suspend(vp);
+		if (ret)
+			return ret;
 	}
 
-	/*
-	 * Reset the flag to make the wait_event call above work
-	 * next time.
-	 */
+	vp->run.flags.intercept_suspended = 1;
 	vp->run.kicked_by_hv = 0;
 
 	return 0;
@@ -652,8 +662,8 @@ static int mshv_vp_wait_for_event(struct mshv_vp *vp)
 }
 
 /*
- * Before sleeping or going into guest mode, check if this task has pending
- * events, and process them.
+ * Before going into guest mode, check if this task has pending events, and
+ * process them.
  */
 static int mshv_chk_process_host_events(struct mshv_vp *vp)
 {
@@ -685,13 +695,8 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 {
 	long ret;
 
-	if (vp->run.flags.root_sched_blocked) {
-		/*
-		 * Dispatch state of this VP is blocked. Need to wait
-		 * for the hypervisor to clear the blocked state before
-		 * dispatching it.
-		 */
-		ret = mshv_vp_wait_for_event(vp);
+	if (!vp->run.flags.intercept_suspended) {
+		ret = mshv_vp_clear_explicit_suspend(vp);
 		if (ret)
 			return ret;
 	}
@@ -699,6 +704,16 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 	do {
 		u32 flags = 0;
 		struct hv_output_dispatch_vp output;
+
+		/*
+		 * If the dispatch state of this vp is blocked, wait for the
+		 * hypervisor to clear it before dispatching the vp.
+		 */
+		if (vp->run.flags.root_sched_blocked) {
+			ret = mshv_vp_wait_for_event(vp);
+			if (ret)
+				break;
+		}
 
 		ret = mshv_chk_process_host_events(vp);
 		if (ret)
@@ -728,10 +743,7 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 				/*
 				 * Need to clear explicit suspend before
 				 * dispatching.
-				 * Explicit suspend is either:
-				 * - set right after the first VP dispatch or
-				 * - set explicitly via hypercall
-				 * Since the latter case is not yet supported,
+				 * Since VP cancelling is not yet supported,
 				 * simply clear it here.
 				 */
 				ret = mshv_vp_clear_explicit_suspend(vp);
@@ -743,9 +755,6 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 					break;
 			} else {
 				vp->run.flags.root_sched_blocked = 1;
-				ret = mshv_vp_wait_for_event(vp);
-				if (ret)
-					break;
 			}
 		} else {
 			/* HV_VP_DISPATCH_STATE_READY */
@@ -754,6 +763,14 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 				vp->run.flags.intercept_suspended = 1;
 		}
 	} while (!vp->run.flags.intercept_suspended);
+
+	if (!vp->run.flags.intercept_suspended) {
+		long rc = mshv_vp_set_explicit_suspend(vp);
+
+		/* don't override ret, it could be status from signal */
+		if (rc)
+			ret = rc;
+	}
 
 	return ret;
 }
