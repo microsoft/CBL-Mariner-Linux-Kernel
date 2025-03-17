@@ -2631,6 +2631,14 @@ static struct syscore_ops hv_synic_syscore_ops = {
 	.resume = hv_synic_resume,
 };
 
+static bool hv_vmbus_skip(void)
+{
+	if (hv_root_partition() && !hv_nested)
+		return true;
+
+	return false;
+}
+
 static int __init hv_acpi_init(void)
 {
 	int ret;
@@ -2638,7 +2646,7 @@ static int __init hv_acpi_init(void)
 	if (!hv_is_hyperv_initialized())
 		return -ENODEV;
 
-	if (hv_root_partition() && !hv_nested)
+	if (hv_vmbus_skip())
 		return 0;
 
 	/*
@@ -2687,6 +2695,9 @@ cleanup:
 static void __exit vmbus_exit(void)
 {
 	int cpu;
+
+	if (hv_vmbus_skip())
+		return;
 
 	unregister_syscore_ops(&hv_synic_syscore_ops);
 
