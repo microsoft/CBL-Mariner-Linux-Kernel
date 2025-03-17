@@ -20,7 +20,7 @@
 #include <asm/mshyperv.h>
 
 #include "mshv_eventfd.h"
-#include "mshv.h"
+#include "mshv_root.h"
 
 static u32 synic_event_ring_get_queued_port(u32 sint_index)
 {

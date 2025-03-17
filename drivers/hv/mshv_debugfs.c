@@ -17,7 +17,6 @@
 #include <linux/slab.h>
 #include "hv_tf_api.h"
 
-#include "mshv.h"
 #include "mshv_root.h"
 
 static struct dentry *mshv_debugfs;
