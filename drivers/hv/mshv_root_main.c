@@ -1189,8 +1189,7 @@ static vm_fault_t mshv_vp_fault(struct vm_fault *vmf)
 		vmf->page = virt_to_page(vp->vp_intercept_msg_page);
 		break;
 	case MSHV_VP_MMAP_OFFSET_GHCB:
-		if (is_ghcb_mapping_available())
-			vmf->page = virt_to_page(vp->vp_ghcb_page);
+		vmf->page = virt_to_page(vp->vp_ghcb_page);
 		break;
 	default:
 		return -EINVAL;
@@ -1215,7 +1214,7 @@ static int mshv_vp_mmap(struct file *file, struct vm_area_struct *vma)
 			return -ENODEV;
 		break;
 	case MSHV_VP_MMAP_OFFSET_GHCB:
-		if (is_ghcb_mapping_available() && !vp->vp_ghcb_page)
+		if (!vp->vp_ghcb_page)
 			return -ENODEV;
 		break;
 	default:
