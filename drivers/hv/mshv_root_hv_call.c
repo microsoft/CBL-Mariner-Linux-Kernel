@@ -396,7 +396,7 @@ int hv_call_get_gpa_access_states(
 	int completed = 0;
 	unsigned long remaining = count;
 	int rep_count, i;
-	u64 status;
+	u64 status = 0;
 	unsigned long flags;
 
 	*written_total = 0;
