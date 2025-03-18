@@ -331,8 +331,7 @@ enum {
  *             the access states in the range, after retrieving the current
  *             states.
  * @rsvd: MBZ
- * @page_count: in: number of pages
- *              out: on error, number of states successfully written to bitmap
+ * @page_count: Number of pages
  * @gpap_base: Base gpa page number
  * @bitmap_ptr: Output buffer for bitmap, at least (page_count + 7) / 8 bytes
  *
