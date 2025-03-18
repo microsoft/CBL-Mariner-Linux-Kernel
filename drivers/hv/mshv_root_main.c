@@ -2032,15 +2032,13 @@ mshv_partition_ioctl_get_gpap_access_bitmap(struct mshv_partition *partition,
 	 * correspond to bitfields in hv_gpa_page_access_state
 	 */
 	for (i = 0; i < written; ++i)
-		assign_bit(i, (ulong *)states,
-			   states[i].as_uint8 & hv_type_mask);
+		__assign_bit(i, (ulong *)states,
+			     states[i].as_uint8 & hv_type_mask);
 
-	args.page_count = written;
+	/* zero the unused bits in the last byte(s) of the returned bitmap */
+	for (i = written; i < bitmap_buf_sz * 8; ++i)
+		__clear_bit(i, (ulong *)states);
 
-	if (copy_to_user(user_args, &args, sizeof(args))) {
-		ret = -EFAULT;
-		goto free_return;
-	}
 	if (copy_to_user((void __user *)args.bitmap_ptr, states, bitmap_buf_sz))
 		ret = -EFAULT;
 
