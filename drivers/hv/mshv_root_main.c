@@ -1192,7 +1192,7 @@ static vm_fault_t mshv_vp_fault(struct vm_fault *vmf)
 		vmf->page = virt_to_page(vp->vp_ghcb_page);
 		break;
 	default:
-		return -EINVAL;
+		return VM_FAULT_SIGBUS;
 	}
 
 	get_page(vmf->page);
