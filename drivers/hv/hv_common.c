@@ -928,6 +928,25 @@ const char *hv_result_to_string(u64 status)
 }
 EXPORT_SYMBOL_GPL(hv_result_to_string);
 
+bool heki_protect_pfn(unsigned long pfn)
+{
+	int i;
+
+	if (!hv_root_partition())
+		return true;
+
+	if (!page_is_ram(pfn))
+		return false;
+
+	for (i = 0; i < ranges_nr; i++) {
+		if (PHYS_PFN(hv_mshv_res[i].start) <= pfn &&
+		    pfn <= PHYS_PFN(hv_mshv_res[i].end))
+			return false;
+	}
+
+	return true;
+}
+
 /*
  * Parse "hyperv_resvd_new=<size>!<address>,<size>!<address>,...", specifying a
  * list of memory ranges that are reserved by the loader for the hypervisor.
