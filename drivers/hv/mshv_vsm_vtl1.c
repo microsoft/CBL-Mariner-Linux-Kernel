@@ -2097,13 +2097,17 @@ static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 	if (ret)
 		goto free_ranges;
 
-	ret = vsm_map(&kexec_mem[HEKI_KEXEC_KERNEL_BLOB]);
+	ret = vsm_map(&kexec_mem[HEKI_KEXEC_IMAGE]);
 	if (ret)
 		goto free_ranges;
 
+	ret = vsm_map(&kexec_mem[HEKI_KEXEC_KERNEL_BLOB]);
+	if (ret)
+		goto free_image;
+
 	ret = vsm_kexec_verify_sig(&kexec_mem[HEKI_KEXEC_KERNEL_BLOB]);
 	if (ret)
-		goto free_ranges;
+		goto free_blob;
 
 	ret = vsm_kexec_pages_protect(kexec_mem, read_only);
 	if (ret)
@@ -2119,6 +2123,10 @@ static int vsm_kexec_validate(u64 pa, unsigned long nranges,
 
 kexec_pages_unprotect:
 	vsm_kexec_pages_protect(kexec_mem, read_write);
+free_blob:
+	vsm_unmap(&kexec_mem[HEKI_KEXEC_KERNEL_BLOB]);
+free_image:
+	vsm_unmap(&kexec_mem[HEKI_KEXEC_IMAGE]);
 free_ranges:
 	vfree(ranges);
 unlock:
