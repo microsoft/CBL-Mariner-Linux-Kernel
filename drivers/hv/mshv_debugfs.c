@@ -115,7 +115,7 @@ static int lp_stats_show(struct seq_file *m, void *v)
 }
 DEFINE_SHOW_ATTRIBUTE(lp_stats);
 
-static void mshv_lp_stats_unmap(u32 lp_index)
+static void mshv_lp_stats_unmap(u32 lp_index, void *stats_page_addr)
 {
 	union hv_stats_object_identity identity = {
 		.lp.lp_index = lp_index,
@@ -123,8 +123,8 @@ static void mshv_lp_stats_unmap(u32 lp_index)
 	};
 	int err;
 
-	err = hv_call_unmap_stat_page(HV_STATS_OBJECT_LOGICAL_PROCESSOR,
-				      &identity);
+	err = hv_unmap_stats_page(HV_STATS_OBJECT_LOGICAL_PROCESSOR,
+				  stats_page_addr, &identity);
 	if (err)
 		pr_err("%s: failed to unmap logical processor %u stats, "
 		       "err: %d\n", __func__, lp_index, err);
@@ -140,8 +140,8 @@ static void __init *mshv_lp_stats_map(u32 lp_index)
 	void *stats;
 	int err;
 
-	err = hv_call_map_stat_page(HV_STATS_OBJECT_LOGICAL_PROCESSOR,
-				    &identity, &stats);
+	err = hv_map_stats_page(HV_STATS_OBJECT_LOGICAL_PROCESSOR, &identity,
+				&stats);
 	if (err) {
 		pr_err("%s: failed to map logical processor %u stats, "
 		       "err: %d\n", __func__, lp_index, err);
@@ -163,7 +163,7 @@ static void __init *lp_debugfs_stats_create(u32 lp_index, struct dentry *parent)
 	dentry = debugfs_create_file("stats", 0400, parent,
 				     stats, &lp_stats_fops);
 	if (IS_ERR(dentry)) {
-		mshv_lp_stats_unmap(lp_index);
+		mshv_lp_stats_unmap(lp_index, stats);
 		return dentry;
 	}
 	return stats;
@@ -202,7 +202,7 @@ static void mshv_debugfs_lp_remove(void)
 	debugfs_remove_recursive(mshv_debugfs_lp);
 
 	for (lp_index = 0; lp_index < mshv_lps_count; lp_index++)
-		mshv_lp_stats_unmap(lp_index);
+		mshv_lp_stats_unmap(lp_index, NULL);
 }
 
 static int __init mshv_debugfs_lp_create(struct dentry *parent)
@@ -226,7 +226,7 @@ static int __init mshv_debugfs_lp_create(struct dentry *parent)
 
 remove_debugfs_lps:
 	for (lp_index -= 1; lp_index >= 0; lp_index--)
-		mshv_lp_stats_unmap(lp_index);
+		mshv_lp_stats_unmap(lp_index, NULL);
 	debugfs_remove_recursive(lp_dir);
 	return err;
 }
@@ -539,7 +539,7 @@ do {								 \
 }
 DEFINE_SHOW_ATTRIBUTE(vp_stats);
 
-static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index,
+static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index, void *stats_page_addr,
 				enum hv_stats_area_type stats_area_type)
 {
 	union hv_stats_object_identity identity = {
@@ -549,7 +549,7 @@ static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index,
 	};
 	int err;
 
-	err = hv_call_unmap_stat_page(HV_STATS_OBJECT_VP, &identity);
+	err = hv_unmap_stats_page(HV_STATS_OBJECT_VP, stats_page_addr, &identity);
 	if (err)
 		pr_err("%s: failed to unmap partition %llu vp %u %s stats, err: %d\n",
 		       __func__, partition_id, vp_index,
@@ -568,7 +568,7 @@ static void *mshv_vp_stats_map(u64 partition_id, u32 vp_index,
 	void *stats;
 	int err;
 
-	err = hv_call_map_stat_page(HV_STATS_OBJECT_VP, &identity, &stats);
+	err = hv_map_stats_page(HV_STATS_OBJECT_VP, &identity, &stats);
 	if (err) {
 		pr_err("%s: failed to map partition %llu vp %u %s stats, err: %d\n",
 		       __func__, partition_id, vp_index,
@@ -586,6 +586,7 @@ static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
 	struct dentry *dentry;
 	struct hv_stats_page **pstats;
 	int err;
+	void *stats;
 
 	pstats = kcalloc(2, sizeof(struct hv_stats_page *), GFP_KERNEL_ACCOUNT);
 	if (!pstats)
@@ -604,9 +605,8 @@ static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
 	if (is_l1vh_parent(partition_id)) {
 		pstats[HV_STATS_AREA_PARENT] = pstats[HV_STATS_AREA_SELF];
 	} else {
-		pstats[HV_STATS_AREA_PARENT] = mshv_vp_stats_map(partition_id,
-							  vp_index,
-							  HV_STATS_AREA_PARENT);
+		pstats[HV_STATS_AREA_PARENT] = mshv_vp_stats_map(
+			partition_id, vp_index, HV_STATS_AREA_PARENT);
 		if (IS_ERR(pstats[HV_STATS_AREA_PARENT])) {
 			err = PTR_ERR(pstats[HV_STATS_AREA_PARENT]);
 			goto unmap_self;
@@ -624,10 +624,13 @@ static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
 	return 0;
 
 unmap_vp_stats:
-	if (!is_l1vh_parent(partition_id))
-		mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_PARENT);
+	if (!is_l1vh_parent(partition_id)) {
+		stats = pstats[HV_STATS_AREA_PARENT];
+		mshv_vp_stats_unmap(partition_id, vp_index, stats, HV_STATS_AREA_PARENT);
+	}
 unmap_self:
-	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_SELF);
+	stats = pstats[HV_STATS_AREA_SELF];
+	mshv_vp_stats_unmap(partition_id, vp_index, stats, HV_STATS_AREA_SELF);
 cleanup:
 	kfree(pstats);
 	return err;
@@ -637,14 +640,19 @@ static void vp_debugfs_remove(u64 partition_id, u32 vp_index,
 			      struct dentry *vp_stats)
 {
 	struct hv_stats_page **pstats = NULL;
+	void *stats;
 
 	pstats = vp_stats->d_inode->i_private;
 	debugfs_remove_recursive(vp_stats->d_parent);
-	if (!is_l1vh_parent(partition_id))
-		mshv_vp_stats_unmap(partition_id, vp_index,
+	if (!is_l1vh_parent(partition_id)) {
+		stats = pstats[HV_STATS_AREA_PARENT];
+		mshv_vp_stats_unmap(partition_id, vp_index, stats,
 				    HV_STATS_AREA_PARENT);
+	}
 
-	mshv_vp_stats_unmap(partition_id, vp_index, HV_STATS_AREA_SELF);
+	stats = pstats[HV_STATS_AREA_SELF];
+	mshv_vp_stats_unmap(partition_id, vp_index, stats, HV_STATS_AREA_SELF);
+
 	kfree(pstats);
 }
 
@@ -732,7 +740,7 @@ do {								 \
 }
 DEFINE_SHOW_ATTRIBUTE(partition_stats);
 
-static void mshv_partition_stats_unmap(u64 partition_id,
+static void mshv_partition_stats_unmap(u64 partition_id, void *stats_page_addr,
 				       enum hv_stats_area_type stats_area_type)
 {
 	union hv_stats_object_identity identity = {
@@ -741,7 +749,7 @@ static void mshv_partition_stats_unmap(u64 partition_id,
 	};
 	int err;
 
-	err = hv_call_unmap_stat_page(HV_STATS_OBJECT_PARTITION,
+	err = hv_unmap_stats_page(HV_STATS_OBJECT_PARTITION, stats_page_addr,
 				      &identity);
 	if (err) {
 		pr_err("%s: failed to unmap partition %lld %s stats, err: %d\n",
@@ -761,8 +769,7 @@ static void *mshv_partition_stats_map(u64 partition_id,
 	void *stats;
 	int err;
 
-	err = hv_call_map_stat_page(HV_STATS_OBJECT_PARTITION,
-				    &identity, &stats);
+	err = hv_map_stats_page(HV_STATS_OBJECT_PARTITION, &identity, &stats);
 	if (err) {
 		pr_err("%s: failed to map partition %lld %s stats, err: %d\n",
 			__func__, partition_id,
@@ -821,10 +828,13 @@ static int mshv_debugfs_partition_stats_create(u64 partition_id,
 	return 0;
 
 unmap_partition_stats:
-	if (!is_l1vh_parent(partition_id))
-		mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
+	if (!is_l1vh_parent(partition_id)) {
+		stats = pstats[HV_STATS_AREA_PARENT];
+		mshv_partition_stats_unmap(partition_id, stats, HV_STATS_AREA_PARENT);
+	}
 unmap_self:
-	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_SELF);
+	stats = pstats[HV_STATS_AREA_SELF];
+	mshv_partition_stats_unmap(partition_id, stats, HV_STATS_AREA_SELF);
 cleanup:
 	kfree(pstats);
 	return err;
@@ -833,15 +843,20 @@ cleanup:
 static void partition_debugfs_remove(u64 partition_id, struct dentry *dentry)
 {
 	struct hv_stats_page **pstats = NULL;
+	void *stats;
 
 	pstats = dentry->d_inode->i_private;
 
 	debugfs_remove_recursive(dentry->d_parent);
 
-	if (!is_l1vh_parent(partition_id))
-		mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_PARENT);
+	if (!is_l1vh_parent(partition_id)) {
+		stats = pstats[HV_STATS_AREA_PARENT];
+		mshv_partition_stats_unmap(partition_id, stats, HV_STATS_AREA_PARENT);
+	}
 
-	mshv_partition_stats_unmap(partition_id, HV_STATS_AREA_SELF);
+	stats = pstats[HV_STATS_AREA_SELF];
+	mshv_partition_stats_unmap(partition_id, stats, HV_STATS_AREA_SELF);
+
 	kfree(pstats);
 }
 
@@ -969,8 +984,7 @@ static void mshv_hv_stats_unmap(void)
 	};
 	int err;
 
-	err = hv_call_unmap_stat_page(HV_STATS_OBJECT_HYPERVISOR,
-				      &identity);
+	err = hv_unmap_stats_page(HV_STATS_OBJECT_HYPERVISOR, NULL, &identity);
 	if (err)
 		pr_err("%s: failed to unmap hypervisor stats: %d\n",
 				__func__, err);
@@ -984,8 +998,7 @@ static void * __init mshv_hv_stats_map(void)
 	void *stats;
 	int err;
 
-	err = hv_call_map_stat_page(HV_STATS_OBJECT_HYPERVISOR,
-				    &identity, &stats);
+	err = hv_map_stats_page(HV_STATS_OBJECT_HYPERVISOR, &identity, &stats);
 	if (err) {
 		pr_err("%s: failed to map hypervisor stats: %d\n",
 				__func__, err);
