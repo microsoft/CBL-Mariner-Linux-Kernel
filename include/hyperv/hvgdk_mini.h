@@ -531,6 +531,8 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_MMIO_READ				0x0106
 #define HVCALL_MMIO_WRITE				0x0107
 #define HVCALL_DISABLE_HYP_EX				0x010f
+#define HVCALL_MAP_STATS_PAGE2				0x0131
+
 
 /*
  * Some macros - i.e. GENMASK_ULL and BIT_ULL - are not currently supported by
