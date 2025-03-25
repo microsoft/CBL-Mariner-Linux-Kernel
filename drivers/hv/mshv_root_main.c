@@ -27,6 +27,7 @@
 #include <linux/page-flags.h>
 #include <linux/crash_dump.h>
 #include <linux/panic_notifier.h>
+#include <linux/vmalloc.h>
 
 #include <trace/events/mshv.h>
 
