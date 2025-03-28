@@ -56,7 +56,7 @@ int hv_call_get_vp_registers(
 			pr_err("%s: completed %li out of %u, %s\n",
 			       __func__,
 			       count - remaining, count,
-			       hv_status_to_string(status));
+			       hv_result_to_string(status));
 			break;
 		}
 		completed = hv_repcomp(status);
@@ -68,7 +68,7 @@ int hv_call_get_vp_registers(
 	}
 	local_irq_restore(flags);
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 EXPORT_SYMBOL_GPL(hv_call_get_vp_registers);
 
@@ -105,7 +105,7 @@ int hv_call_set_vp_registers(
 			pr_err("%s: completed %li out of %u, %s\n",
 			       __func__,
 			       count - remaining, count,
-			       hv_status_to_string(status));
+			       hv_result_to_string(status));
 			break;
 		}
 		completed = hv_repcomp(status);
@@ -115,7 +115,7 @@ int hv_call_set_vp_registers(
 
 	local_irq_restore(flags);
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 EXPORT_SYMBOL_GPL(hv_call_set_vp_registers);
 
@@ -138,9 +138,9 @@ int hv_call_get_partition_property(u64 partition_id,
 	status = hv_do_hypercall(HVCALL_GET_PARTITION_PROPERTY, input, output);
 
 	if (!hv_result_success(status)) {
-		pr_err("%s: error %s\n", __func__, hv_status_to_string(status));
+		pr_err("%s: error %s\n", __func__, hv_result_to_string(status));
 		local_irq_restore(flags);
-		return hv_status_to_errno(status);
+		return hv_result_to_errno(status);
 	}
 	*property_value = output->property_value;
 

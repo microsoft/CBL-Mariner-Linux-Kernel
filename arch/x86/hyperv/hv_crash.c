@@ -275,7 +275,7 @@ static noinline __noclone void crash_nmi_callback(struct pt_regs *regs)
 
 	status = hv_do_hypercall(HVCALL_DISABLE_HYP_EX, input, NULL);
 	if (!hv_result_success(status)) {
-		pr_emerg("%s: %s\n", __func__, hv_status_to_string(status));
+		pr_emerg("%s: %s\n", __func__, hv_result_to_string(status));
 		pr_emerg("Hyper-V: disable hyp failed. kexec not possible\n");
 	}
 
@@ -581,7 +581,7 @@ void hv_root_crash_init(void)
 prop_err_out:
 	local_irq_restore(flags);
 	pr_err("Hyper-V: %s: property:%d %s\n", __func__, input->property_id,
-	       hv_status_to_string(status));
+	       hv_result_to_string(status));
 err_out:
 	pr_err("Hyper-V: only linux (but not hv) kdump support enabled\n");
 }
