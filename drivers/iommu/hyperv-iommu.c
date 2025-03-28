@@ -523,7 +523,7 @@ static int hv_iommu_create_hyp_devdom(struct hv_domain *hvdom)
 		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
 		       status);
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static struct iommu_domain *hv_iommu_domain_alloc(unsigned int type)
@@ -659,7 +659,7 @@ static int hv_iommu_att_dev2dom(struct hv_domain *hvdom, struct pci_dev *pdev)
 		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
 		       status);
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 /*
@@ -712,7 +712,7 @@ int hv_iommu_direct_attach_device(struct pci_dev *pdev)
 		pr_err("%s: hypercall failed, status 0x%llx\n", __func__,
 		       status);
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 /* This to attach a device to a host app like dpdk or a hyperv guest */
@@ -995,7 +995,7 @@ static int hv_iommu_map(struct iommu_domain *immdom, unsigned long iova,
 		hv_iommu_unmap(immdom, iova - done_size, done_size, NULL);
 	}
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static size_t hv_iommu_unmap(struct iommu_domain *immdom, unsigned long iova,

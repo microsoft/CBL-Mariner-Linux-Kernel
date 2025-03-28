@@ -42,8 +42,8 @@ int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
 		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
 			if (!hv_result_success(status)) {
 				pr_err("%s: cpu %u apic ID %u, %s\n", __func__,
-				       lp_index, apic_id, hv_status_to_string(status));
-				ret = hv_status_to_errno(status);
+				       lp_index, apic_id, hv_result_to_string(status));
+				ret = hv_result_to_errno(status);
 			}
 			break;
 		}
@@ -70,10 +70,10 @@ int hv_call_notify_all_processors_started(void)
 
 	if (!hv_result_success(status)) {
 		pr_err("%s: Failed to notify all processors started, %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 	}
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 bool hv_lp_exists(u32 lp_index)

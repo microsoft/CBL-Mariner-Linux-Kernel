@@ -107,9 +107,9 @@ static int hv_call_unmap_event_log_buffer(enum hv_eventlog_type type,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall: HVCALL_UNMAP_EVENT_LOG_BUFFER, status %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int hv_call_map_event_log_buffer(enum hv_eventlog_type type, u32 index,
@@ -134,9 +134,9 @@ static int hv_call_map_event_log_buffer(enum hv_eventlog_type type, u32 index,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall: HVCALL_MAP_EVENT_LOG_BUFFER, status %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int hv_call_release_event_log_buffer(enum hv_eventlog_type type,
@@ -153,9 +153,9 @@ static int hv_call_release_event_log_buffer(enum hv_eventlog_type type,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed: %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int mshv_trace_buffer_release(const struct mshv_trace_state *state,
@@ -311,9 +311,9 @@ static int hv_call_initialize_event_log_buffer_group(enum hv_eventlog_type type,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed: %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int hv_call_finalize_event_log_buffer_group(enum hv_eventlog_type type)
@@ -328,9 +328,9 @@ static int hv_call_finalize_event_log_buffer_group(enum hv_eventlog_type type)
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed: %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int mshv_trace_buffers_group_init(const struct mshv_trace_config *cfg,
@@ -380,9 +380,9 @@ static int hv_call_delete_event_log_buffer(enum hv_eventlog_type type,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed: %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int hv_call_create_event_log_buffer(enum hv_eventlog_type type,
@@ -406,9 +406,9 @@ static int hv_call_create_event_log_buffer(enum hv_eventlog_type type,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed: %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int mshv_trace_buffer_delete(const struct mshv_trace_state *state,
@@ -776,9 +776,9 @@ static int hv_call_set_event_group_sources(enum hv_eventlog_type type,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed: %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int mshv_trace_state_set_sources(const struct mshv_trace_state *state,
@@ -810,9 +810,9 @@ static int hv_call_flush_event_log_buffer(enum hv_eventlog_type type,
 
 	if (!hv_result_success(status))
 		pr_err("%s: hypercall failed: %s\n",
-		       __func__, hv_status_to_string(status));
+		       __func__, hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int mshv_trace_state_buffer_flush(const struct mshv_trace_state *state,
