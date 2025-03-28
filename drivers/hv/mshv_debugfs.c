@@ -1123,7 +1123,7 @@ static int mshv_debugfs_do_hvcore(void)
 	local_irq_restore(flags);
 	pr_err("hvcore: hypercall returned status: %llx\n", status);
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int hv_hvdbg_write(void *data, u64 val)

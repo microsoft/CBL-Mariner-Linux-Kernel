@@ -413,7 +413,7 @@ static int hv_vpset_from_hyp_disabled(
 		       status, lapic_irq->lapic_apic_id,
 		       lapic_irq->lapic_control.logical_dest_mode);
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 /*
@@ -488,7 +488,7 @@ static int hv_do_guest_irq_remap(u64 partid, struct mshv_irqfd *irqfd)
 		pr_err("Hyper-V: girq remap failed:0x%llx pt:%lld vec:%d"
 		       " lapic-id:%lld\n", status, partid,
 		       lapic_irq->lapic_vector, lapic_irq->lapic_apic_id);
-		rc = hv_status_to_errno(status);
+		rc = hv_result_to_errno(status);
 	}
 
 	return rc;
