@@ -312,7 +312,7 @@ int hv_map_msi_interrupt(struct irq_data *data,
 	res = hv_map_interrupt(ptid, hv_devid, false, cpu, cfg->vector,
 			       out_entry ? out_entry : &dummy);
 
-	return hv_status_to_errno(res);
+	return hv_result_to_errno(res);
 }
 EXPORT_SYMBOL_GPL(hv_map_msi_interrupt);
 

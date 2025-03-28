@@ -67,7 +67,7 @@ static void hv_kmsg_dump_unregister(void);
 
 static struct ctl_table_header *hv_ctl_table_hdr;
 
-int hv_status_to_errno(u64 hv_status)
+int hv_result_to_errno(u64 hv_status)
 {
 	switch (hv_result(hv_status)) {
 	case HV_STATUS_SUCCESS:
@@ -90,9 +90,9 @@ int hv_status_to_errno(u64 hv_status)
 	}
 	return -ENOTRECOVERABLE;
 }
-EXPORT_SYMBOL_GPL(hv_status_to_errno);
+EXPORT_SYMBOL_GPL(hv_result_to_errno);
 
-const char *hv_status_to_string(u64 hv_status)
+const char *hv_result_to_string(u64 hv_status)
 {
 	switch (hv_result(hv_status)) {
 	case HV_STATUS_SUCCESS:
@@ -154,7 +154,7 @@ const char *hv_status_to_string(u64 hv_status)
 	};
 	return "Unknown";
 }
-EXPORT_SYMBOL_GPL(hv_status_to_string);
+EXPORT_SYMBOL_GPL(hv_result_to_string);
 
 /*
  * Per-cpu array holding the tail pointer for the SynIC event ring buffer
@@ -926,8 +926,8 @@ static int hv_initialize_sleep_states(void)
 
 	if (!hv_result_success(status)) {
 		pr_err("%s: %s\n",
-			__func__, hv_status_to_string(status));
-		return hv_status_to_errno(status);
+			__func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
 	}
 
 	return 0;
@@ -955,8 +955,8 @@ static int hv_call_enter_sleep_state(u32 sleep_state)
 
 	if (!hv_result_success(status)) {
 		pr_err("%s: %s\n",
-			__func__, hv_status_to_string(status));
-		return hv_status_to_errno(status);
+			__func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
 	}
 
 	return 0;
@@ -1023,8 +1023,8 @@ int hv_retrieve_scheduler_type(enum hv_scheduler_type *out)
 	status = hv_do_hypercall(HVCALL_GET_SYSTEM_PROPERTY, input, output);
 	if (!hv_result_success(status)) {
 		local_irq_restore(flags);
-		pr_err("%s: %s\n", __func__, hv_status_to_string(status));
-		return hv_status_to_errno(status);
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
 	}
 
 	*out = output->scheduler_type;

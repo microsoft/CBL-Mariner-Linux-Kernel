@@ -269,7 +269,7 @@ static void get_hv_header_in_diaglog(void)
 	status = hv_do_hypercall(HVCALL_LOG_HYPERVISOR_SYSTEM_CONFIG, NULL,
 				 NULL);
 	if (!hv_result_success(status))
-		pr_err("%s: %s\n", __func__, hv_status_to_string(status));
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
 }
 
 static int unmap_diaglog_pages(int numbufs)
@@ -293,9 +293,9 @@ static int unmap_diaglog_pages(int numbufs)
 		local_irq_restore(flags);
 		if (!hv_result_success(status)) {
 			pr_err("%s: hypercall (unmap): status %s\n", __func__,
-				hv_status_to_string(status));
+				hv_result_to_string(status));
 			if (ret == 0)
-				ret = hv_status_to_errno(status);
+				ret = hv_result_to_errno(status);
 		}
 	}
 
@@ -324,8 +324,8 @@ static int get_diaglog_info(void)
 					 output_page);
 		if (!hv_result_success(status)) {
 			pr_err("%s: hypercall:HVCALL_GET_SYSTEM_PROPERTY, status %s\n",
-			       __func__, hv_status_to_string(status));
-			ret = hv_status_to_errno(status);
+			       __func__, hv_result_to_string(status));
+			ret = hv_result_to_errno(status);
 			goto hvcall_fail;
 		}
 		hv_logbuf_info.buffer_count =
@@ -339,8 +339,8 @@ static int get_diaglog_info(void)
 			     &part_buffer_log_conf.as_uint64);
 		if (!hv_result_success(status)) {
 			pr_err("%s: hypercall:HV_PARTITION_PROPERTY_PARTITION_DIAG_BUFFER_CONFIG, status %s\n",
-			       __func__, hv_status_to_string(status));
-			ret = hv_status_to_errno(status);
+			       __func__, hv_result_to_string(status));
+			ret = hv_result_to_errno(status);
 			goto hvcall_fail;
 		}
 		hv_logbuf_info.buffer_count = part_buffer_log_conf.buffer_count;
@@ -397,8 +397,8 @@ int __init mshv_diaglog_init(void)
 			if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
 				local_irq_restore(flags);
 				pr_err("%s: hypercall: status %s\n", __func__,
-					hv_status_to_string(status));
-				ret = hv_status_to_errno(status);
+					hv_result_to_string(status));
+				ret = hv_result_to_errno(status);
 				unmap_diaglog_pages(i);
 				goto out;
 			}
