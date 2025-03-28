@@ -216,7 +216,7 @@ static int mshv_ioctl_passthru_hvcall(struct mshv_partition *partition,
 		if (!ret)
 			ret = -EAGAIN;
 	} else if (!hv_result_success(status)) {
-		ret = hv_status_to_errno(status);
+		ret = hv_result_to_errno(status);
 	}
 
 	/*
@@ -577,9 +577,9 @@ mshv_vp_dispatch(struct mshv_vp *vp, u32 flags,
 
 	if (!hv_result_success(status))
 		vp_err(vp, "%s: status %s\n", __func__,
-		       hv_status_to_string(status));
+		       hv_result_to_string(status));
 
-	return hv_status_to_errno(status);
+	return hv_result_to_errno(status);
 }
 
 static int
@@ -3198,8 +3198,8 @@ static int mshv_print_max_sev_snp_partitions(struct device *dev)
 	if (!hv_result_success(status)) {
 		local_irq_restore(flags);
 		dev_err(dev, "Failed to get max SNP partitions: %s\n",
-			hv_status_to_string(status));
-		return hv_status_to_errno(status);
+			hv_result_to_string(status));
+		return hv_result_to_errno(status);
 	}
 
 	snp_partition_count = output->hv_processor_feature_value;
@@ -3232,8 +3232,8 @@ static int __init mshv_check_sev_snp_support(struct device *dev)
 	if (!hv_result_success(status)) {
 		local_irq_restore(flags);
 		dev_err(dev, "Failed to get SNP support: %s\n",
-			hv_status_to_string(status));
-		return hv_status_to_errno(status);
+			hv_result_to_string(status));
+		return hv_result_to_errno(status);
 	}
 
 	snp_status = output->hv_processor_feature_value;
