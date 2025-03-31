@@ -231,6 +231,8 @@ extern long __static_call_return0(void);
 
 static inline int static_call_init(void) { return 0; }
 
+static inline void static_call_force_reinit(void) { }
+
 #define DEFINE_STATIC_CALL(name, _func)					\
 	DECLARE_STATIC_CALL(name, _func);				\
 	struct static_call_key STATIC_CALL_KEY(name) = {		\
@@ -288,6 +290,8 @@ extern long __static_call_return0(void);
 #define static_call_initialized 0
 
 static inline int static_call_init(void) { return 0; }
+
+static inline void static_call_force_reinit(void) { }
 
 static inline long __static_call_return0(void)
 {
