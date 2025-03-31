@@ -747,9 +747,16 @@ static int patch_return(void *addr, struct insn *insn, u8 *bytes)
 void __init_or_module noinline apply_returns(s32 *start, s32 *end)
 {
 	s32 *s;
+	struct heki_kinfo *kinfo = current->kinfo;
+	void *__x86_return_thunk_addr;
 
 	if (cpu_feature_enabled(X86_FEATURE_RETHUNK))
 		static_call_force_reinit();
+
+	if (kinfo)
+		__x86_return_thunk_addr = kinfo->arch.return_thunk_addr;
+	else
+		__x86_return_thunk_addr = &__x86_return_thunk;
 
 	for (s = start; s < end; s++) {
 		void *dest = NULL, *addr = (void *)s + *s;
@@ -769,7 +776,8 @@ void __init_or_module noinline apply_returns(s32 *start, s32 *end)
 		if (__static_call_fixup(addr, op, dest))
 			continue;
 #endif
-		if (WARN_ONCE(dest != &__x86_return_thunk, "missing return thunk: %pS-%pS: %*ph",
+		if (WARN_ONCE(dest != __x86_return_thunk_addr,
+			      "missing return thunk: %pS-%pS: %*ph",
 			      addr, dest, 5, addr))
 			continue;
 
