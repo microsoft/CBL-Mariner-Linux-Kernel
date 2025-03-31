@@ -2490,7 +2490,6 @@ config RETPOLINE
 config RETHUNK
 	bool "Enable return-thunks"
 	depends on RETPOLINE && CC_HAS_RETURN_THUNK
-	depends on !HEKI
 	select OBJTOOL if HAVE_OBJTOOL
 	default y if X86_64
 	help
