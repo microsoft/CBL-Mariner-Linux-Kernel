@@ -9,6 +9,7 @@ struct heki_arch_kinfo {
 	void				(*pv_bug)(void);
 	void				(*pv_nop)(void);
 	retpoline_thunk_t *indirect_thunk_array_addr;
+	void				*return_thunk_addr;
 };
 
 #endif /* _ASM_X86_HEKI_H */
