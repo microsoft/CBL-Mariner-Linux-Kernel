@@ -49,7 +49,7 @@ void mshv_eventfd_release(struct mshv_partition *partition);
 void mshv_register_irq_ack_notifier(struct mshv_partition *partition,
 				    struct mshv_irq_ack_notifier *mian);
 void mshv_unregister_irq_ack_notifier(struct mshv_partition *partition,
-			struct mshv_irq_ack_notifier *mian);
+				      struct mshv_irq_ack_notifier *mian);
 bool mshv_notify_acked_gsi(struct mshv_partition *partition, int gsi);
 
 int mshv_set_unset_irqfd(struct mshv_partition *partition,
