@@ -161,6 +161,7 @@ enum {
 	MSHV_PT_BIT_CPU_AND_XSAVE_FEATURES,
 	MSHV_PT_BIT_COUNT,
 };
+
 #define MSHV_PT_FLAGS_MASK ((1 << MSHV_PT_BIT_COUNT) - 1)
 
 enum {
@@ -238,6 +239,7 @@ enum {
 	MSHV_SET_MEM_BIT_UNMAP,
 	MSHV_SET_MEM_BIT_COUNT
 };
+
 #define MSHV_SET_MEM_FLAGS_MASK ((1 << MSHV_SET_MEM_BIT_COUNT) - 1)
 
 /**
@@ -267,6 +269,7 @@ enum {
 	MSHV_IRQFD_BIT_RESAMPLE,
 	MSHV_IRQFD_BIT_COUNT,
 };
+
 #define MSHV_IRQFD_FLAGS_MASK	((1 << MSHV_IRQFD_BIT_COUNT) - 1)
 
 struct mshv_user_irqfd {
@@ -282,6 +285,7 @@ enum {
 	MSHV_IOEVENTFD_BIT_DEASSIGN,
 	MSHV_IOEVENTFD_BIT_COUNT,
 };
+
 #define MSHV_IOEVENTFD_FLAGS_MASK	((1 << MSHV_IOEVENTFD_BIT_COUNT) - 1)
 
 struct mshv_user_ioeventfd {
@@ -303,7 +307,7 @@ struct mshv_user_irq_entry {
 struct mshv_user_irq_table {
 	__u32 nr;
 	__u32 rsvd; /* MBZ */
-	struct mshv_user_irq_entry entries[0];
+	struct mshv_user_irq_entry entries[];
 };
 
 enum {
@@ -473,6 +477,11 @@ enum {
 	MSHV_VP_MMAP_OFFSET_COUNT
 };
 
+/**
+ * struct mshv_run_vp - argument for MSHV_RUN_VP
+ * @msg_buf: On success, the intercept message is copied here. It can be
+ *           interpreted using the relevant hypervisor definitions.
+ */
 struct mshv_run_vp {
 	__u8 msg_buf[MSHV_RUN_VP_BUF_SZ];
 };
@@ -488,14 +497,20 @@ enum {
 	MSHV_VP_STATE_COUNT,
 };
 
+/**
+ * struct mshv_get_set_vp_hvcall - arguments for MSHV_[GET,SET]_VP_STATE
+ * @type: MSHV_VP_STATE_*
+ * @rsvd: MBZ
+ * @buf_sz: in: 4k page-aligned size of buffer
+ *          out: Actual size of data (on EINVAL, check this to see if buffer
+ *               was too small)
+ * @buf_ptr: 4k page-aligned data buffer
+ */
 struct mshv_get_set_vp_state {
-	__u8 type;	/* MSHV_VP_STATE_* */
-	__u8 rsvd[3];	/* MBZ */
-	__u32 buf_sz;	/* in - 4k page-aligned size of buffer.
-			 * out - actual size of data.
-			 * On EINVAL, check this to see if buffer was too small
-			 */
-	__u64 buf_ptr;	/* 4k page-aligned data buffer. */
+	__u8 type;
+	__u8 rsvd[3];
+	__u32 buf_sz;
+	__u64 buf_ptr;
 };
 
 #endif
