@@ -16,6 +16,7 @@
 #include <linux/syscalls.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
+#include <linux/heki.h>
 
 #include "kexec_internal.h"
 
@@ -80,7 +81,7 @@ static int kimage_alloc_init(struct kimage **rimage, unsigned long entry,
 out_free_control_pages:
 	kimage_free_page_list(&image->control_pages);
 out_free_image:
-	kfree(image);
+	free_pages_exact(image, sizeof(*image));
 	return ret;
 }
 
@@ -88,6 +89,8 @@ static int do_kexec_load(unsigned long entry, unsigned long nr_segments,
 		struct kexec_segment *segments, unsigned long flags)
 {
 	struct kimage **dest_image, *image;
+	int image_type = (flags & KEXEC_ON_CRASH) ?
+			 KEXEC_TYPE_CRASH : KEXEC_TYPE_DEFAULT;
 	unsigned long i;
 	int ret;
 
@@ -106,6 +109,12 @@ static int do_kexec_load(unsigned long entry, unsigned long nr_segments,
 	} else {
 		dest_image = &kexec_image;
 	}
+
+	/*
+	 * do_kexec_load() can be used to unload an image that was loaded
+	 * by the kexec_file_load syscall.
+	 */
+	heki_kexec_invalidate(image_type);
 
 	if (nr_segments == 0) {
 		/* Uninstall image */

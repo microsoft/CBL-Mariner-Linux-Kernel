@@ -8,6 +8,7 @@
 #include <kunit/test.h>
 #include <kunit/test-bug.h>
 
+#include "string-stream.h"
 #include "try-catch-impl.h"
 
 struct kunit_try_catch_test_context {
@@ -102,6 +103,48 @@ static struct kunit_suite kunit_try_catch_test_suite = {
 	.name = "kunit-try-catch-test",
 	.init = kunit_try_catch_test_init,
 	.test_cases = kunit_try_catch_test_cases,
+};
+
+#ifndef CONFIG_UML
+
+static void kunit_test_null_dereference(void *data)
+{
+	struct kunit *test = data;
+	int *null = NULL;
+
+	*null = 0;
+
+	KUNIT_FAIL(test, "This line should never be reached\n");
+}
+
+static void kunit_test_fault_null_dereference(struct kunit *test)
+{
+	struct kunit_try_catch_test_context *ctx = test->priv;
+	struct kunit_try_catch *try_catch = ctx->try_catch;
+
+	kunit_try_catch_init(try_catch,
+			     test,
+			     kunit_test_null_dereference,
+			     kunit_test_catch);
+	kunit_try_catch_run(try_catch, test);
+
+	KUNIT_EXPECT_EQ(test, try_catch->try_result, -EINTR);
+	KUNIT_EXPECT_TRUE(test, ctx->function_called);
+}
+
+#endif /* !CONFIG_UML */
+
+static struct kunit_case kunit_fault_test_cases[] = {
+#ifndef CONFIG_UML
+	KUNIT_CASE(kunit_test_fault_null_dereference),
+#endif /* !CONFIG_UML */
+	{}
+};
+
+static struct kunit_suite kunit_fault_test_suite = {
+	.name = "kunit_fault",
+	.init = kunit_try_catch_test_init,
+	.test_cases = kunit_fault_test_cases,
 };
 
 /*
@@ -530,12 +573,27 @@ static struct kunit_suite kunit_resource_test_suite = {
 	.test_cases = kunit_resource_test_cases,
 };
 
+/*
+ * Log tests call string_stream functions, which aren't exported. So only
+ * build this code if this test is built-in.
+ */
+#if IS_BUILTIN(CONFIG_KUNIT_TEST)
+
+/* This avoids a cast warning if kfree() is passed direct to kunit_add_action(). */
+static void kfree_wrapper(void *p)
+{
+	kfree(p);
+}
+
 static void kunit_log_test(struct kunit *test)
 {
 	struct kunit_suite suite;
-
-	suite.log = kunit_kzalloc(test, KUNIT_LOG_SIZE, GFP_KERNEL);
+#ifdef CONFIG_KUNIT_DEBUGFS
+	char *full_log;
+#endif
+	suite.log = kunit_alloc_string_stream(test, GFP_KERNEL);
 	KUNIT_ASSERT_NOT_ERR_OR_NULL(test, suite.log);
+	string_stream_set_append_newlines(suite.log, true);
 
 	kunit_log(KERN_INFO, test, "put this in log.");
 	kunit_log(KERN_INFO, test, "this too.");
@@ -543,14 +601,21 @@ static void kunit_log_test(struct kunit *test)
 	kunit_log(KERN_INFO, &suite, "along with this.");
 
 #ifdef CONFIG_KUNIT_DEBUGFS
+	KUNIT_EXPECT_TRUE(test, test->log->append_newlines);
+
+	full_log = string_stream_get_string(test->log);
+	kunit_add_action(test, (kunit_action_t *)kfree, full_log);
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test,
-				     strstr(test->log, "put this in log."));
+				     strstr(full_log, "put this in log."));
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test,
-				     strstr(test->log, "this too."));
+				     strstr(full_log, "this too."));
+
+	full_log = string_stream_get_string(suite.log);
+	kunit_add_action(test, kfree_wrapper, full_log);
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test,
-				     strstr(suite.log, "add to suite log."));
+				     strstr(full_log, "add to suite log."));
 	KUNIT_EXPECT_NOT_ERR_OR_NULL(test,
-				     strstr(suite.log, "along with this."));
+				     strstr(full_log, "along with this."));
 #else
 	KUNIT_EXPECT_NULL(test, test->log);
 #endif
@@ -558,15 +623,30 @@ static void kunit_log_test(struct kunit *test)
 
 static void kunit_log_newline_test(struct kunit *test)
 {
+	char *full_log;
+
 	kunit_info(test, "Add newline\n");
 	if (test->log) {
-		KUNIT_ASSERT_NOT_NULL_MSG(test, strstr(test->log, "Add newline\n"),
-			"Missing log line, full log:\n%s", test->log);
-		KUNIT_EXPECT_NULL(test, strstr(test->log, "Add newline\n\n"));
+		full_log = string_stream_get_string(test->log);
+		kunit_add_action(test, kfree_wrapper, full_log);
+		KUNIT_ASSERT_NOT_NULL_MSG(test, strstr(full_log, "Add newline\n"),
+			"Missing log line, full log:\n%s", full_log);
+		KUNIT_EXPECT_NULL(test, strstr(full_log, "Add newline\n\n"));
 	} else {
 		kunit_skip(test, "only useful when debugfs is enabled");
 	}
 }
+#else
+static void kunit_log_test(struct kunit *test)
+{
+	kunit_skip(test, "Log tests only run when built-in");
+}
+
+static void kunit_log_newline_test(struct kunit *test)
+{
+	kunit_skip(test, "Log tests only run when built-in");
+}
+#endif /* IS_BUILTIN(CONFIG_KUNIT_TEST) */
 
 static struct kunit_case kunit_log_test_cases[] = {
 	KUNIT_CASE(kunit_log_test),
@@ -659,6 +739,7 @@ static struct kunit_suite kunit_current_test_suite = {
 
 kunit_test_suites(&kunit_try_catch_test_suite, &kunit_resource_test_suite,
 		  &kunit_log_test_suite, &kunit_status_test_suite,
-		  &kunit_current_test_suite);
+		  &kunit_current_test_suite,
+		  &kunit_fault_test_suite);
 
 MODULE_LICENSE("GPL v2");

@@ -8,6 +8,7 @@
 
 #include <linux/elf.h>
 #include <linux/compiler.h>
+#include <linux/heki.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/rculist.h>
@@ -63,7 +64,9 @@ struct load_info {
 	/* pointer to module in temporary copy, freed at end of load_module() */
 	struct module *mod;
 	Elf_Ehdr *hdr;
+	Elf_Ehdr *orig_hdr;
 	unsigned long len;
+	unsigned long orig_len;
 	Elf_Shdr *sechdrs;
 	char *secstrings, *strtab;
 	unsigned long symoffs, stroffs, init_typeoffs, core_typeoffs;
@@ -82,6 +85,7 @@ struct load_info {
 	struct {
 		unsigned int sym, str, mod, vers, info, pcpu;
 	} index;
+	struct key *trusted_keys;
 };
 
 enum mod_license {
@@ -404,3 +408,11 @@ static inline int same_magic(const char *amagic, const char *bmagic, bool has_cr
 	return strcmp(amagic, bmagic) == 0;
 }
 #endif /* CONFIG_MODVERSIONS */
+
+const char *kernel_symbol_name(const struct kernel_symbol *sym);
+
+typedef void (*resolve_func)(char *name, Elf64_Sym *sym);
+
+struct heki_mod;
+int validate_guest_module(struct load_info *info, int flags,
+			  struct heki_mod *hmod, resolve_func resolve);

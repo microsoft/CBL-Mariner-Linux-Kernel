@@ -56,7 +56,9 @@
 #include <linux/dynamic_debug.h>
 #include <linux/audit.h>
 #include <linux/cfi.h>
+#include <linux/heki.h>
 #include <linux/debugfs.h>
+#include <linux/heki.h>
 #include <uapi/linux/module.h>
 #include "internal.h"
 
@@ -248,7 +250,7 @@ static __maybe_unused void *any_section_objs(const struct load_info *info,
 #define symversion(base, idx) ((base != NULL) ? ((base) + (idx)) : NULL)
 #endif
 
-static const char *kernel_symbol_name(const struct kernel_symbol *sym)
+const char *kernel_symbol_name(const struct kernel_symbol *sym)
 {
 #ifdef CONFIG_HAVE_ARCH_PREL32_RELOCATIONS
 	return offset_to_ptr(&sym->name_offset);
@@ -756,6 +758,7 @@ SYSCALL_DEFINE2(delete_module, const char __user *, name_user,
 	blocking_notifier_call_chain(&module_notify_list,
 				     MODULE_STATE_GOING, mod);
 	klp_module_going(mod);
+	heki_unload_module(mod);
 	ftrace_release_mod(mod);
 
 	async_synchronize_full();
@@ -1435,6 +1438,43 @@ static int simplify_symbols(struct module *mod, const struct load_info *info)
 	return ret;
 }
 
+static int simplify_guest_symbols(struct module *mod, struct load_info *info,
+				  resolve_func resolve)
+{
+	Elf_Shdr *symsec = &info->sechdrs[info->index.sym];
+	Elf_Sym *sym = (void *)symsec->sh_addr;
+	unsigned long nsym = symsec->sh_size / sizeof(Elf_Sym);
+	unsigned long secbase;
+	unsigned int i;
+
+	for (i = 1; i < nsym; i++) {
+		const char *name = info->strtab + sym[i].st_name;
+
+		switch (sym[i].st_shndx) {
+		case SHN_COMMON:
+		case SHN_ABS:
+			break;
+
+		case SHN_LIVEPATCH:
+			/* Livepatch is not yet supported. */
+			return -EINVAL;
+
+		case SHN_UNDEF:
+			resolve((char *)name, &sym[i]);
+			break;
+
+		default:
+			if (sym[i].st_shndx == info->index.pcpu)
+				secbase = (unsigned long)mod_percpu(mod);
+			else
+				secbase = info->sechdrs[sym[i].st_shndx].sh_addr;
+			sym[i].st_value += secbase;
+			break;
+		}
+	}
+	return 0;
+}
+
 static int apply_relocations(struct module *mod, const struct load_info *info)
 {
 	unsigned int i;
@@ -1462,6 +1502,37 @@ static int apply_relocations(struct module *mod, const struct load_info *info)
 			err = apply_relocate(info->sechdrs, info->strtab,
 					     info->index.sym, i, mod);
 		else if (info->sechdrs[i].sh_type == SHT_RELA)
+			err = apply_relocate_add(info->sechdrs, info->strtab,
+						 info->index.sym, i, mod);
+		if (err < 0)
+			break;
+	}
+	return err;
+}
+
+static int apply_guest_relocations(struct module *mod,
+				   const struct load_info *info)
+{
+	unsigned int i;
+	int err = 0;
+
+	/* Now do relocations. */
+	for (i = 1; i < info->hdr->e_shnum; i++) {
+		unsigned int infosec = info->sechdrs[i].sh_info;
+
+		/* Not a valid relocation section? */
+		if (infosec >= info->hdr->e_shnum)
+			continue;
+
+		/* Don't bother with non-allocated sections */
+		if (!(info->sechdrs[infosec].sh_flags & SHF_ALLOC))
+			continue;
+
+		if (info->sechdrs[i].sh_flags & SHF_RELA_LIVEPATCH)
+			continue;
+		if (info->sechdrs[i].sh_type == SHT_REL)
+			continue;
+		if (info->sechdrs[i].sh_type == SHT_RELA)
 			err = apply_relocate_add(info->sechdrs, info->strtab,
 						 info->index.sym, i, mod);
 		if (err < 0)
@@ -1978,6 +2049,7 @@ static void free_copy(struct load_info *info, int flags)
 		module_decompress_cleanup(info);
 	else
 		vfree(info->hdr);
+	vfree(info->orig_hdr);
 }
 
 static int rewrite_section_headers(struct load_info *info, int flags)
@@ -2199,6 +2271,9 @@ static int find_module_sections(struct module *mod, struct load_info *info)
 	mod->kunit_suites = section_objs(info, ".kunit_test_suites",
 					      sizeof(*mod->kunit_suites),
 					      &mod->num_kunit_suites);
+	mod->kunit_init_suites = section_objs(info, ".kunit_init_test_suites",
+					      sizeof(*mod->kunit_init_suites),
+					      &mod->num_kunit_init_suites);
 #endif
 
 	mod->extable = section_objs(info, "__ex_table",
@@ -2225,6 +2300,7 @@ static int move_module(struct module *mod, struct load_info *info)
 	void *ptr;
 	enum mod_mem_type t = 0;
 	int ret = -ENOMEM;
+	bool preallocated = false;
 
 	for_each_mod_mem_type(type) {
 		if (!mod->mem[type].size) {
@@ -2232,6 +2308,10 @@ static int move_module(struct module *mod, struct load_info *info)
 			continue;
 		}
 		mod->mem[type].size = PAGE_ALIGN(mod->mem[type].size);
+		if (mod->mem[type].base) {
+			preallocated = true;
+			continue;
+		}
 		ptr = module_memory_alloc(mod->mem[type].size, type);
 		/*
                  * The pointer to these blocks of memory are stored on the module
@@ -2292,8 +2372,10 @@ static int move_module(struct module *mod, struct load_info *info)
 
 	return 0;
 out_enomem:
-	for (t--; t >= 0; t--)
-		module_memory_free(mod->mem[t].base, t);
+	if (!preallocated) {
+		for (t--; t >= 0; t--)
+			module_memory_free(mod->mem[t].base, t);
+	}
 	return ret;
 }
 
@@ -2449,6 +2531,18 @@ static int post_relocation(struct module *mod, const struct load_info *info)
 	return module_finalize(info->hdr, info->sechdrs, mod);
 }
 
+static int guest_post_relocation(struct module *mod,
+				 const struct load_info *info)
+{
+	int err;
+
+	/* Arch-specific module finalizing. */
+	err = module_finalize(info->hdr, info->sechdrs, mod);
+
+	module_arch_cleanup(mod);
+	return err;
+}
+
 /* Call module constructors. */
 static void do_mod_ctors(struct module *mod)
 {
@@ -2573,6 +2667,7 @@ static noinline int do_init_module(struct module *mod)
 	/* Switch to core kallsyms now init is done: kallsyms may be walking! */
 	rcu_assign_pointer(mod->kallsyms, &mod->core_kallsyms);
 #endif
+	heki_free_module_init(mod);
 	module_enable_ro(mod, true);
 	mod_tree_remove_init(mod);
 	module_arch_freeing_init(mod);
@@ -2621,6 +2716,7 @@ fail:
 	blocking_notifier_call_chain(&module_notify_list,
 				     MODULE_STATE_GOING, mod);
 	klp_module_going(mod);
+	heki_unload_module(mod);
 	ftrace_release_mod(mod);
 	free_module(mod);
 	wake_up_all(&module_wq);
@@ -2826,6 +2922,16 @@ static int early_mod_check(struct load_info *info, int flags)
 	return err;
 }
 
+static int save_hdr(struct load_info *info)
+{
+	info->orig_len = info->len;
+	info->orig_hdr = vmalloc(info->len);
+	if (!info->orig_hdr)
+		return -ENOMEM;
+	memcpy(info->orig_hdr, info->hdr, info->len);
+	return 0;
+}
+
 /*
  * Allocate and load the module: note that size of section 0 is always
  * zero, and we rely on this for optional sections.
@@ -2835,8 +2941,17 @@ static int load_module(struct load_info *info, const char __user *uargs,
 {
 	struct module *mod;
 	bool module_allocated = false;
-	long err = 0;
+	long err = 0, token;
 	char *after_dashes;
+
+	/*
+	 * The header gets modified in this function. But the original
+	 * header needs to be passed to the hypervisor for verification
+	 * if this is a guest. So, save the original header.
+	 */
+	err = save_hdr(info);
+	if (err)
+		return err;
 
 	/*
 	 * Do the signature check (if any) first. All that
@@ -2943,10 +3058,17 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	/* Ftrace init must be called in the MODULE_STATE_UNFORMED state */
 	ftrace_module_init(mod);
 
+	token = heki_validate_module(mod, info, flags);
+	if (token < 0) {
+		err = token;
+		goto ddebug_cleanup;
+	}
+	mod->heki_token = token;
+
 	/* Finally it's fully formed, ready to start executing. */
 	err = complete_formation(mod, info);
 	if (err)
-		goto ddebug_cleanup;
+		goto heki_unload;
 
 	err = prepare_coming_module(mod);
 	if (err)
@@ -3000,6 +3122,8 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	module_bug_cleanup(mod);
 	mutex_unlock(&module_mutex);
 
+ heki_unload:
+	heki_unload_module(mod);
  ddebug_cleanup:
 	ftrace_release_mod(mod);
 	synchronize_rcu();
@@ -3039,6 +3163,148 @@ static int load_module(struct load_info *info, const char __user *uargs,
 	free_copy(info, flags);
 	return err;
 }
+
+int __attribute__((weak)) module_id_map(struct heki_mod *hmod)
+{
+	return -EINVAL;
+}
+
+void __attribute__((weak)) module_id_unmap(struct heki_mod *hmod)
+{
+}
+
+/*
+ * From the original guest module, extract the percpu field. This enables
+ * us to resolve module per-cpu symbols. The original guest module resides
+ * in the original module's data section.
+ */
+static void get_mod_percpu(struct module *mod, struct load_info *info,
+			   struct heki_mod *hmod)
+{
+	void *data = mod->mem[MOD_DATA].base;
+	unsigned long offset = (void *)mod - data;
+	struct module *orig_mod;
+
+	orig_mod = (void *)hmod->mem[MOD_DATA].va + offset;
+	mod->percpu = orig_mod->percpu;
+}
+
+int validate_guest_module(struct load_info *info, int flags,
+			  struct heki_mod *hmod, resolve_func resolve)
+{
+	struct heki_mem *mem = hmod->mem;
+	struct module *mod;
+	void *orig, *copy;
+	size_t orig_size, copy_size;
+	int err;
+
+	err = module_sig_check(info, flags);
+	if (err) {
+		pr_warn("%s: Signature verification failed\n", __func__);
+		return err;
+	}
+
+	err = elf_validity_cache_copy(info, flags);
+	if (err) {
+		pr_warn("%s: ELF validity check failed\n", __func__);
+		return err;
+	}
+	/* info->name may be available after the above call. */
+
+	err = rewrite_section_headers(info, flags);
+	if (err) {
+		pr_warn("%s: Rewrite section headers for %s failed\n",
+			__func__, info->name);
+		return err;
+	}
+	hmod->mod = info->mod;
+
+	err = module_id_map(hmod);
+	if (err) {
+		pr_warn("%s: Could not map module %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
+
+	mod = layout_and_allocate(info, flags);
+	if (IS_ERR(mod)) {
+		pr_warn("%s: Host module not allocated for %s\n",
+			__func__, info->name);
+		err = -ENOMEM;
+		goto unmap_mod;
+	}
+	hmod->mod = mod;
+
+	err = find_module_sections(mod, info);
+	if (err) {
+		pr_warn("%s: Module sections not found for %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
+	get_mod_percpu(mod, info, hmod);
+
+	err = simplify_guest_symbols(mod, info, resolve);
+	if (err < 0) {
+		pr_warn("%s: Module symbols not processed for %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
+
+	err = apply_guest_relocations(mod, info);
+	if (err < 0) {
+		pr_warn("%s: Relocations not applied for %s\n",
+			__func__, info->name);
+		goto unmap_mod;
+	}
+
+	err = guest_post_relocation(mod, info);
+	if (err)
+		goto unmap_mod;
+
+	/* Compare the original module contents and their copies. */
+	for_each_mod_mem_type(type) {
+		orig = mem[type].va;
+		orig_size = mem[type].size;
+		copy = mod->mem[type].base;
+		copy_size = mod->mem[type].size;
+
+		if (orig_size != copy_size) {
+			pr_warn("heki: %s: Size mismatch for %d\n",
+				info->name, type);
+			err = -EINVAL;
+			goto unmap_mod;
+		}
+
+		if (!orig_size)
+			continue;
+
+		if (type == MOD_DATA || type == MOD_INIT_DATA) {
+			/*
+			 * These sections are writable in the guest and the
+			 * EPT. So, they can be modified at any time by a
+			 * kernel actor. There is no sense in checking the
+			 * contents of these.
+			 */
+			continue;
+		}
+
+		if (memcmp(orig, copy, orig_size)) {
+			pr_warn("heki: %s: Auth memory mismatch for %d\n",
+				info->name, type);
+			err = -EINVAL;
+			goto unmap_mod;
+		}
+	}
+	pr_warn("Auth memory matched for %s\n", info->name);
+
+unmap_mod:
+	if (err) {
+		module_id_unmap(hmod);
+		hmod->mod = NULL;
+	}
+	return err;
+}
+EXPORT_SYMBOL_GPL(validate_guest_module);
 
 SYSCALL_DEFINE3(init_module, void __user *, umod,
 		unsigned long, len, const char __user *, uargs)

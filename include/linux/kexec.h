@@ -301,6 +301,7 @@ struct kimage {
 	unsigned long start;
 	struct page *control_code_page;
 	struct page *swap_page;
+	struct page *vmcoreinfo_page;
 	void *vmcoreinfo_data_copy; /* locates in the crash memory */
 
 	unsigned long nr_segments;
@@ -369,6 +370,11 @@ struct kimage {
 	unsigned long elf_headers_sz;
 	unsigned long elf_load_addr;
 };
+
+#define for_each_kimage_entry(image, ptr, entry) \
+	for (ptr = &image->head; (entry = *ptr) && !(entry & IND_DONE); \
+		ptr = (entry & IND_INDIRECTION) ? \
+			boot_phys_to_virt((entry & PAGE_MASK)) : ptr + 1)
 
 /* kexec interface functions */
 extern void machine_kexec(struct kimage *image);

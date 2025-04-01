@@ -88,7 +88,7 @@ config KEXEC_BZIMAGE_VERIFY_SIG
 config KEXEC_JUMP
 	bool "kexec jump"
 	depends on ARCH_SUPPORTS_KEXEC_JUMP
-	depends on KEXEC && HIBERNATION
+	depends on KEXEC && HIBERNATION && !HEKI
 	help
 	  Jump between original kernel and kexeced kernel and invoke
 	  code in physical address mode via KEXEC
