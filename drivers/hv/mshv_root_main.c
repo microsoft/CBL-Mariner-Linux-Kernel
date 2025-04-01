@@ -43,13 +43,13 @@ static bool hv_nofull_mmio;
 module_param(hv_nofull_mmio, bool, 0);
 MODULE_PARM_DESC(hv_nofull_mmio, "If set only map 1 page upon guest mmio fault");
 
-struct mshv_root mshv_root = {};
+struct mshv_root mshv_root;
 
 enum hv_scheduler_type hv_scheduler_type;
 
 /* Once we implement the fast extended hypercall ABI they can go away. */
-static void __percpu **root_scheduler_input;
-static void __percpu **root_scheduler_output;
+static void * __percpu *root_scheduler_input;
+static void * __percpu *root_scheduler_output;
 
 static long mshv_dev_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg);
 static int mshv_dev_open(struct inode *inode, struct file *filp);
@@ -653,10 +653,9 @@ static int mshv_vp_wait_for_event(struct mshv_vp *vp)
 	int ret;
 
 	ret = wait_event_interruptible(vp->run.vp_suspend_queue,
-		(vp->run.kicked_by_hv == 1 &&
-		 !mshv_vp_dispatch_thread_blocked(vp))
-		|| mshv_vp_interrupt_pending(vp)
-		);
+				       (vp->run.kicked_by_hv == 1 &&
+					!mshv_vp_dispatch_thread_blocked(vp)) ||
+				       mshv_vp_interrupt_pending(vp));
 	if (ret)
 		return -EINTR;
 
@@ -740,11 +739,11 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 			if (output.dispatch_event ==
 						HV_VP_DISPATCH_EVENT_SUSPEND) {
 				/* TODO: remove the warning once VP canceling
-				 *	 is supported */
-				WARN_ONCE(
-				     atomic64_read(&vp->run.vp_signaled_count),
-				     "%s: vp#%d: unexpected explicit suspend\n",
-				     __func__, vp->vp_index);
+				 *	 is supported
+				 */
+				WARN_ONCE(atomic64_read(&vp->run.vp_signaled_count),
+					  "%s: vp#%d: unexpected explicit suspend\n",
+					  __func__, vp->vp_index);
 				/*
 				 * Need to clear explicit suspend before
 				 * dispatching.
@@ -906,14 +905,14 @@ mshv_vp_ioctl_get_set_state(struct mshv_vp *vp,
 		u64 data_sz_64;
 
 		ret = hv_call_get_partition_property(vp->vp_partition->pt_id,
-					    HV_PARTITION_PROPERTY_XSAVE_STATES,
-					    &state_data.xsave.states.as_uint64);
+						     HV_PARTITION_PROPERTY_XSAVE_STATES,
+						     &state_data.xsave.states.as_uint64);
 		if (ret)
 			return ret;
 
 		ret = hv_call_get_partition_property(vp->vp_partition->pt_id,
-				      HV_PARTITION_PROPERTY_MAX_XSAVE_DATA_SIZE,
-				      &data_sz_64);
+						     HV_PARTITION_PROPERTY_MAX_XSAVE_DATA_SIZE,
+						     &data_sz_64);
 		if (ret)
 			return ret;
 
@@ -1669,7 +1668,7 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 		return -EEXIST;
 
 	region = vzalloc(sizeof(*region) + sizeof(struct page *) * nr_pages);
-	if (region == NULL)
+	if (!region)
 		return -ENOMEM;
 
 	region->nr_pages = nr_pages;
@@ -1822,7 +1821,7 @@ mshv_unmap_user_memory(struct mshv_partition *partition,
 		return -EINVAL;
 
 	region = mshv_partition_region_by_gfn(partition, mem.guest_pfn);
-	if (region == NULL)
+	if (!region)
 		return -EINVAL;
 
 	/* Paranoia check */
@@ -1870,7 +1869,7 @@ mshv_partition_ioctl_set_memory(struct mshv_partition *partition,
 
 static long
 mshv_partition_ioctl_ioeventfd(struct mshv_partition *partition,
-		void __user *user_args)
+			       void __user *user_args)
 {
 	struct mshv_user_ioeventfd args;
 
@@ -1882,7 +1881,7 @@ mshv_partition_ioctl_ioeventfd(struct mshv_partition *partition,
 
 static long
 mshv_partition_ioctl_irqfd(struct mshv_partition *partition,
-		void __user *user_args)
+			   void __user *user_args)
 {
 	struct mshv_user_irqfd args;
 
@@ -2052,7 +2051,7 @@ free_return:
 
 static long
 mshv_partition_ioctl_set_msi_routing(struct mshv_partition *partition,
-		void __user *user_args)
+				     void __user *user_args)
 {
 	struct mshv_user_irq_entry *entries = NULL;
 	struct mshv_user_irq_table args;
@@ -2061,7 +2060,7 @@ mshv_partition_ioctl_set_msi_routing(struct mshv_partition *partition,
 	if (copy_from_user(&args, user_args, sizeof(args)))
 		return -EFAULT;
 
-	if ((args.nr > MSHV_MAX_GUEST_IRQS) ||
+	if (args.nr > MSHV_MAX_GUEST_IRQS ||
 	    mshv_field_nonzero(args, rsvd))
 		return -EINVAL;
 
@@ -2070,7 +2069,7 @@ mshv_partition_ioctl_set_msi_routing(struct mshv_partition *partition,
 
 		entries = vmemdup_user(urouting->entries,
 				       array_size(sizeof(*entries),
-					       args.nr));
+				       args.nr));
 		if (IS_ERR(entries))
 			return PTR_ERR(entries);
 	}
@@ -2783,27 +2782,24 @@ static void destroy_partition(struct mshv_partition *partition)
 
 			if (vp->vp_register_page) {
 				input_vtl.as_uint8 = 0;
-				(void)hv_unmap_vp_state_page(
-					partition->pt_id, vp->vp_index,
-					HV_VP_STATE_PAGE_REGISTERS,
-					vp->vp_register_page, input_vtl);
+				(void)hv_unmap_vp_state_page(partition->pt_id, vp->vp_index,
+							     HV_VP_STATE_PAGE_REGISTERS,
+							     vp->vp_register_page, input_vtl);
 				vp->vp_register_page = NULL;
 			}
 
 			input_vtl.as_uint8 = 0;
-			(void)hv_unmap_vp_state_page(
-				partition->pt_id, vp->vp_index,
-				HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
-				vp->vp_intercept_msg_page, input_vtl);
+			(void)hv_unmap_vp_state_page(partition->pt_id, vp->vp_index,
+						     HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
+						     vp->vp_intercept_msg_page, input_vtl);
 			vp->vp_intercept_msg_page = NULL;
 
 			if (vp->vp_ghcb_page) {
 				input_vtl.use_target_vtl = 1;
 				input_vtl.target_vtl = HV_NORMAL_VTL;
-				(void)hv_unmap_vp_state_page(
-					partition->pt_id, vp->vp_index,
-					HV_VP_STATE_PAGE_GHCB, vp->vp_ghcb_page,
-					input_vtl);
+				(void)hv_unmap_vp_state_page(partition->pt_id, vp->vp_index,
+							     HV_VP_STATE_PAGE_GHCB,
+							     vp->vp_ghcb_page, input_vtl);
 				vp->vp_ghcb_page = NULL;
 			}
 
@@ -3160,16 +3156,16 @@ static int mshv_root_sched_online;
 static const char *scheduler_type_to_string(enum hv_scheduler_type type)
 {
 	switch (type) {
-		case HV_SCHEDULER_TYPE_LP:
-			return "classic scheduler without SMT";
-		case HV_SCHEDULER_TYPE_LP_SMT:
-			return "classic scheduler with SMT";
-		case HV_SCHEDULER_TYPE_CORE_SMT:
-			return "core scheduler";
-		case HV_SCHEDULER_TYPE_ROOT:
-			return "root scheduler";
-		default:
-			return "unknown scheduler";
+	case HV_SCHEDULER_TYPE_LP:
+		return "classic scheduler without SMT";
+	case HV_SCHEDULER_TYPE_LP_SMT:
+		return "classic scheduler with SMT";
+	case HV_SCHEDULER_TYPE_CORE_SMT:
+		return "core scheduler";
+	case HV_SCHEDULER_TYPE_ROOT:
+		return "root scheduler";
+	default:
+		return "unknown scheduler";
 	};
 }
 
@@ -3186,16 +3182,16 @@ static int __init mshv_retrieve_scheduler_type(struct device *dev)
 		 scheduler_type_to_string(hv_scheduler_type));
 
 	switch (hv_scheduler_type) {
-		case HV_SCHEDULER_TYPE_CORE_SMT:
-		case HV_SCHEDULER_TYPE_LP_SMT:
-		case HV_SCHEDULER_TYPE_ROOT:
-		case HV_SCHEDULER_TYPE_LP:
-			/* Supported scheduler, nothing to do */
-			break;
-		default:
-			dev_err(dev, "unsupported scheduler 0x%x, bailing.\n",
-				hv_scheduler_type);
-			return -EOPNOTSUPP;
+	case HV_SCHEDULER_TYPE_CORE_SMT:
+	case HV_SCHEDULER_TYPE_LP_SMT:
+	case HV_SCHEDULER_TYPE_ROOT:
+	case HV_SCHEDULER_TYPE_LP:
+		/* Supported scheduler, nothing to do */
+		break;
+	default:
+		dev_err(dev, "unsupported scheduler 0x%x, bailing.\n",
+			hv_scheduler_type);
+		return -EOPNOTSUPP;
 	}
 
 	return 0;
@@ -3356,7 +3352,7 @@ root_scheduler_deinit(void)
 }
 
 static int mshv_reboot_notify(struct notifier_block *nb,
-		unsigned long code, void *unused)
+			      unsigned long code, void *unused)
 {
 	cpuhp_remove_state(mshv_cpuhp_online);
 	return 0;
