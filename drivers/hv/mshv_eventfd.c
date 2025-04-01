@@ -36,7 +36,7 @@ void mshv_register_irq_ack_notifier(struct mshv_partition *partition,
 }
 
 void mshv_unregister_irq_ack_notifier(struct mshv_partition *partition,
-				 struct mshv_irq_ack_notifier *mian)
+				      struct mshv_irq_ack_notifier *mian)
 {
 	mutex_lock(&partition->pt_irq_lock);
 	hlist_del_init_rcu(&mian->link);
@@ -51,7 +51,7 @@ bool mshv_notify_acked_gsi(struct mshv_partition *partition, int gsi)
 
 	rcu_read_lock();
 	hlist_for_each_entry_rcu(mian, &partition->irq_ack_notifier_list,
-			link) {
+				 link) {
 		if (mian->irq_ack_gsi == gsi) {
 			mian->irq_acked(mian);
 			acked = true;
@@ -77,7 +77,6 @@ static void mshv_irqfd_resampler_ack(struct mshv_irq_ack_notifier *mian)
 
 	hlist_for_each_entry_rcu(irqfd, &resampler->rsmplr_irqfd_list,
 				 irqfd_resampler_hnode) {
-
 		if (hv_should_clear_interrupt(irqfd->irqfd_lapic_irq.lapic_control.interrupt_type))
 			hv_call_clear_virtual_interrupt(partition->pt_id);
 
@@ -106,7 +105,8 @@ static int mshv_vp_irq_try_set_vector(struct mshv_vp *vp, u32 vector)
 {
 	union hv_vp_register_page_interrupt_vectors iv, new_iv;
 
-	new_iv = iv = vp->vp_register_page->interrupt_vectors;
+	iv = vp->vp_register_page->interrupt_vectors;
+	new_iv = iv;
 
 	if (mshv_vp_irq_vector_injected(iv, vector))
 		return 0;
@@ -824,7 +824,6 @@ static void mshv_irqfd_release(struct mshv_partition *pt)
 	 * since we do not take a mshv_partition* reference.
 	 */
 	flush_workqueue(irqfd_cleanup_wq);
-
 }
 
 int mshv_irqfd_wq_init(void)
@@ -950,9 +949,9 @@ static int mshv_assign_ioeventfd(struct mshv_partition *pt,
 	p->iovntfd_eventfd = eventfd;
 
 	/* The datamatch feature is optional, otherwise this is a wildcard */
-	if (args->flags & BIT(MSHV_IOEVENTFD_BIT_DATAMATCH))
+	if (args->flags & BIT(MSHV_IOEVENTFD_BIT_DATAMATCH)) {
 		p->iovntfd_datamatch = args->datamatch;
-	else {
+	} else {
 		p->iovntfd_wildcard = true;
 		doorbell_flags |= HV_DOORBELL_FLAG_TRIGGER_ANY_VALUE;
 	}

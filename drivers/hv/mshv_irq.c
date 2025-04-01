@@ -95,8 +95,8 @@ mshv_ret_girq_entry(struct mshv_partition *partition, u32 irqnum)
 	struct mshv_girq_routing_table *girq_tbl;
 
 	girq_tbl = srcu_dereference_check(partition->pt_girq_tbl,
-				     &partition->pt_irq_srcu,
-				     lockdep_is_held(&partition->pt_irq_lock));
+					  &partition->pt_irq_srcu,
+					  lockdep_is_held(&partition->pt_irq_lock));
 	if (!girq_tbl || irqnum >= girq_tbl->num_rt_entries) {
 		/*
 		 * Premature register_irqfd, setting valid_entry = 0

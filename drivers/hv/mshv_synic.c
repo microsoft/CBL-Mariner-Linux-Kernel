@@ -77,7 +77,6 @@ static u32 synic_event_ring_get_queued_port(u32 sint_index)
 		}
 
 		ring->signal_masked = 1;
-
 	}
 
 	/*
@@ -106,8 +105,7 @@ mshv_doorbell_isr(struct hv_message *msg)
 	if (notification->sint_index != HV_SYNIC_DOORBELL_SINT_INDEX)
 		return false;
 
-	while ((port = synic_event_ring_get_queued_port(
-					HV_SYNIC_DOORBELL_SINT_INDEX))) {
+	while ((port = synic_event_ring_get_queued_port(HV_SYNIC_DOORBELL_SINT_INDEX))) {
 		struct port_table_info ptinfo = { 0 };
 
 		if (mshv_portid_lookup(port, &ptinfo)) {
@@ -116,8 +114,8 @@ mshv_doorbell_isr(struct hv_message *msg)
 		}
 
 		if (ptinfo.hv_port_type != HV_PORT_TYPE_DOORBELL) {
-			pr_warn("Not a doorbell port!, port: %d, port_type: %d\n",
-					port, ptinfo.hv_port_type);
+			pr_debug("Not a doorbell port!, port: %d, port_type: %d\n",
+				 port, ptinfo.hv_port_type);
 			continue;
 		}
 
@@ -222,7 +220,7 @@ handle_bitset_message(const struct hv_vp_signal_bitset_scheduler_message *msg)
 		int vp_index;
 
 		bank_idx = find_next_bit((unsigned long *)&vpset->valid_bank_mask,
-				bank_mask_size, bank_idx + 1);
+					 bank_mask_size, bank_idx + 1);
 		if (bank_idx == bank_mask_size)
 			break;
 
@@ -230,7 +228,7 @@ handle_bitset_message(const struct hv_vp_signal_bitset_scheduler_message *msg)
 			struct mshv_vp *vp;
 
 			vp_bank_idx = find_next_bit((unsigned long *)bank_contents,
-					vp_bank_size, vp_bank_idx + 1);
+						    vp_bank_size, vp_bank_idx + 1);
 			if (vp_bank_idx == vp_bank_size)
 				break;
 
@@ -309,15 +307,15 @@ static bool
 mshv_scheduler_isr(struct hv_message *msg)
 {
 	if (msg->header.message_type != HVMSG_SCHEDULER_VP_SIGNAL_BITSET &&
-		msg->header.message_type != HVMSG_SCHEDULER_VP_SIGNAL_PAIR)
+	    msg->header.message_type != HVMSG_SCHEDULER_VP_SIGNAL_PAIR)
 		return false;
 
 	if (msg->header.message_type == HVMSG_SCHEDULER_VP_SIGNAL_BITSET)
-		handle_bitset_message(
-			(struct hv_vp_signal_bitset_scheduler_message *)msg->u.payload);
+		handle_bitset_message((struct hv_vp_signal_bitset_scheduler_message *)
+				      msg->u.payload);
 	else
-		handle_pair_message(
-			(struct hv_vp_signal_pair_scheduler_message *)msg->u.payload);
+		handle_pair_message((struct hv_vp_signal_pair_scheduler_message *)
+				    msg->u.payload);
 
 	return true;
 }
@@ -452,6 +450,10 @@ void mshv_isr(void)
 		 * pending.
 		 */
 		msg->header.message_type = HVMSG_NONE;
+		/*
+		 * Ensure the write is complete so the hypervisor will deliver
+		 * the next message if available.
+		 */
 		mb();
 		if (msg->header.message_flags.msg_pending)
 			hv_set_non_nested_msr(HV_MSR_EOM, 0);
@@ -461,7 +463,7 @@ void mshv_isr(void)
 #endif
 	} else {
 		pr_warn_once("%s: unknown message type 0x%x\n", __func__,
-				msg->header.message_type);
+			     msg->header.message_type);
 	}
 }
 
@@ -497,7 +499,7 @@ int mshv_synic_init(unsigned int cpu)
 	siefp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIEFP);
 	siefp.siefp_enabled = true;
 	*event_flags_page = memremap(siefp.base_siefp_gpa << PAGE_SHIFT,
-		     PAGE_SIZE, MEMREMAP_WB);
+				     PAGE_SIZE, MEMREMAP_WB);
 
 	if (!(*event_flags_page)) {
 		pr_err("%s: SIEFP memremap failed\n", __func__);
@@ -509,7 +511,7 @@ int mshv_synic_init(unsigned int cpu)
 	sirbp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIRBP);
 	sirbp.sirbp_enabled = true;
 	*event_ring_page = memremap(sirbp.base_sirbp_gpa << PAGE_SHIFT,
-		     PAGE_SIZE, MEMREMAP_WB);
+				    PAGE_SIZE, MEMREMAP_WB);
 
 	if (!(*event_ring_page)) {
 		pr_err("%s: SIRBP memremap failed\n", __func__);
@@ -524,7 +526,7 @@ int mshv_synic_init(unsigned int cpu)
 	sint.masked = false;
 	sint.auto_eoi = hv_recommend_using_aeoi();
 	hv_set_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX,
-			sint.as_uint64);
+			      sint.as_uint64);
 
 	/* Doorbell SINT */
 	sint.as_uint64 = 0;
@@ -533,7 +535,7 @@ int mshv_synic_init(unsigned int cpu)
 	sint.as_intercept = 1;
 	sint.auto_eoi = hv_recommend_using_aeoi();
 	hv_set_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_DOORBELL_SINT_INDEX,
-			sint.as_uint64);
+			      sint.as_uint64);
 #endif
 
 	/* Enable global synic bit */
@@ -581,13 +583,13 @@ int mshv_synic_cleanup(unsigned int cpu)
 	sint.as_uint64 = hv_get_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX);
 	sint.masked = true;
 	hv_set_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX,
-			sint.as_uint64);
+			      sint.as_uint64);
 
 	/* Disable Doorbell SINT */
 	sint.as_uint64 = hv_get_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_DOORBELL_SINT_INDEX);
 	sint.masked = true;
 	hv_set_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_DOORBELL_SINT_INDEX,
-			sint.as_uint64);
+			      sint.as_uint64);
 
 	/* Disable Synic's event ring page */
 	sirbp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIRBP);
@@ -617,7 +619,7 @@ int mshv_synic_cleanup(unsigned int cpu)
 
 int
 mshv_register_doorbell(u64 partition_id, doorbell_cb_t doorbell_cb, void *data,
-		     u64 gpa, u64 val, u64 flags)
+		       u64 gpa, u64 val, u64 flags)
 {
 	struct hv_connection_info connection_info = { 0 };
 	union hv_connection_id connection_id = { 0 };
@@ -626,8 +628,7 @@ mshv_register_doorbell(u64 partition_id, doorbell_cb_t doorbell_cb, void *data,
 	union hv_port_id port_id = { 0 };
 	int ret;
 
-	port_table_info = kmalloc(sizeof(struct port_table_info),
-				  GFP_KERNEL);
+	port_table_info = kmalloc(sizeof(*port_table_info), GFP_KERNEL);
 	if (!port_table_info)
 		return -ENOMEM;
 
