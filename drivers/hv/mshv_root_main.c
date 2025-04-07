@@ -2936,16 +2936,15 @@ static long mshv_ioctl_get_host_partition_property(void __user *user_arg)
 	if (copy_from_user(&property_code, user_arg, sizeof(property_code)))
 		return -EFAULT;
 
-	/*
-	 * Note: In case of root partition, it returns the max GPA-width
-	 * for root's children
-	 */
 	ret = hv_call_get_partition_property(HV_PARTITION_ID_SELF,
 					     property_code, &property_value);
 	if (ret)
 		return ret;
 
-	return property_value;
+	if (copy_to_user(user_arg, &property_value, sizeof(property_value)))
+		return -EFAULT;
+
+	return 0;
 }
 
 static_assert(MSHV_NUM_CPU_FEATURES_BANKS <=
