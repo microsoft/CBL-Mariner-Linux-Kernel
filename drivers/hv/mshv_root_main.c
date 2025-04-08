@@ -2990,6 +2990,11 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 	disabled_xsave->xsave_supervisor_support = 0;
 	disabled_xsave->xsave_comp_support = 0;
 #endif
+
+#if defined(__aarch64__)
+	disabled_procs->gic_v3v4 = 0;
+#endif
+
 	/* Check if user provided newer struct with feature fields */
 	if (args.pt_flags & BIT(MSHV_PT_BIT_CPU_AND_XSAVE_FEATURES)) {
 		if (copy_from_user(&args, user_arg, sizeof(args)))
