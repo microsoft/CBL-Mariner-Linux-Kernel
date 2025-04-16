@@ -1452,7 +1452,7 @@ static int mshv_init_async_handler(struct mshv_partition *partition)
 {
 	if (completion_done(&partition->async_hypercall)) {
 		pt_err(partition,
-		       "Cannot issue another async hypercall, while another one in progress!\n");
+		       "Cannot issue async hypercall, while another one in progress!\n");
 		return -EPERM;
 	}
 
@@ -1817,9 +1817,6 @@ mshv_unmap_user_memory(struct mshv_partition *partition,
 	if (!(mem.flags & BIT(MSHV_SET_MEM_BIT_UNMAP)))
 		return -EINVAL;
 
-	if (hlist_empty(&partition->pt_mem_regions))
-		return -EINVAL;
-
 	region = mshv_partition_region_by_gfn(partition, mem.guest_pfn);
 	if (!region)
 		return -EINVAL;
@@ -2001,7 +1998,7 @@ mshv_partition_ioctl_get_gpap_access_bitmap(struct mshv_partition *partition,
 			hv_flags.clear_accessed = 1;
 			/* not accessed implies not dirty */
 			hv_flags.clear_dirty = 1;
-		} else { // MSHV_GPAP_ACCESS_OP_SET
+		} else { /* MSHV_GPAP_ACCESS_OP_SET */
 			hv_flags.set_accessed = 1;
 		}
 		break;
@@ -2009,7 +2006,7 @@ mshv_partition_ioctl_get_gpap_access_bitmap(struct mshv_partition *partition,
 		hv_type_mask = 2;
 		if (args.access_op == MSHV_GPAP_ACCESS_OP_CLEAR) {
 			hv_flags.clear_dirty = 1;
-		} else { // MSHV_GPAP_ACCESS_OP_SET
+		} else { /* MSHV_GPAP_ACCESS_OP_SET */
 			hv_flags.set_dirty = 1;
 			/* dirty implies accessed */
 			hv_flags.set_accessed = 1;
