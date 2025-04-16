@@ -1859,6 +1859,21 @@ static int mshv_vsm_configure_partition(void)
 	return hv_vsm_set_register(HV_REGISTER_VSM_PARTITION_CONFIG, config.as_u64);
 }
 
+static u64 mshv_vsm_get_msr(unsigned int reg)
+{
+	if (hv_parent_partition())
+		return hv_get_non_nested_msr(reg);
+	return hv_get_msr(reg);
+}
+
+static void mshv_vsm_set_msr(unsigned int reg, u64 value)
+{
+	if (hv_parent_partition())
+		hv_set_non_nested_msr(reg, value);
+	else
+		hv_set_msr(reg, value);
+}
+
 static int mshv_vsm_per_cpu_synic_init(unsigned int cpu)
 {
 	struct hv_vsm_per_cpu *per_cpu = this_cpu_ptr(&vsm_per_cpu);
@@ -1866,36 +1881,41 @@ static int mshv_vsm_per_cpu_synic_init(unsigned int cpu)
 	union hv_synic_sint sint;
 	union hv_synic_scontrol sctrl;
 
-	per_cpu->synic_message_page = (void *)get_zeroed_page(GFP_ATOMIC);
-	if (!per_cpu->synic_message_page) {
-		pr_err("%s: Unable to allocate SYNIC message page\n", __func__);
-		return -ENOMEM;
+	simp.as_uint64 = mshv_vsm_get_msr(HV_MSR_SIMP);
+	if (hv_parent_partition()) {
+		/* Setup the Synic's message page */
+		per_cpu->synic_message_page = memremap(simp.base_simp_gpa << HV_HYP_PAGE_SHIFT,
+				HV_HYP_PAGE_SIZE, MEMREMAP_WB);
+		if (!per_cpu->synic_message_page) {
+			pr_err("%s: SIMP memremap failed\n", __func__);
+			return -EFAULT;
+		}
+	} else {
+		per_cpu->synic_message_page = (void *)get_zeroed_page(GFP_ATOMIC);
+		if (!per_cpu->synic_message_page) {
+			pr_err("%s: Unable to allocate SYNIC message page\n", __func__);
+			return -ENOMEM;
+		}
+		simp.base_simp_gpa = virt_to_phys(per_cpu->synic_message_page) >> HV_HYP_PAGE_SHIFT;
 	}
-	// ToDo: Handle nested ?
-	// Set the synic message page
-	simp.as_uint64 = hv_get_msr(HV_REGISTER_SIMP);
 	simp.simp_enabled = 1;
-	simp.base_simp_gpa = virt_to_phys(per_cpu->synic_message_page) >> HV_HYP_PAGE_SHIFT;
-	hv_set_msr(HV_REGISTER_SIMP, simp.as_uint64);
-
-	// Do we need synic event page as well?
-	// ToDo: per-cpu interrupt enabling for supported architectures like arm64
+	mshv_vsm_set_msr(HV_MSR_SIMP, simp.as_uint64);
 
 #ifdef HYPERVISOR_CALLBACK_VECTOR
-	// Unmask SINT0 so that the cpu can receive intercepts from Hyper-V
-	sint.as_uint64 = hv_get_msr(HV_REGISTER_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX);
+	/* Enable intercepts */
+	sint.as_uint64 = mshv_vsm_get_msr(HV_MSR_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX);
 	sint.vector = HYPERVISOR_CALLBACK_VECTOR;
 	sint.masked = false;
 	sint.auto_eoi = hv_recommend_using_aeoi();
-	hv_set_msr(HV_REGISTER_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX, sint.as_uint64);
+	mshv_vsm_set_msr(HV_MSR_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX,
+			 sint.as_uint64);
 #endif
 
 	/* Enable the global synic bit */
-	sctrl.as_uint64 = hv_get_msr(HV_REGISTER_SCONTROL);
+	sctrl.as_uint64 = mshv_vsm_get_msr(HV_MSR_SCONTROL);
 	sctrl.enable = 1;
+	mshv_vsm_set_msr(HV_MSR_SCONTROL, sctrl.as_uint64);
 
-	/* Enable the global synic bit */
-	hv_set_msr(HV_REGISTER_SCONTROL, sctrl.as_uint64);
 	return 0;
 }
 
