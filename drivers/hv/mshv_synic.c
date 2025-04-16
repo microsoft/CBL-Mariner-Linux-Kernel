@@ -232,7 +232,7 @@ handle_bitset_message(const struct hv_vp_signal_bitset_scheduler_message *msg)
 			if (vp_bank_idx == vp_bank_size)
 				break;
 
-			vp_index = (bank_idx << HV_GENERIC_SET_SHIFT) + vp_bank_idx;
+			vp_index = (bank_idx * vp_bank_size) + vp_bank_idx;
 
 			/* This shouldn't happen, but just in case. */
 			if (unlikely(vp_index >= MSHV_MAX_VPS)) {
