@@ -2919,20 +2919,20 @@ add_partition(struct mshv_partition *partition)
 	return 0;
 }
 
-static long mshv_ioctl_get_host_partition_property(void __user *user_arg)
+static long mshv_ioctl_get_host_partition_property(void __user *user_args)
 {
-	int ret;
-	u64 property_value, property_code;
+	struct mshv_partition_property args;
+	long ret;
 
-	if (copy_from_user(&property_code, user_arg, sizeof(property_code)))
+	if (copy_from_user(&args, user_args, sizeof(args)))
 		return -EFAULT;
 
 	ret = hv_call_get_partition_property(HV_PARTITION_ID_SELF,
-					     property_code, &property_value);
+					     args.property_code, &args.property_value);
 	if (ret)
 		return ret;
 
-	if (copy_to_user(user_arg, &property_value, sizeof(property_value)))
+	if (copy_to_user(user_args, &args, sizeof(args)))
 		return -EFAULT;
 
 	return 0;
