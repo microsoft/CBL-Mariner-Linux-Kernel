@@ -14,6 +14,7 @@
 #include <linux/wait.h>
 #include <linux/hashtable.h>
 #include <linux/dev_printk.h>
+#include <linux/build_bug.h>
 #include <hyperv/hvhdk.h>
 #include <uapi/linux/mshv.h>
 
@@ -23,6 +24,10 @@
  */
 #define MSHV_HV_MIN_VERSION		(27744)
 #define MSHV_HV_MAX_VERSION		(27751)
+
+static_assert(HV_HYP_PAGE_SIZE == MSHV_HV_PAGE_SIZE);
+
+#define MSHV_MAX_VPS			256
 
 #define MSHV_PARTITIONS_HASH_BITS	9
 
