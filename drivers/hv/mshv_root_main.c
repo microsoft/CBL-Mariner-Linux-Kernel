@@ -65,6 +65,12 @@ static void mshv_async_hvcall_handler(void *data, u64 *status);
 static struct mshv_mem_region
 	*mshv_partition_region_by_gfn(struct mshv_partition *pt, u64 gfn);
 
+static const union hv_input_vtl input_vtl_zero;
+static const union hv_input_vtl input_vtl_normal = {
+	.target_vtl = HV_NORMAL_VTL,
+	.use_target_vtl = 1,
+};
+
 static const struct vm_operations_struct mshv_vp_vm_ops = {
 	.fault = mshv_vp_fault,
 };
@@ -257,21 +263,15 @@ static inline bool is_ghcb_mapping_available(void)
 static int mshv_get_vp_registers(u32 vp_index, u64 partition_id, u16 count,
 				 struct hv_register_assoc *registers)
 {
-	union hv_input_vtl input_vtl;
-
-	input_vtl.as_uint8 = 0;
 	return hv_call_get_vp_registers(vp_index, partition_id,
-					count, input_vtl, registers);
+					count, input_vtl_zero, registers);
 }
 
 static int mshv_set_vp_registers(u32 vp_index, u64 partition_id, u16 count,
 				 struct hv_register_assoc *registers)
 {
-	union hv_input_vtl input_vtl;
-
-	input_vtl.as_uint8 = 0;
 	return hv_call_set_vp_registers(vp_index, partition_id,
-					count, input_vtl, registers);
+					count, input_vtl_zero, registers);
 }
 
 static long
@@ -1290,7 +1290,6 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	struct page *intercept_message_page = NULL, *register_page = NULL, *ghcb_page = NULL;
 	void *stats_pages[2];
 	long ret;
-	union hv_input_vtl input_vtl;
 
 	if (copy_from_user(&args, arg, sizeof(args)))
 		return -EFAULT;
@@ -1306,30 +1305,25 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	if (ret)
 		return ret;
 
-	input_vtl.as_uint8 = 0;
 	ret = hv_map_vp_state_page(partition->pt_id, args.vp_index,
 				   HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
-				   input_vtl, &intercept_message_page);
+				   input_vtl_zero, &intercept_message_page);
 	if (ret)
 		goto destroy_vp;
 
 	if (!mshv_partition_encrypted(partition)) {
-		input_vtl.as_uint8 = 0;
 		ret = hv_map_vp_state_page(partition->pt_id, args.vp_index,
 					   HV_VP_STATE_PAGE_REGISTERS,
-					   input_vtl, &register_page);
+					   input_vtl_zero, &register_page);
 		if (ret)
 			goto unmap_intercept_message_page;
 	}
 
 	if (mshv_partition_encrypted(partition) &&
 	    is_ghcb_mapping_available()) {
-		input_vtl.as_uint8 = 0;
-		input_vtl.use_target_vtl = 1;
-		input_vtl.target_vtl = HV_NORMAL_VTL;
 		ret = hv_map_vp_state_page(partition->pt_id, args.vp_index,
-					   HV_VP_STATE_PAGE_GHCB, input_vtl,
-					   &ghcb_page);
+					   HV_VP_STATE_PAGE_GHCB,
+					   input_vtl_normal, &ghcb_page);
 		if (ret)
 			goto unmap_register_page;
 	}
@@ -1398,28 +1392,19 @@ unmap_stats_pages:
 	if (!hv_l1vh_partition())
 		mshv_vp_stats_unmap(partition->pt_id, args.vp_index);
 unmap_ghcb_page:
-	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available()) {
-		input_vtl.as_uint8 = 0;
-		input_vtl.use_target_vtl = 1;
-		input_vtl.target_vtl = HV_NORMAL_VTL;
-
+	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available())
 		hv_unmap_vp_state_page(partition->pt_id, args.vp_index,
 				       HV_VP_STATE_PAGE_GHCB, vp->vp_ghcb_page,
-				       input_vtl);
-	}
+				       input_vtl_normal);
 unmap_register_page:
-	if (!mshv_partition_encrypted(partition)) {
-		input_vtl.as_uint8 = 0;
-
+	if (!mshv_partition_encrypted(partition))
 		hv_unmap_vp_state_page(partition->pt_id, args.vp_index,
 				       HV_VP_STATE_PAGE_REGISTERS,
-				       vp->vp_register_page, input_vtl);
-	}
+				       vp->vp_register_page, input_vtl_zero);
 unmap_intercept_message_page:
-	input_vtl.as_uint8 = 0;
 	hv_unmap_vp_state_page(partition->pt_id, args.vp_index,
 			       HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
-			       vp->vp_intercept_msg_page, input_vtl);
+			       vp->vp_intercept_msg_page, input_vtl_zero);
 destroy_vp:
 	hv_call_delete_vp(partition->pt_id, args.vp_index);
 	trace_mshv_create_vp(ret, partition->pt_id, args.vp_index, -1);
@@ -2099,7 +2084,6 @@ set_sev_control_register(u32 vp_index, u64 partition_id,
 			 u64 enable_encrypted_state,
 			 u64 vmsa_gpa_page_number)
 {
-	union hv_input_vtl input_vtl;
 	struct hv_register_assoc sev_control = {
 		.name = HV_X64_REGISTER_SEV_CONTROL,
 	};
@@ -2109,9 +2093,8 @@ set_sev_control_register(u32 vp_index, u64 partition_id,
 	sc->enable_encrypted_state = enable_encrypted_state;
 	sc->vmsa_gpa_page_number = vmsa_gpa_page_number;
 
-	input_vtl.as_uint8 = 0;
-	return hv_call_set_vp_registers(vp_index, partition_id, 1, input_vtl,
-					&sev_control);
+	return hv_call_set_vp_registers(vp_index, partition_id, 1,
+					input_vtl_zero, &sev_control);
 }
 
 static long
@@ -2735,7 +2718,6 @@ static void destroy_partition(struct mshv_partition *partition)
 	struct mshv_mem_region *region;
 	int i, ret;
 	struct hlist_node *n;
-	union hv_input_vtl input_vtl;
 
 	if (refcount_read(&partition->pt_ref_count)) {
 		pt_err(partition,
@@ -2776,25 +2758,27 @@ static void destroy_partition(struct mshv_partition *partition)
 				mshv_vp_stats_unmap(partition->pt_id, vp->vp_index);
 
 			if (vp->vp_register_page) {
-				input_vtl.as_uint8 = 0;
-				(void)hv_unmap_vp_state_page(partition->pt_id, vp->vp_index,
+				(void)hv_unmap_vp_state_page(partition->pt_id,
+							     vp->vp_index,
 							     HV_VP_STATE_PAGE_REGISTERS,
-							     vp->vp_register_page, input_vtl);
+							     vp->vp_register_page,
+							     input_vtl_zero);
 				vp->vp_register_page = NULL;
 			}
 
-			input_vtl.as_uint8 = 0;
-			(void)hv_unmap_vp_state_page(partition->pt_id, vp->vp_index,
+			(void)hv_unmap_vp_state_page(partition->pt_id,
+						     vp->vp_index,
 						     HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
-						     vp->vp_intercept_msg_page, input_vtl);
+						     vp->vp_intercept_msg_page,
+						     input_vtl_zero);
 			vp->vp_intercept_msg_page = NULL;
 
 			if (vp->vp_ghcb_page) {
-				input_vtl.use_target_vtl = 1;
-				input_vtl.target_vtl = HV_NORMAL_VTL;
-				(void)hv_unmap_vp_state_page(partition->pt_id, vp->vp_index,
+				(void)hv_unmap_vp_state_page(partition->pt_id,
+							     vp->vp_index,
 							     HV_VP_STATE_PAGE_GHCB,
-							     vp->vp_ghcb_page, input_vtl);
+							     vp->vp_ghcb_page,
+							     input_vtl_normal);
 				vp->vp_ghcb_page = NULL;
 			}
 
