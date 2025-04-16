@@ -143,7 +143,7 @@ static int mshv_ioctl_passthru_hvcall(struct mshv_partition *partition,
 				      void __user *user_args)
 {
 	u64 status;
-	int ret, i;
+	int ret = 0, i;
 	bool is_async;
 	struct mshv_root_hvcall args;
 	struct page *page;
