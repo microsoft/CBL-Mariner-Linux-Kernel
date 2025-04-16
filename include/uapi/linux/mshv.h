@@ -242,12 +242,16 @@ enum {
 
 #define MSHV_SET_MEM_FLAGS_MASK ((1 << MSHV_SET_MEM_BIT_COUNT) - 1)
 
+/* The hypervisor's "native" page size */
+#define MSHV_HV_PAGE_SIZE	0x1000
+
 /**
  * struct mshv_user_mem_region - arguments for MSHV_SET_GUEST_MEMORY
- * @size: Size of the memory region (bytes). Must be aligned to PAGE_SIZE
+ * @size: Size of the memory region (bytes). Must be aligned to
+ *        MSHV_HV_PAGE_SIZE
  * @guest_pfn: Base guest page number to map
  * @userspace_addr: Base address of userspace memory. Must be aligned to
- *                  PAGE_SIZE
+ *                  MSHV_HV_PAGE_SIZE
  * @flags: Bitmask of 1 << MSHV_SET_MEM_BIT_*. If (1 << MSHV_SET_MEM_BIT_UNMAP)
  *         is set, ignore other bits.
  * @rsvd: MBZ
@@ -311,13 +315,13 @@ struct mshv_user_irq_table {
 };
 
 enum {
-	MSHV_GPAP_ACCESS_TYPE_ACCESSED = 0,
+	MSHV_GPAP_ACCESS_TYPE_ACCESSED,
 	MSHV_GPAP_ACCESS_TYPE_DIRTY,
 	MSHV_GPAP_ACCESS_TYPE_COUNT		/* Count of enum members */
 };
 
 enum {
-	MSHV_GPAP_ACCESS_OP_NOOP = 0,
+	MSHV_GPAP_ACCESS_OP_NOOP,
 	MSHV_GPAP_ACCESS_OP_CLEAR,
 	MSHV_GPAP_ACCESS_OP_SET,
 	MSHV_GPAP_ACCESS_OP_COUNT		/* Count of enum members */
@@ -403,8 +407,8 @@ struct mshv_import_isolated_pages {
  * @code: Hypercall code (HVCALL_*)
  * @reps: in: Rep count ('repcount')
  *	  out: Reps completed ('repcomp'). MBZ unless rep hvcall
- * @in_sz: Size of input incl rep data. <= HV_HYP_PAGE_SIZE
- * @out_sz: Size of output buffer. <= HV_HYP_PAGE_SIZE. MBZ if out_ptr is 0
+ * @in_sz: Size of input incl rep data. <= MSHV_HV_PAGE_SIZE
+ * @out_sz: Size of output buffer. <= MSHV_HV_PAGE_SIZE. MBZ if out_ptr is 0
  * @status: in: MBZ
  *	    out: HV_STATUS_* from hypercall
  * @rsvd: MBZ
@@ -461,13 +465,14 @@ struct mshv_root_hvcall {
 #define MSHV_RUN_VP_BUF_SZ 256
 
 /*
- * Map various VP state pages to userspace.
- * Multiply the offset by PAGE_SIZE before being passed as the 'offset'
- * argument to mmap().
+ * VP state pages may be mapped to userspace via mmap().
+ * To specify which state page, use MSHV_VP_MMAP_OFFSET_ values multiplied by
+ * the system page size.
  * e.g.
- * void *reg_page = mmap(NULL, PAGE_SIZE, PROT_READ|PROT_WRITE,
+ * long page_size = sysconf(_SC_PAGE_SIZE);
+ * void *reg_page = mmap(NULL, MSHV_HV_PAGE_SIZE, PROT_READ|PROT_WRITE,
  *                       MAP_SHARED, vp_fd,
- *                       MSHV_VP_MMAP_OFFSET_REGISTERS * PAGE_SIZE);
+ *                       MSHV_VP_MMAP_OFFSET_REGISTERS * page_size);
  */
 enum {
 	MSHV_VP_MMAP_OFFSET_REGISTERS,
@@ -497,7 +502,7 @@ enum {
 };
 
 /**
- * struct mshv_get_set_vp_hvcall - arguments for MSHV_[GET,SET]_VP_STATE
+ * struct mshv_get_set_vp_state - arguments for MSHV_[GET,SET]_VP_STATE
  * @type: MSHV_VP_STATE_*
  * @rsvd: MBZ
  * @buf_sz: in: 4k page-aligned size of buffer
