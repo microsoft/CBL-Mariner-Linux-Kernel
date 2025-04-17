@@ -522,7 +522,7 @@ static __init int hv_vsm_boot_ap_vtl(void)
 	struct hv_vtlcall_param args = {0};
 	struct page *boot_signal_page, *cpu_online_page;
 	unsigned int cpu, cur_cpu = smp_processor_id(), vsm_cpus = num_possible_cpus(), next_cpu;
-	int ret;
+	int ret = 0;
 
 	/* Allocate & Initialize Boot Signal Page */
 	boot_signal_page = hv_vsm_alloc_shared_page();
@@ -1107,6 +1107,9 @@ static int __init hv_vsm_bootstrap_vtl(void)
 	ret = hv_vsm_boot_vtl1();
 	if (ret)
 		return ret;
+
+	if (num_present_cpus() == 1)
+		return 0;
 
 	/* Enable VTL1 for secondary processors */
 	ret = hv_vsm_enable_ap_vtl();
