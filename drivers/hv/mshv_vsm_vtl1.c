@@ -2013,11 +2013,44 @@ static int vsm_protect_mem(struct heki_mem *mem, unsigned long perm)
 	return 0;
 }
 
+/*
+ * Different kexec segments are created during kexec file load time. E.g.,
+ * the kernel segment, the initrd segment and the boot parameters segment
+ * (which contains the command line).
+ *
+ * For crash kexec, memory is reserved. Ranges of memory are allocated for the
+ * segments from the reserved area. Segment contents are copied to these ranges
+ * at kexec file load time itself. The segment ranges are recorded in
+ * image->segment[].
+ *
+ * For normal kexec, memory is not reserved. It is only ear-marked for the
+ * segments. In fact, the ear-marked memory could be currently in use in VTL0.
+ * The ranges are recorded in image->segment[]. But, contents are not copied to
+ * these ranges at kexec file load time. Contents are set up in source pages
+ * (described in a chain of entries starting from (image->head). The source
+ * pages are copied to the segment ranges in the trampoline that jumps to the
+ * new kernel because, at that point, VTL0 has stopped using that memory.
+ *
+ * In the following function, the protection of kexec_mem[] results in the
+ * protection of the following:
+ *
+ *	- Protection of the kimage struct (for both normal and crash kexec)
+ *	- Protection of the control pages (for both normal and crash kexec)
+ *	- Protection of source pages (for normal kexec only). This is the
+ *	  protection of the segment contents.
+ *
+ * For protecting segment contents for crash kexec, the ranges recorded in
+ * image->segment[] must be protected.
+ */
 static int vsm_kexec_pages_protect(struct heki_mem *kexec_mem,
 				   unsigned long perm)
 {
+	struct kimage *image;
+	struct kexec_segment *ksegment;
+	struct heki_mem dummy_mem;
+	struct heki_range dummy_range;
 	enum heki_kexec_type type;
-	int ret = 0;
+	int i, ret = 0;
 
 	/* Make all kexec pages read-only to prevent tampering. */
 	for (type = 0; type < HEKI_KEXEC_MAX; type++) {
@@ -2025,6 +2058,22 @@ static int vsm_kexec_pages_protect(struct heki_mem *kexec_mem,
 			continue;
 
 		ret = vsm_protect_mem(&kexec_mem[type], perm);
+		if (ret)
+			return ret;
+	}
+
+	if (kexec_mem != vtl0.crash_kexec_mem)
+		return 0;
+
+	image = (struct kimage *) kexec_mem[HEKI_KEXEC_IMAGE].va;
+
+	for (i = 0; i < image->nr_segments; i++) {
+		ksegment = &image->segment[i];
+		dummy_range.pa = ksegment->mem;
+		dummy_range.epa = ksegment->mem + ksegment->memsz;
+		dummy_mem.ranges = &dummy_range;
+		dummy_mem.nranges = 1;
+		ret = vsm_protect_mem(&dummy_mem, perm);
 		if (ret)
 			return ret;
 	}
