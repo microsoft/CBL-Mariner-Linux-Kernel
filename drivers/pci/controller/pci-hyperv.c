@@ -1660,65 +1660,12 @@ static u32 hv_compose_msi_req_v1(
  */
 
 /*
- * The vCPU selected by hv_compose_multi_msi_req_get_cpu() and
- * hv_compose_msi_req_get_cpu() is a "dummy" vCPU because the final vCPU to be
- * interrupted is specified later in hv_irq_unmask() and communicated to Hyper-V
- * via the HVCALL_RETARGET_INTERRUPT hypercall. But the choice of dummy vCPU is
- * not irrelevant because Hyper-V chooses the physical CPU to handle the
- * interrupts based on the vCPU specified in message sent to the vPCI VSP in
- * hv_compose_msi_msg(). Hyper-V's choice of pCPU is not visible to the guest,
- * but assigning too many vPCI device interrupts to the same pCPU can cause a
- * performance bottleneck. So we spread out the dummy vCPUs to influence Hyper-V
- * to spread out the pCPUs that it selects.
- *
- * For the single-MSI and MSI-X cases, it's OK for hv_compose_msi_req_get_cpu()
- * to always return the same dummy vCPU, because a second call to
- * hv_compose_msi_msg() contains the "real" vCPU, causing Hyper-V to choose a
- * new pCPU for the interrupt. But for the multi-MSI case, the second call to
- * hv_compose_msi_msg() exits without sending a message to the vPCI VSP, so the
- * original dummy vCPU is used. This dummy vCPU must be round-robin'ed so that
- * the pCPUs are spread out. All interrupts for a multi-MSI device end up using
- * the same pCPU, even though the vCPUs will be spread out by later calls
- * to hv_irq_unmask(), but that is the best we can do now.
- *
- * With Hyper-V in Nov 2022, the HVCALL_RETARGET_INTERRUPT hypercall does *not*
- * cause Hyper-V to reselect the pCPU based on the specified vCPU. Such an
- * enhancement is planned for a future version. With that enhancement, the
- * dummy vCPU selection won't matter, and interrupts for the same multi-MSI
- * device will be spread across multiple pCPUs.
- */
-
-/*
  * Create MSI w/ dummy vCPU set targeting just one vCPU, overwritten
  * by subsequent retarget in hv_irq_unmask().
  */
 static int hv_compose_msi_req_get_cpu(const struct cpumask *affinity)
 {
 	return cpumask_first_and(affinity, cpu_online_mask);
-}
-
-/*
- * Make sure the dummy vCPU values for multi-MSI don't all point to vCPU0.
- */
-static int hv_compose_multi_msi_req_get_cpu(void)
-{
-	static DEFINE_SPINLOCK(multi_msi_cpu_lock);
-
-	/* -1 means starting with CPU 0 */
-	static int cpu_next = -1;
-
-	unsigned long flags;
-	int cpu;
-
-	spin_lock_irqsave(&multi_msi_cpu_lock, flags);
-
-	cpu_next = cpumask_next_wrap(cpu_next, cpu_online_mask, nr_cpu_ids,
-				     false);
-	cpu = cpu_next;
-
-	spin_unlock_irqrestore(&multi_msi_cpu_lock, flags);
-
-	return cpu;
 }
 
 /*
