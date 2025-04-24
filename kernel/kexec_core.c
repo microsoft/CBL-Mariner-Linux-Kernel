@@ -478,8 +478,14 @@ static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 	}
 
 	/* Ensure that these pages are decrypted if SME is enabled. */
-	if (pages)
+	if (pages) {
+		if (image->file_mode) {
+			/* Remember the allocated page... */
+			set_page_private(pages, order);
+			list_add(&pages->lru, &image->control_pages);
+		}
 		arch_kexec_post_alloc_pages(page_address(pages), 1 << order, 0);
+	}
 
 	return pages;
 }
@@ -640,7 +646,8 @@ void kimage_free(struct kimage *image)
 	machine_kexec_cleanup(image);
 
 	/* Free the kexec control pages... */
-	kimage_free_page_list(&image->control_pages);
+	if (image->type != KEXEC_TYPE_CRASH)
+		kimage_free_page_list(&image->control_pages);
 
 	/*
 	 * Free up any temporary buffers allocated. This might hit if

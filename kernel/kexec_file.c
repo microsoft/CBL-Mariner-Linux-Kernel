@@ -315,7 +315,8 @@ kimage_file_alloc_init(struct kimage **rimage, int kernel_fd,
 	*rimage = image;
 	return 0;
 out_free_control_pages:
-	kimage_free_page_list(&image->control_pages);
+	if (image->type != KEXEC_TYPE_CRASH)
+		kimage_free_page_list(&image->control_pages);
 out_free_post_load_bufs:
 	kimage_file_post_load_cleanup(image);
 out_free_image:
