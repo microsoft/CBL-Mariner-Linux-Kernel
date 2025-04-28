@@ -1360,6 +1360,7 @@ int hv_call_modify_spa_host_access(u64 partition_id, struct page **pages,
 
 			if (index >= page_struct_count) {
 				pr_err("%s: Bad index %lu\n", __func__, i);
+				local_irq_restore(irq_flags);
 				return -EINVAL;
 			}
 			input_page->spa_page_list[i] =
