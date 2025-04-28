@@ -57,7 +57,8 @@ config HYPERV_BALLOON
 
 config MSHV_ROOT
 	tristate "Microsoft Hyper-V root partition APIs driver"
-	depends on HYPERV
+	depends on HYPERV && (X86_64 || ARM64)
+	depends on !HYPERV_VTL_MODE
 	select EVENTFD
 	select IRQ_BYPASS_MANAGER
 	help
