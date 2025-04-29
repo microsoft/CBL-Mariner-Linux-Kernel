@@ -6,6 +6,7 @@
  */
 
 #include <linux/heki.h>
+#include <linux/jump_label.h>
 #include "../../kernel/module/internal.h"
 
 #include <asm-generic/sections.h>
@@ -123,10 +124,15 @@ void heki_load_kdata(void)
 		  (unsigned long)__end_rodata,
 		  heki_get_ranges, &args);
 
-	if (hypervisor->load_kdata(args.head_pa, args.nranges))
+	args.attributes = HEKI_PATCH_INFO;
+	heki_load_patch_info(&args, NULL);
+
+	if (hypervisor->load_kdata(args.head_pa, args.nranges)) {
 		pr_warn("Failed to load kernel data.\n");
-	else
+	} else {
 		pr_warn("Loaded kernel data\n");
+		heki_enable_patch_text();
+	}
 
 	mutex_unlock(&heki.lock);
 
@@ -134,6 +140,7 @@ void heki_load_kdata(void)
 	vfree(heki_system_certs);
 	vfree(heki_revocation_certs);
 	vfree(heki_blacklist_hashes);
+	heki_free_all_patch_types(NULL);
 	heki_blacklist_hashes = NULL;
 	heki_blacklist_hash_count = 0;
 }
@@ -166,6 +173,11 @@ long heki_validate_module(struct module *mod, struct load_info *info, int flags)
 		heki_walk((unsigned long)mem->base,
 			  (unsigned long)mem->base + mem->size,
 			  heki_get_ranges, &args);
+	}
+
+	if (!heki_init_all_patch_types(mod)) {
+		args.attributes = MOD_PATCH;
+		heki_load_patch_info(&args, mod);
 	}
 
 	token = hypervisor->validate_module(args.head_pa, args.nranges, flags);
@@ -209,6 +221,8 @@ void heki_unload_module(struct module *mod)
 		return;
 
 	mutex_lock(&heki.lock);
+
+	heki_free_all_patch_types(mod);
 
 	err = hypervisor->unload_module(mod->heki_token);
 	if (err) {

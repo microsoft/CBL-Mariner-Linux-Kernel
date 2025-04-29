@@ -2132,6 +2132,8 @@ void *text_poke(void *addr, const void *opcode, size_t len)
 {
 	lockdep_assert_held(&text_mutex);
 
+	if (!heki_text_poke(addr, opcode, len))
+		return addr;
 	return __text_poke(text_poke_memcpy, addr, opcode, len);
 }
 

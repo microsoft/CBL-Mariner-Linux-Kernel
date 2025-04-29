@@ -3,6 +3,7 @@
 #define _ASM_X86_HEKI_H
 
 #include <asm/paravirt_types.h>
+#include <asm/text-patching.h>
 
 struct heki_arch_kinfo {
 	struct paravirt_patch_template	pv_ops;

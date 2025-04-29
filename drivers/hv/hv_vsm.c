@@ -221,6 +221,20 @@ static int hv_vsm_kexec_validate(phys_addr_t pa, unsigned long nranges,
 
 #endif
 
+static int hv_vsm_patch_text(phys_addr_t patch_addr_0, phys_addr_t patch_addr_1)
+{
+	struct hv_vtlcall_param args = {0};
+
+	if (!hv_vsm_boot_success)
+		return -ENOTSUPP;
+
+	args.a0 = VSM_VTL_CALL_FUNC_ID_PATCH_TEXT;
+	args.a1 = patch_addr_0;
+	args.a2 = patch_addr_1;
+
+	return hv_vsm_vtlcall(&args);
+}
+
 static struct heki_hypervisor hyperv_heki_hypervisor = {
 	.lock_crs = hv_vsm_lock_crs,
 	.finish_boot = hv_vsm_signal_end_of_boot,
@@ -233,6 +247,7 @@ static struct heki_hypervisor hyperv_heki_hypervisor = {
 #ifdef CONFIG_KEXEC_FILE
 	.kexec_validate = hv_vsm_kexec_validate,
 #endif
+	.patch_text = hv_vsm_patch_text,
 };
 
 int __init hv_vsm_init_heki(void)

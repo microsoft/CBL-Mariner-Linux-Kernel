@@ -22,6 +22,7 @@
 #define VSM_VTL_CALL_FUNC_ID_UNLOAD_MODULE	0x1FFE8
 #define VSM_VTL_CALL_FUNC_ID_COPY_SECONDARY_KEY 0x1FFE9
 #define VSM_VTL_CALL_FUNC_ID_KEXEC_VALIDATE	0x1FFEA
+#define VSM_VTL_CALL_FUNC_ID_PATCH_TEXT         0x1FFEB
 
 extern bool hv_vsm_boot_success;
 extern bool hv_vsm_mbec_enabled;

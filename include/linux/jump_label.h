@@ -223,6 +223,10 @@ extern void arch_jump_label_transform(struct jump_entry *entry,
 extern bool arch_jump_label_transform_queue(struct jump_entry *entry,
 					    enum jump_label_type type);
 extern void arch_jump_label_transform_apply(void);
+extern void jump_label_get_patch(const struct jump_entry *entry,
+				 const void **code, const void **nop);
+extern void arch_jump_label_get_patch(const struct jump_entry *entry,
+				      const void **code, const void **nop);
 extern int jump_label_text_reserved(void *start, void *end);
 extern bool static_key_slow_inc(struct static_key *key);
 extern bool static_key_fast_inc_not_disabled(struct static_key *key);

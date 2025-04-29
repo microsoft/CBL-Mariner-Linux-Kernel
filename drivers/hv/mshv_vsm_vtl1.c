@@ -28,6 +28,7 @@
 #include <asm/mpspec.h>
 #include <asm/bootparam.h>
 #include <asm/e820/types.h>
+#include <asm/nops.h>
 #include "hv_vsm.h"
 
 #define HV_VTL1_IOCTL	0xE1
@@ -1242,6 +1243,294 @@ static int mshv_vsm_get_kinfo(void)
 	return 0;
 }
 
+static DEFINE_MUTEX(heki_patch_mtx);
+static LIST_HEAD(heki_patch_list);
+/* HEKI patches for builtin kernel. Patches per module are
+ * kept within struct heki_mod
+ */
+static struct heki_patch_info *heki_patch_info;
+
+static struct heki_range *vsm_get_pa_range(u64 pa, struct heki_range *ranges,
+					   unsigned long nranges)
+{
+	struct heki_range *range;
+	unsigned long i;
+
+	for (i = 0; i < nranges; i++) {
+		range = &ranges[i];
+		if (pa >= range->pa && pa < range->epa)
+			return range;
+	}
+	return NULL;
+}
+
+static void
+vsm_free_patch_range(struct heki_patch_info *info,
+		     struct heki_range *ranges, unsigned long nranges)
+{
+	struct heki_patch *patch;
+	unsigned long i;
+
+	if (!info)
+		return;
+
+	for (i = 0; i < info->max_patch_count; i++) {
+		patch = &info->patch[i];
+		if (vsm_get_pa_range(patch->pa[0], ranges, nranges)) {
+			patch->pa[0] = 0;
+			patch->pa[1] = 0;
+		}
+	}
+}
+
+static struct heki_range *
+vsm_resolve_patch_pa(u64 pa, struct heki_mod **hmod, int *mem_type)
+{
+	struct heki_mod *iter;
+	struct heki_range *range;
+	unsigned long i;
+
+	*hmod = NULL;
+	*mem_type = -1;
+
+	mutex_lock(&vtl0.lock);
+	/* Search modules first because some module memory ranges
+	 * overlap with the builtin kernel, for example address
+	 * ranges with permission=0xd (user and kernel executable
+	 * and readable)
+	 */
+	list_for_each_entry(iter, &vtl0.modules, node) {
+		for (i = 0; i < MOD_MEM_NUM_TYPES; i++) {
+			range = vsm_get_pa_range(pa, iter->mem[i].ranges,
+						 iter->mem[i].nranges);
+			if (range) {
+				*hmod = iter;
+				*mem_type = i;
+				mutex_unlock(&vtl0.lock);
+				return range;
+			}
+		}
+	}
+	range = vsm_get_pa_range(pa, vtl0.ranges, vtl0.nranges);
+	mutex_unlock(&vtl0.lock);
+	return range;
+}
+
+static void *vsm_vmap_patch(u64 pa[2])
+{
+	struct page *pg[2];
+	unsigned int count;
+
+	pg[0] = pfn_to_page(__phys_to_pfn(pa[0]));
+	count = 1;
+	if (pa[1]) {
+		pg[1] = pfn_to_page(__phys_to_pfn(pa[1]));
+		count = 2;
+	}
+	return vmap(pg, count, VM_MAP, PAGE_KERNEL);
+}
+
+/* Compare a patch with a precomputed record */
+static bool
+vsm_patch_valid(struct heki_patch *patch, struct heki_patch *rec)
+{
+	u64 rec_byte0_pa, rec_byte1_pa;
+	unsigned long rec_size_in_page0;
+	unsigned long offset;
+	bool valid_addr = false;
+
+	if (!patch->pa[0] || !rec->pa[0])
+		return false;
+	if (!patch->size || !rec->size)
+		return false;
+
+	/* text_poke_bp_batch() patches text by first writing a breakpoint
+	 * instruction to the first byte, then patching the remaining bytes
+	 * with the correct code/NOP sequence, and then writing the expected
+	 * code/NOP byte to the first byte.
+	 *
+	 * Code is typically a JMP, and the NOP size is chosen to
+	 * match the JMP size. Eg. 2 byte NOP can replace a 2 byte JMP
+	 *
+	 * Typical steps are:
+	 * Step 1: Patch first byte with 0xCC (INT3_INSN_OPCODE)
+	 * Step 2: Patch second to last bytes with partial JMP or NOP
+	 * Step 3: Patch first byte with first byte of JMP or NOP
+	 */
+
+	BUILD_BUG_ON(INT3_INSN_SIZE != 1);
+
+	/* Get physical addr of byte 0 in record */
+	rec_byte0_pa = rec->pa[0];
+	/* Size of record patch residing in page 0*/
+	rec_size_in_page0 = umin(rec->size,
+				 PAGE_SIZE - offset_in_page(rec->pa[0]));
+	/* Get physical addr of byte 1 in record. Byte 1 may lie
+	 * in another page
+	 */
+	if (rec->size == 1)
+		rec_byte1_pa = 0;
+	else
+		rec_byte1_pa = rec_size_in_page0 == 1 ?
+			       rec->pa[1] :
+			       rec_byte0_pa + 1;
+
+	/* Could be step 1 or 3*/
+	if (patch->size == 1 && patch->pa[0] == rec_byte0_pa) {
+		offset = 0;
+		valid_addr = true;
+	} else if (patch->size == (rec->size - 1) && /* Could step 2 */
+		   patch->pa[0] == rec_byte1_pa) {
+		offset = 1;
+		valid_addr = true;
+	}
+
+	if (!valid_addr || offset >= rec->size)
+		return false;
+
+	/* If step 1, patch should be the breakpoint byte */
+	if (patch->pa[0] == rec->pa[0] && patch->size == INT3_INSN_SIZE &&
+	    patch->code[0] == INT3_INSN_OPCODE)
+		return true;
+
+	/* If step 2 or 3, patch should match recorded JMP at offset */
+	if (!memcmp(patch->code, rec->code + offset, patch->size))
+		return true;
+
+	/* If step 2 or 3, patch should match right sized NOP at offset */
+	if ((rec->size == JMP8_INSN_SIZE || rec->size == JMP32_INSN_SIZE) &&
+	    !memcmp(patch->code, x86_nops[rec->size] + offset, patch->size)) {
+		return true;
+	}
+
+	/* We have a valid address, but no valid code combination found */
+	pr_err("%s: No matching code found for valid addr:%llx", __func__, patch->pa[0]);
+	return false;
+}
+
+static int vsm_patch_text(u64 patch_pa_0, u64 patch_pa_1)
+{
+	struct heki_patch *patch;
+	struct heki_patch_info *info;
+	struct heki_mod *hmod;
+	struct heki_range *range;
+	int mod_mem_type;
+	void *addr, *addr_va, *patch_va;
+	unsigned long i;
+	u64 patch_pa[2];
+	int ret;
+
+	patch_pa[0] = patch_pa_0;
+	patch_pa[1] = patch_pa_1;
+	patch_va = vsm_vmap_patch(patch_pa);
+	if (!patch_va)
+		return -ENOMEM;
+	patch = patch_va + offset_in_page(patch_pa_0);
+
+	range = vsm_resolve_patch_pa(patch->pa[0], &hmod, &mod_mem_type);
+	if (!range) {
+		pr_err("%s: addr_pa:%llx not found in any range\n", __func__, patch->pa[0]);
+		ret = -ENOENT;
+		goto unmap_all;
+	}
+
+	info = hmod ? hmod->patch_info : heki_patch_info;
+	for (i = 0; i < info->max_patch_count; i++) {
+		if (vsm_patch_valid(patch, &info->patch[i]))
+			break;
+	}
+	if (i == info->max_patch_count) {
+		pr_err("%s: addr_pa:%llx does not have a valid patch", __func__, patch->pa[0]);
+		ret = -EINVAL;
+		goto unmap_all;
+	}
+
+	addr_va = vsm_vmap_patch(patch->pa);
+	if (!addr_va) {
+		ret = -ENOMEM;
+		goto unmap_all;
+	}
+	addr = addr_va + offset_in_page(patch->pa[0]);
+	memcpy(addr, patch->code, patch->size);
+	pr_debug("%s: Patched addr_pa:%llx addr_va:%p with code:%5ph size:%d",
+		 __func__, patch->pa[0], addr, patch->code, patch->size);
+	ret = 0;
+
+unmap_all:
+	vunmap(addr_va);
+	vunmap(patch_va);
+	return ret;
+}
+
+static int vsm_get_patch_info(struct heki_mod *hmod)
+{
+	struct heki_mem *mem;
+	struct heki_patch_info *info, *new_info;
+	unsigned long size;
+	unsigned long patch_count = 0;
+	void *start, *stop;
+
+	mem = hmod ? &hmod->mem[MOD_PATCH] : &vtl0.mem[HEKI_PATCH_INFO];
+	if (!mem->va || !mem->size)
+		return 0;
+
+	start = mem->va;
+	stop = mem->va + mem->size;
+	while (start + sizeof(*info) <= stop) {
+		info = start;
+		size = sizeof(struct heki_patch_info) +
+		       sizeof(struct heki_patch) * info->patch_idx;
+		if (start + size > stop)
+			break;
+		patch_count += info->patch_idx;
+		start += size;
+	}
+
+	if (start != stop)
+		return -EINVAL;
+	if (!patch_count)
+		return 0;
+
+	size = sizeof(struct heki_patch_info) +
+	       sizeof(struct heki_patch) * patch_count;
+	new_info = __vmalloc(size, GFP_KERNEL | __GFP_ZERO);
+	if (!new_info)
+		return -ENOMEM;
+	start = mem->va;
+	stop = mem->va + mem->size;
+	while (start + sizeof(*info) <= stop) {
+		info = (struct heki_patch_info *)start;
+		memcpy(&new_info->patch[new_info->patch_idx],
+		       info->patch, sizeof(struct heki_patch) * info->patch_idx);
+		new_info->patch_idx += info->patch_idx;
+		start += sizeof(struct heki_patch_info) +
+			 sizeof(struct heki_patch) * info->patch_idx;
+	}
+
+	new_info->mod = info->mod;
+	new_info->max_patch_count = new_info->patch_idx;
+	if (hmod)
+		hmod->patch_info = new_info;
+	else
+		heki_patch_info = new_info;
+
+	pr_debug("%s: Adding patch type %d with %ld patches\n", __func__,
+		 new_info->type, new_info->max_patch_count);
+	mutex_lock(&heki_patch_mtx);
+	list_add(&new_info->list, &heki_patch_list);
+	mutex_unlock(&heki_patch_mtx);
+	return 0;
+}
+
+static void mshv_vsm_free_patch_info(struct heki_mod *hmod)
+{
+	mutex_lock(&heki_patch_mtx);
+	if (hmod->patch_info)
+		list_del(&hmod->patch_info->list);
+	mutex_unlock(&heki_patch_mtx);
+	vfree(hmod->patch_info);
+}
+
 static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 {
 	struct heki_range *ranges;
@@ -1268,6 +1557,10 @@ static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 		goto free_ranges;
 
 	ret = mshv_vsm_get_kinfo();
+	if (ret)
+		goto free_ranges;
+
+	ret = vsm_get_patch_info(NULL);
 
 free_ranges:
 	if (ret) {
@@ -1363,6 +1656,8 @@ static int vsm_set_module_permissions(struct heki_mod *hmod, int type,
 	}
 
 	if (free && !mem->retain) {
+		vsm_free_patch_range(hmod->patch_info,
+				     mem->ranges, mem->nranges);
 		mem->ranges = NULL;
 		mem->nranges = 0;
 	}
@@ -1497,7 +1792,7 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	}
 	vtl0.hmod = hmod;
 
-	err = vsm_map_all(ranges, nranges, hmod->mem, MOD_ELF + 1);
+	err = vsm_map_all(ranges, nranges, hmod->mem, MOD_MAX);
 	if (err) {
 		pr_warn("%s: Could not map module sections\n", __func__);
 		goto unmap;
@@ -1512,6 +1807,10 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	/* Load kinfo for post-relocation fixes. */
 	current->kinfo = vtl0.mem[HEKI_KERNEL_INFO].va;
 
+	/* Load patch info */
+	err = vsm_get_patch_info(hmod);
+	if (err)
+		pr_warn("%s: Patch info not loaded for module", __func__);
 	/*
 	 * The ELF buffer will be used to construct a copy of the guest module
 	 * in the host. The trusted keys will be used to verify the signature
@@ -1522,7 +1821,7 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	if (err) {
 		pr_warn("%s: Load guest module failed\n", __func__);
 		err = -EINVAL;
-		goto unmap;
+		goto free_patch;
 	}
 
 	/* Set permissions for all module sections in the EPT. */
@@ -1532,7 +1831,7 @@ static long mshv_vsm_validate_guest_module(u64 pa, unsigned long nranges,
 	err = vsm_set_guest_module_permissions(hmod);
 	if (err) {
 		pr_warn("%s: Could not set module permissions\n", __func__);
-		goto unmap;
+		goto free_patch;
 	}
 
 	/*
@@ -1555,6 +1854,10 @@ unmap:
 	vsm_unmap_all(hmod->mem, MOD_ELF + 1);
 	if (err < 0)
 		kfree(hmod);
+
+free_patch:
+	if (err < 0)
+		mshv_vsm_free_patch_info(hmod);
 unlock:
 	mutex_unlock(&vtl0.lock);
 
@@ -1655,6 +1958,7 @@ static int vsm_unload_guest_module(long token)
 	hmod->mem[MOD_RODATA].retain = false;
 	vsm_unmap_all(hmod->mem, MOD_ELF + 1);
 
+	mshv_vsm_free_patch_info(hmod);
 	vfree(hmod->ranges);
 	kfree(hmod);
 unlock:
@@ -2125,6 +2429,10 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 					    _vtl_params->a3);
 		break;
 #endif /* CONFIG_KEXEC_FILE */
+	case VSM_VTL_CALL_FUNC_ID_PATCH_TEXT:
+		pr_debug("%s : VSM_PATCH_TEXT\n", __func__);
+		status = vsm_patch_text(_vtl_params->a1, _vtl_params->a2);
+		break;
 	default:
 		pr_err("%s: Wrong Command:0x%llx sent into VTL1\n", __func__, _vtl_params->a0);
 		break;
@@ -2133,7 +2441,7 @@ static void mshv_vsm_handle_entry(struct hv_vtlcall_param *_vtl_params)
 		pr_err("%s: func id:0x%llx failed\n", __func__, _vtl_params->a0);
 	else
 		pr_debug("%s: func id:0x%llx is ok\n", __func__, _vtl_params->a0);
-	_vtl_params->a3 = status;
+	_vtl_params->a3 = (u64)status;
 }
 
 static void mshv_vsm_enable_tick(void *unused)

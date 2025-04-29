@@ -33,8 +33,10 @@ void heki_late_init(void)
 		pr_warn("Control registers locked\n");
 
 	mutex_init(&heki.lock);
-	heki_arch_init();
+	if (heki_init_all_patch_types(NULL))
+		pr_warn("Unable to initialize kernel patches\n");
 	heki_load_kdata();
+	heki_arch_init();
 
 	/*
 	 * Signal end of kernel boot.

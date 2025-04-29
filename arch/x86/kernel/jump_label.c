@@ -17,6 +17,34 @@
 #include <asm/text-patching.h>
 #include <asm/insn.h>
 
+void arch_jump_label_get_patch(const struct jump_entry *entry,
+			       const void **code, const void **nop)
+{
+	const void *addr, *dest;
+	int size;
+
+	addr = (void *)jump_entry_code(entry);
+	dest = (void *)jump_entry_target(entry);
+
+	/* Cast away const because of arch_jump* functions */
+	size = arch_jump_entry_size((struct jump_entry *)entry);
+
+	*nop = x86_nops[size];
+
+	switch (size) {
+	case JMP8_INSN_SIZE:
+		*code = text_gen_insn(JMP8_INSN_OPCODE, addr, dest);
+		break;
+
+	case JMP32_INSN_SIZE:
+		*code = text_gen_insn(JMP32_INSN_OPCODE, addr, dest);
+		break;
+
+	default:
+		BUG();
+	}
+}
+
 int arch_jump_entry_size(struct jump_entry *entry)
 {
 	struct insn insn = {};
@@ -36,26 +64,14 @@ static struct jump_label_patch
 __jump_label_patch(struct jump_entry *entry, enum jump_label_type type)
 {
 	const void *expect, *code, *nop;
-	const void *addr, *dest;
+	const void *addr;
 	int size;
 
 	addr = (void *)jump_entry_code(entry);
-	dest = (void *)jump_entry_target(entry);
 
 	size = arch_jump_entry_size(entry);
-	switch (size) {
-	case JMP8_INSN_SIZE:
-		code = text_gen_insn(JMP8_INSN_OPCODE, addr, dest);
-		nop = x86_nops[size];
-		break;
 
-	case JMP32_INSN_SIZE:
-		code = text_gen_insn(JMP32_INSN_OPCODE, addr, dest);
-		nop = x86_nops[size];
-		break;
-
-	default: BUG();
-	}
+	arch_jump_label_get_patch(entry, &code, &nop);
 
 	if (type == JUMP_LABEL_JMP)
 		expect = nop;
