@@ -217,7 +217,7 @@ bool __static_call_fixup(void *tramp, u8 op, void *dest)
 	}
 
 	if (kinfo)
-		__x86_return_thunk_addr = kinfo->arch.return_thunk_addr;
+		__x86_return_thunk_addr = (void *)kinfo->arch.return_thunk_init_addr;
 	else
 		__x86_return_thunk_addr = &__x86_return_thunk;
 

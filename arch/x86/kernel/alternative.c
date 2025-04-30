@@ -766,7 +766,7 @@ static int patch_retpoline(void *addr, struct insn *insn, u8 *bytes)
 
 	target = addr + insn->length + insn->immediate.value;
 	if (kinfo)
-		reg = target - kinfo->arch.indirect_thunk_array_addr;
+		reg = target - (retpoline_thunk_t *)kinfo->arch.indirect_thunk_array_addr;
 	else
 		reg = target - __x86_indirect_thunk_array;
 
@@ -928,11 +928,17 @@ bool cpu_wants_rethunk_at(void *addr)
 static int patch_return(void *addr, struct insn *insn, u8 *bytes)
 {
 	int i = 0;
+	void *x86_return_thunk_addr;
+	struct heki_kinfo *kinfo = current->kinfo;
 
 	/* Patch the custom return thunks... */
 	if (cpu_wants_rethunk_at(addr)) {
 		i = JMP32_INSN_SIZE;
-		__text_gen_insn(bytes, JMP32_INSN_OPCODE, addr, x86_return_thunk, i);
+		if (kinfo)
+			x86_return_thunk_addr = (void *)kinfo->arch.return_thunk_addr;
+		else
+			x86_return_thunk_addr = x86_return_thunk;
+		__text_gen_insn(bytes, JMP32_INSN_OPCODE, addr, x86_return_thunk_addr, i);
 	} else {
 		/* ... or patch them out if not needed. */
 		bytes[i++] = RET_INSN_OPCODE;
@@ -953,7 +959,7 @@ void __init_or_module noinline apply_returns(s32 *start, s32 *end)
 		static_call_force_reinit();
 
 	if (kinfo)
-		__x86_return_thunk_addr = kinfo->arch.return_thunk_addr;
+		__x86_return_thunk_addr = (void *)kinfo->arch.return_thunk_init_addr;
 	else
 		__x86_return_thunk_addr = &__x86_return_thunk;
 
