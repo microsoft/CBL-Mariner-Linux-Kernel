@@ -81,10 +81,9 @@ void heki_load_arch_kinfo(struct heki_kinfo *kinfo)
 	arch_kinfo->pv_ops = pv_ops;
 	arch_kinfo->pv_bug = paravirt_BUG;
 	arch_kinfo->pv_nop = _paravirt_nop;
-	arch_kinfo->indirect_thunk_array_addr =
-		(retpoline_thunk_t *)kallsyms_lookup_name("__x86_indirect_thunk_array");
-	arch_kinfo->return_thunk_addr =
-		(void *)kallsyms_lookup_name("__x86_return_thunk");
+	arch_kinfo->indirect_thunk_array_addr = (unsigned long)__x86_indirect_thunk_array;
+	arch_kinfo->return_thunk_init_addr = (unsigned long)__x86_return_thunk;
+	arch_kinfo->return_thunk_addr = (unsigned long)x86_return_thunk;
 }
 
 #ifdef CONFIG_KEXEC_FILE
