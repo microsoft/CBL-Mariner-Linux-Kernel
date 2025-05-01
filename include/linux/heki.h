@@ -61,6 +61,7 @@ enum heki_kdata_type {
 	HEKI_KERNEL_INFO,
 	HEKI_KERNEL_DATA,
 	HEKI_PATCH_INFO,
+	HEKI_KEXEC_TRAMPOLINE,
 	HEKI_KDATA_MAX,
 };
 
@@ -274,7 +275,7 @@ int heki_text_poke(void *addr, const void *opcode, unsigned long len);
 /* Arch-specific functions. */
 void heki_arch_init(void);
 unsigned long heki_flags_to_permissions(unsigned long flags);
-void heki_load_arch_kinfo(struct heki_kinfo *kinfo);
+void heki_load_arch_kinfo(struct heki_kinfo *kinfo, struct heki_args *args);
 
 #else /* !CONFIG_HEKI */
 

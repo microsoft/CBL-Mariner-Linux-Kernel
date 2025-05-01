@@ -74,7 +74,7 @@ unsigned long heki_flags_to_permissions(unsigned long flags)
 	return permissions;
 }
 
-void heki_load_arch_kinfo(struct heki_kinfo *kinfo)
+void heki_load_arch_kinfo(struct heki_kinfo *kinfo, struct heki_args *args)
 {
 	struct heki_arch_kinfo *arch_kinfo = &kinfo->arch;
 
@@ -84,6 +84,11 @@ void heki_load_arch_kinfo(struct heki_kinfo *kinfo)
 	arch_kinfo->indirect_thunk_array_addr = (unsigned long)__x86_indirect_thunk_array;
 	arch_kinfo->return_thunk_init_addr = (unsigned long)__x86_return_thunk;
 	arch_kinfo->return_thunk_addr = (unsigned long)x86_return_thunk;
+
+	args->attributes = HEKI_KEXEC_TRAMPOLINE;
+	heki_walk((unsigned long)relocate_kernel,
+		  (unsigned long)relocate_kernel + KEXEC_CONTROL_CODE_MAX_SIZE,
+		  heki_get_ranges, args);
 }
 
 #ifdef CONFIG_KEXEC_FILE

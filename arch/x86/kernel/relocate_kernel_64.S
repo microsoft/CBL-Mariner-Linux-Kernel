@@ -323,3 +323,4 @@ SYM_CODE_END(swap_pages)
 
 	.skip KEXEC_CONTROL_CODE_MAX_SIZE - (. - relocate_kernel), 0xcc
 SYM_CODE_END(relocate_range);
+	.balign PAGE_SIZE
