@@ -1531,9 +1531,12 @@ static void mshv_vsm_free_patch_info(struct heki_mod *hmod)
 	vfree(hmod->patch_info);
 }
 
+static int vsm_protect_mem(struct heki_mem *mem, unsigned long perm);
+
 static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 {
 	struct heki_range *ranges;
+	unsigned long read_only;
 	int ret;
 
 	ranges = __vsm_read_ranges(pa, nranges, true);
@@ -1553,6 +1556,11 @@ static int mshv_vsm_load_kdata(u64 pa, unsigned long nranges)
 		goto free_ranges;
 
 	ret =  mshv_vsm_save_blacklist_hashes();
+	if (ret)
+		goto free_ranges;
+
+	read_only = HV_PAGE_READABLE | HV_PAGE_USER_EXECUTABLE;
+	ret =  vsm_protect_mem(&vtl0.mem[HEKI_KEXEC_TRAMPOLINE], read_only);
 	if (ret)
 		goto free_ranges;
 
