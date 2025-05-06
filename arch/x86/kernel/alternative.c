@@ -18,6 +18,7 @@
 #include <linux/mmu_context.h>
 #include <linux/bsearch.h>
 #include <linux/sync_core.h>
+#include <linux/heki.h>
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -586,9 +587,13 @@ static int patch_retpoline(void *addr, struct insn *insn, u8 *bytes)
 	retpoline_thunk_t *target;
 	int reg, ret, i = 0;
 	u8 op, cc;
+	struct heki_kinfo *kinfo = current->kinfo;
 
 	target = addr + insn->length + insn->immediate.value;
-	reg = target - __x86_indirect_thunk_array;
+	if (kinfo)
+		reg = target - kinfo->arch.indirect_thunk_array_addr;
+	else
+		reg = target - __x86_indirect_thunk_array;
 
 	if (WARN_ON_ONCE(reg & ~0xf))
 		return -1;
@@ -742,9 +747,16 @@ static int patch_return(void *addr, struct insn *insn, u8 *bytes)
 void __init_or_module noinline apply_returns(s32 *start, s32 *end)
 {
 	s32 *s;
+	struct heki_kinfo *kinfo = current->kinfo;
+	void *__x86_return_thunk_addr;
 
 	if (cpu_feature_enabled(X86_FEATURE_RETHUNK))
 		static_call_force_reinit();
+
+	if (kinfo)
+		__x86_return_thunk_addr = kinfo->arch.return_thunk_addr;
+	else
+		__x86_return_thunk_addr = &__x86_return_thunk;
 
 	for (s = start; s < end; s++) {
 		void *dest = NULL, *addr = (void *)s + *s;
@@ -760,9 +772,11 @@ void __init_or_module noinline apply_returns(s32 *start, s32 *end)
 		op = insn.opcode.bytes[0];
 		if (op == JMP32_INSN_OPCODE)
 			dest = addr + insn.length + insn.immediate.value;
-
-		if (__static_call_fixup(addr, op, dest) ||
-		    WARN_ONCE(dest != &__x86_return_thunk,
+#ifdef CONFIG_HAVE_STATIC_CALL
+		if (__static_call_fixup(addr, op, dest))
+			continue;
+#endif
+		if (WARN_ONCE(dest != __x86_return_thunk_addr,
 			      "missing return thunk: %pS-%pS: %*ph",
 			      addr, dest, 5, addr))
 			continue;

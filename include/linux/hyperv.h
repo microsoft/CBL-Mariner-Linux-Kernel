@@ -24,7 +24,7 @@
 #include <linux/mod_devicetable.h>
 #include <linux/interrupt.h>
 #include <linux/reciprocal_div.h>
-#include <asm/hyperv-tlfs.h>
+#include <hyperv/hvhdk.h>
 
 #define MAX_PAGE_BUFFER_COUNT				32
 #define MAX_MULTIPAGE_BUFFER_COUNT			32 /* 128K */
@@ -766,15 +766,6 @@ struct vmbus_channel_msginfo {
 struct vmbus_close_msg {
 	struct vmbus_channel_msginfo info;
 	struct vmbus_channel_close_channel msg;
-};
-
-/* Define connection identifier type. */
-union hv_connection_id {
-	u32 asu32;
-	struct {
-		u32 id:24;
-		u32 reserved:8;
-	} u;
 };
 
 enum vmbus_device_type {
@@ -1805,5 +1796,13 @@ static inline unsigned long virt_to_hvpfn(void *addr)
 #define HVPFN_UP(x)	(((x) + HV_HYP_PAGE_SIZE-1) >> HV_HYP_PAGE_SHIFT)
 #define HVPFN_DOWN(x)	((x) >> HV_HYP_PAGE_SHIFT)
 #define page_to_hvpfn(page)	(page_to_pfn(page) * NR_HV_HYP_PAGES_IN_PAGE)
+
+#ifdef CONFIG_HYPERV_ROOT_PVIOMMU
+void __init hv_iommu_detect(void);
+#else
+static inline void hv_iommu_detect(void)
+{
+}
+#endif /* CONFIG_HYPERV_ROOT_PVIOMMU */
 
 #endif /* _HYPERV_H */

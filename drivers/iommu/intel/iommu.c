@@ -3800,7 +3800,7 @@ int __init intel_iommu_init(void)
 		    platform_optin_force_iommu();
 
 	down_write(&dmar_global_lock);
-	if (dmar_table_init()) {
+	if (dmar_table_init(true, false)) {
 		if (force_on)
 			panic("tboot: Failed to initialize DMAR table\n");
 		goto out_free_dmar;
@@ -4447,8 +4447,8 @@ static void intel_iommu_probe_finalize(struct device *dev)
 	iommu_setup_dma_ops(dev, 0, U64_MAX);
 }
 
-static void intel_iommu_get_resv_regions(struct device *device,
-					 struct list_head *head)
+void intel_iommu_get_resv_regions(struct device *device,
+				 struct list_head *head)
 {
 	int prot = DMA_PTE_READ | DMA_PTE_WRITE;
 	struct iommu_resv_region *reg;
@@ -4505,6 +4505,7 @@ static void intel_iommu_get_resv_regions(struct device *device,
 		return;
 	list_add_tail(&reg->list, head);
 }
+EXPORT_SYMBOL_GPL(intel_iommu_get_resv_regions);
 
 static struct iommu_group *intel_iommu_device_group(struct device *dev)
 {

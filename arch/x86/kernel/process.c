@@ -785,8 +785,8 @@ void __cpuidle arch_cpu_idle(void)
 }
 EXPORT_SYMBOL_GPL(arch_cpu_idle);
 
-#ifdef CONFIG_XEN
-bool xen_set_default_idle(void)
+#if defined(CONFIG_XEN) || defined(CONFIG_HYPERV)
+bool hyp_set_default_idle(void)
 {
 	bool ret = x86_idle_set();
 
@@ -797,6 +797,13 @@ bool xen_set_default_idle(void)
 #endif
 
 struct cpumask cpus_stop_mask;
+
+#ifdef CONFIG_HYPERV_VTL_MODE
+void hv_vtl_set_idle(void (*idle)(void))
+{
+	static_call_update(x86_idle, idle);
+}
+#endif
 
 void __noreturn stop_this_cpu(void *dummy)
 {

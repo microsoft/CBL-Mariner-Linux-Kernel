@@ -790,6 +790,10 @@ static void native_machine_power_off(void)
 	tboot_shutdown(TB_SHUTDOWN_HALT);
 }
 
+static void native_machine_kexec(void)
+{
+}
+
 struct machine_ops machine_ops __ro_after_init = {
 	.power_off = native_machine_power_off,
 	.shutdown = native_machine_shutdown,
@@ -798,6 +802,7 @@ struct machine_ops machine_ops __ro_after_init = {
 	.halt = native_machine_halt,
 #ifdef CONFIG_KEXEC_CORE
 	.crash_shutdown = native_machine_crash_shutdown,
+	.kexec = native_machine_kexec,
 #endif
 };
 

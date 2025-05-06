@@ -726,7 +726,7 @@ static int __init intel_prepare_irq_remapping(void)
 		return -ENODEV;
 	}
 
-	if (dmar_table_init() < 0)
+	if (dmar_table_init(true, false) < 0)
 		return -ENODEV;
 
 	if (intel_cap_audit(CAP_AUDIT_STATIC_IRQR, NULL))

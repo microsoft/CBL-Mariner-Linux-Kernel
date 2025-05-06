@@ -25,11 +25,13 @@
 #include <linux/slab.h>
 #include <linux/dma-map-ops.h>
 #include <linux/set_memory.h>
-#include <asm/hyperv-tlfs.h>
+#include <linux/reboot.h>
+#include <linux/notifier.h>
+#include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
 
 /*
- * hv_root_partition, ms_hyperv and hv_nested are defined here with other
+ * hv_current_partition, ms_hyperv and hv_nested are defined here with other
  * Hyper-V specific globals so they are shared across all architectures and are
  * built only when CONFIG_HYPERV is defined.  But on x86,
  * ms_hyperv_init_platform() is built even when CONFIG_HYPERV is not
@@ -37,8 +39,8 @@
  * here, allowing for an overriding definition in the module containing
  * ms_hyperv_init_platform().
  */
-bool __weak hv_root_partition;
-EXPORT_SYMBOL_GPL(hv_root_partition);
+enum hv_partition_type __weak hv_current_partition = HV_PARTITION_GUEST;
+EXPORT_SYMBOL_GPL(hv_current_partition);
 
 bool __weak hv_nested;
 EXPORT_SYMBOL_GPL(hv_nested);
@@ -62,6 +64,105 @@ static void hv_kmsg_dump_unregister(void);
 
 static struct ctl_table_header *hv_ctl_table_hdr;
 
+int hv_status_to_errno(u64 hv_status)
+{
+	switch (hv_result(hv_status)) {
+	case HV_STATUS_SUCCESS:
+		return 0;
+	case HV_STATUS_INVALID_PARAMETER:
+	case HV_STATUS_UNKNOWN_PROPERTY:
+	case HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE:
+	case HV_STATUS_INVALID_VP_INDEX:
+	case HV_STATUS_INVALID_REGISTER_VALUE:
+	case HV_STATUS_INVALID_LP_INDEX:
+	case HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED:
+		return -EINVAL;
+	case HV_STATUS_ACCESS_DENIED:
+	case HV_STATUS_OPERATION_DENIED:
+		return -EACCES;
+	case HV_STATUS_NOT_ACKNOWLEDGED:
+	case HV_STATUS_INVALID_VP_STATE:
+	case HV_STATUS_INVALID_PARTITION_STATE:
+		return -EBADFD;
+	}
+	return -ENOTRECOVERABLE;
+}
+EXPORT_SYMBOL_GPL(hv_status_to_errno);
+
+const char *hv_status_to_string(u64 hv_status)
+{
+	switch (hv_result(hv_status)) {
+	case HV_STATUS_SUCCESS:
+		return "HV_STATUS_SUCCESS";
+	case HV_STATUS_INVALID_HYPERCALL_CODE:
+		return "HV_STATUS_INVALID_HYPERCALL_CODE";
+	case HV_STATUS_INVALID_HYPERCALL_INPUT:
+		return "HV_STATUS_INVALID_HYPERCALL_INPUT";
+	case HV_STATUS_INVALID_ALIGNMENT:
+		return "HV_STATUS_INVALID_ALIGNMENT";
+	case HV_STATUS_INVALID_PARAMETER:
+		return "HV_STATUS_INVALID_PARAMETER";
+	case HV_STATUS_ACCESS_DENIED:
+		return "HV_STATUS_ACCESS_DENIED";
+	case HV_STATUS_INVALID_PARTITION_STATE:
+		return "HV_STATUS_INVALID_PARTITION_STATE";
+	case HV_STATUS_OPERATION_DENIED:
+		return "HV_STATUS_OPERATION_DENIED";
+	case HV_STATUS_UNKNOWN_PROPERTY:
+		return "HV_STATUS_UNKNOWN_PROPERTY";
+	case HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE:
+		return "HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE";
+	case HV_STATUS_INSUFFICIENT_MEMORY:
+		return "HV_STATUS_INSUFFICIENT_MEMORY";
+	case HV_STATUS_INVALID_PARTITION_ID:
+		return "HV_STATUS_INVALID_PARTITION_ID";
+	case HV_STATUS_INVALID_VP_INDEX:
+		return "HV_STATUS_INVALID_VP_INDEX";
+	case HV_STATUS_NOT_FOUND:
+		return "HV_STATUS_NOT_FOUND";
+	case HV_STATUS_INVALID_PORT_ID:
+		return "HV_STATUS_INVALID_PORT_ID";
+	case HV_STATUS_INVALID_CONNECTION_ID:
+		return "HV_STATUS_INVALID_CONNECTION_ID";
+	case HV_STATUS_INSUFFICIENT_BUFFERS:
+		return "HV_STATUS_INSUFFICIENT_BUFFERS";
+	case HV_STATUS_NOT_ACKNOWLEDGED:
+		return "HV_STATUS_NOT_ACKNOWLEDGED";
+	case HV_STATUS_INVALID_VP_STATE:
+		return "HV_STATUS_INVALID_VP_STATE";
+	case HV_STATUS_NO_RESOURCES:
+		return "HV_STATUS_NO_RESOURCES";
+	case HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED:
+		return "HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED";
+	case HV_STATUS_INVALID_LP_INDEX:
+		return "HV_STATUS_INVALID_LP_INDEX";
+	case HV_STATUS_INVALID_REGISTER_VALUE:
+		return "HV_STATUS_INVALID_REGISTER_VALUE";
+	case HV_STATUS_OPERATION_FAILED:
+		return "HV_STATUS_OPERATION_FAILED";
+	case HV_STATUS_TIME_OUT:
+		return "HV_STATUS_TIME_OUT";
+	case HV_STATUS_CALL_PENDING:
+		return "HV_STATUS_CALL_PENDING";
+	case HV_STATUS_VTL_ALREADY_ENABLED:
+		return "HV_STATUS_VTL_ALREADY_ENABLED";
+	default:
+		return "Unknown";
+	};
+	return "Unknown";
+}
+EXPORT_SYMBOL_GPL(hv_status_to_string);
+
+/*
+ * Per-cpu array holding the tail pointer for the SynIC event ring buffer
+ * for each SINT.
+ *
+ * We cannot maintain this in mshv driver because the tail pointer should
+ * persist even if the mshv driver is unloaded.
+ */
+u8 __percpu **hv_synic_eventring_tail;
+EXPORT_SYMBOL_GPL(hv_synic_eventring_tail);
+
 /*
  * Hyper-V specific initialization and shutdown code that is
  * common across all architectures.  Called from architecture
@@ -84,6 +185,9 @@ void __init hv_common_free(void)
 
 	free_percpu(hyperv_pcpu_input_arg);
 	hyperv_pcpu_input_arg = NULL;
+
+	free_percpu(hv_synic_eventring_tail);
+	hv_synic_eventring_tail = NULL;
 }
 
 /*
@@ -228,19 +332,19 @@ static void hv_kmsg_dump(struct kmsg_dumper *dumper,
 	 * contain the size of the panic data in that page. Rest of the
 	 * registers are no-op when the NOTIFY_MSG flag is set.
 	 */
-	hv_set_register(HV_REGISTER_CRASH_P0, 0);
-	hv_set_register(HV_REGISTER_CRASH_P1, 0);
-	hv_set_register(HV_REGISTER_CRASH_P2, 0);
-	hv_set_register(HV_REGISTER_CRASH_P3, virt_to_phys(hv_panic_page));
-	hv_set_register(HV_REGISTER_CRASH_P4, bytes_written);
+	hv_set_msr(HV_MSR_CRASH_P0, 0);
+	hv_set_msr(HV_MSR_CRASH_P1, 0);
+	hv_set_msr(HV_MSR_CRASH_P2, 0);
+	hv_set_msr(HV_MSR_CRASH_P3, virt_to_phys(hv_panic_page));
+	hv_set_msr(HV_MSR_CRASH_P4, bytes_written);
 
 	/*
 	 * Let Hyper-V know there is crash data available along with
 	 * the panic message.
 	 */
-	hv_set_register(HV_REGISTER_CRASH_CTL,
-			(HV_CRASH_CTL_CRASH_NOTIFY |
-			 HV_CRASH_CTL_CRASH_NOTIFY_MSG));
+	hv_set_msr(HV_MSR_CRASH_CTL,
+		   (HV_CRASH_CTL_CRASH_NOTIFY |
+		    HV_CRASH_CTL_CRASH_NOTIFY_MSG));
 }
 
 static struct kmsg_dumper hv_kmsg_dumper = {
@@ -279,6 +383,14 @@ static void hv_kmsg_dump_register(void)
 int __init hv_common_init(void)
 {
 	int i;
+	union hv_hypervisor_version_info version;
+
+	/* Get information about the Hyper-V host version */
+	if (!hv_get_hypervisor_version(&version))
+		pr_info("Hyper-V: Host Build %d.%d.%d.%d-%d-%d\n",
+			version.major_version, version.minor_version,
+			version.build_number, version.service_number,
+			version.service_pack, version.service_branch);
 
 	if (hv_is_isolation_supported())
 		sysctl_record_panic_msg = 0;
@@ -311,7 +423,7 @@ int __init hv_common_init(void)
 		 * Register for panic kmsg callback only if the right
 		 * capability is supported by the hypervisor.
 		 */
-		hyperv_crash_ctl = hv_get_register(HV_REGISTER_CRASH_CTL);
+		hyperv_crash_ctl = hv_get_msr(HV_MSR_CRASH_CTL);
 		if (hyperv_crash_ctl & HV_CRASH_CTL_CRASH_NOTIFY_MSG)
 			hv_kmsg_dump_register();
 
@@ -329,10 +441,13 @@ int __init hv_common_init(void)
 	hyperv_pcpu_input_arg = alloc_percpu(void  *);
 	BUG_ON(!hyperv_pcpu_input_arg);
 
-	/* Allocate the per-CPU state for output arg for root */
-	if (hv_root_partition) {
-		hyperv_pcpu_output_arg = alloc_percpu(void *);
-		BUG_ON(!hyperv_pcpu_output_arg);
+	hyperv_pcpu_output_arg = alloc_percpu(void *);
+	BUG_ON(!hyperv_pcpu_output_arg);
+
+	/* Allocate the per-CPU state for parent partitions*/
+	if (hv_parent_partition()) {
+		hv_synic_eventring_tail = alloc_percpu(u8 *);
+		BUG_ON(hv_synic_eventring_tail == NULL);
 	}
 
 	hv_vp_index = kmalloc_array(num_possible_cpus(), sizeof(*hv_vp_index),
@@ -357,9 +472,10 @@ int __init hv_common_init(void)
 int hv_common_cpu_init(unsigned int cpu)
 {
 	void **inputarg, **outputarg;
+	u8 **synic_eventring_tail;
 	u64 msr_vp_index;
 	gfp_t flags;
-	int pgcount = hv_root_partition ? 2 : 1;
+	const int pgcount = 2;
 	void *mem;
 	int ret;
 
@@ -369,17 +485,26 @@ int hv_common_cpu_init(unsigned int cpu)
 	inputarg = (void **)this_cpu_ptr(hyperv_pcpu_input_arg);
 
 	/*
-	 * hyperv_pcpu_input_arg and hyperv_pcpu_output_arg memory is already
-	 * allocated if this CPU was previously online and then taken offline
+	 * The per-cpu memory is already allocated if this CPU was previously
+	 * online and then taken offline
 	 */
 	if (!*inputarg) {
 		mem = kmalloc(pgcount * HV_HYP_PAGE_SIZE, flags);
 		if (!mem)
 			return -ENOMEM;
 
-		if (hv_root_partition) {
-			outputarg = (void **)this_cpu_ptr(hyperv_pcpu_output_arg);
-			*outputarg = (char *)mem + HV_HYP_PAGE_SIZE;
+		outputarg = (void **)this_cpu_ptr(hyperv_pcpu_output_arg);
+		*outputarg = (char *)mem + HV_HYP_PAGE_SIZE;
+
+		if (hv_parent_partition()) {
+			synic_eventring_tail = (u8 **)this_cpu_ptr(hv_synic_eventring_tail);
+			*synic_eventring_tail = kcalloc(HV_SYNIC_SINT_COUNT, sizeof(u8),
+							flags);
+
+			if (unlikely(!*synic_eventring_tail)) {
+				kfree(mem);
+				return -ENOMEM;
+			}
 		}
 
 		if (!ms_hyperv.paravisor_present &&
@@ -410,7 +535,7 @@ int hv_common_cpu_init(unsigned int cpu)
 		*inputarg = mem;
 	}
 
-	msr_vp_index = hv_get_register(HV_REGISTER_VP_INDEX);
+	msr_vp_index = hv_get_msr(HV_MSR_VP_INDEX);
 
 	hv_vp_index[cpu] = msr_vp_index;
 
@@ -495,7 +620,7 @@ EXPORT_SYMBOL_GPL(hv_setup_dma_ops);
 
 bool hv_is_hibernation_supported(void)
 {
-	return !hv_root_partition && acpi_sleep_state_supported(ACPI_STATE_S4);
+	return !hv_root_partition() && acpi_sleep_state_supported(ACPI_STATE_S4);
 }
 EXPORT_SYMBOL_GPL(hv_is_hibernation_supported);
 
@@ -507,7 +632,7 @@ EXPORT_SYMBOL_GPL(hv_is_hibernation_supported);
  */
 static u64 __hv_read_ref_counter(void)
 {
-	return hv_get_register(HV_REGISTER_TIME_REF_COUNT);
+	return hv_get_msr(HV_MSR_TIME_REF_COUNT);
 }
 
 u64 (*hv_read_reference_counter)(void) = __hv_read_ref_counter;
@@ -548,6 +673,11 @@ void __weak hv_remove_vmbus_handler(void)
 }
 EXPORT_SYMBOL_GPL(hv_remove_vmbus_handler);
 
+void __weak hv_setup_mshv_handler(void (*handler)(void))
+{
+}
+EXPORT_SYMBOL_GPL(hv_setup_mshv_handler);
+
 void __weak hv_setup_kexec_handler(void (*handler)(void))
 {
 }
@@ -584,3 +714,321 @@ u64 __weak hv_tdx_hypercall(u64 control, u64 param1, u64 param2)
 	return HV_STATUS_INVALID_PARAMETER;
 }
 EXPORT_SYMBOL_GPL(hv_tdx_hypercall);
+
+int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
+{
+	struct hv_create_vp *input;
+	u64 status;
+	unsigned long irq_flags;
+	int ret = HV_STATUS_SUCCESS;
+
+	/* Root VPs don't seem to need pages deposited */
+	if (partition_id != hv_current_partition_id) {
+		/* The value 90 is empirically determined. It may change. */
+		ret = hv_call_deposit_pages(node, partition_id, 90);
+		if (ret)
+			return ret;
+	}
+
+	do {
+		local_irq_save(irq_flags);
+
+		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+		input->partition_id = partition_id;
+		input->vp_index = vp_index;
+		input->flags = flags;
+		input->subnode_type = HvSubnodeAny;
+		input->proximity_domain_info = hv_numa_node_to_pxm_info(node);
+		status = hv_do_hypercall(HVCALL_CREATE_VP, input, NULL);
+		local_irq_restore(irq_flags);
+
+		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
+			if (!hv_result_success(status)) {
+				pr_err("%s: vcpu %u, lp %u, %s\n", __func__,
+				       vp_index, flags, hv_status_to_string(status));
+				ret = hv_status_to_errno(status);
+			}
+			break;
+		}
+		ret = hv_call_deposit_pages(node, partition_id, 1);
+
+	} while (!ret);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(hv_call_create_vp);
+
+/*
+ * See struct hv_deposit_memory. The first u64 is partition ID, the rest
+ * are GPAs.
+ */
+#define HV_DEPOSIT_MAX (HV_HYP_PAGE_SIZE / sizeof(u64) - 1)
+
+/* Deposits exact number of pages. Must be called with interrupts enabled.  */
+int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages)
+{
+	struct page **pages, *page;
+	int *counts;
+	int num_allocations;
+	int i, j, page_count;
+	int order;
+	u64 status;
+	int ret;
+	u64 base_pfn;
+	struct hv_deposit_memory *input_page;
+	unsigned long flags;
+
+	if (num_pages > HV_DEPOSIT_MAX)
+		return -E2BIG;
+	if (!num_pages)
+		return 0;
+
+	/* One buffer for page pointers and counts */
+	page = alloc_page(GFP_KERNEL);
+	if (!page)
+		return -ENOMEM;
+	pages = page_address(page);
+
+	counts = kcalloc(HV_DEPOSIT_MAX, sizeof(int), GFP_KERNEL);
+	if (!counts) {
+		free_page((unsigned long)pages);
+		return -ENOMEM;
+	}
+
+	/* Allocate all the pages before disabling interrupts */
+	i = 0;
+
+	while (num_pages) {
+		/* Find highest order we can actually allocate */
+		order = 31 - __builtin_clz(num_pages);
+
+		while (1) {
+			pages[i] = alloc_pages_node(node, GFP_KERNEL, order);
+			if (pages[i])
+				break;
+			if (!order) {
+				ret = -ENOMEM;
+				num_allocations = i;
+				goto err_free_allocations;
+			}
+			--order;
+		}
+
+		split_page(pages[i], order);
+		counts[i] = 1 << order;
+		num_pages -= counts[i];
+		i++;
+	}
+	num_allocations = i;
+
+	local_irq_save(flags);
+
+	input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	input_page->partition_id = partition_id;
+
+	/* Populate gpa_page_list - these will fit on the input page */
+	for (i = 0, page_count = 0; i < num_allocations; ++i) {
+		base_pfn = page_to_pfn(pages[i]);
+		for (j = 0; j < counts[i]; ++j, ++page_count)
+			input_page->gpa_page_list[page_count] = base_pfn + j;
+	}
+	status = hv_do_rep_hypercall(HVCALL_DEPOSIT_MEMORY,
+				     page_count, 0, input_page, NULL);
+	local_irq_restore(flags);
+	if (!hv_result_success(status)) {
+		pr_err("Failed to deposit pages: %s\n", hv_status_to_string(status));
+		ret = hv_status_to_errno(status);
+		goto err_free_allocations;
+	}
+
+	ret = 0;
+	goto free_buf;
+
+err_free_allocations:
+	for (i = 0; i < num_allocations; ++i) {
+		base_pfn = page_to_pfn(pages[i]);
+		for (j = 0; j < counts[i]; ++j)
+			__free_page(pfn_to_page(base_pfn + j));
+	}
+
+free_buf:
+	free_page((unsigned long)pages);
+	kfree(counts);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(hv_call_deposit_pages);
+
+/*
+ * Corresponding sleep states have to be initialized, in order for a subsequent
+ * HVCALL_ENTER_SLEEP_STATE call to succeed. Currently only S5 state as per
+ * ACPI 6.4 chapter 7.4.2 is relevant, while S1, S2 and S3 can be supported.
+ *
+ * ACPI should be initialized and should support S5 sleep state when this method
+ * is called, so that, it can extract correct PM values and pass them to hv.
+ */
+static int hv_initialize_sleep_states(void)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_set_system_property *in;
+	acpi_status acpi_status;
+	u8 sleep_type_a, sleep_type_b;
+
+	if (!acpi_sleep_state_supported(ACPI_STATE_S5)) {
+		pr_err("%s: S5 sleep state not supported.\n", __func__);
+		return -ENODEV;
+	}
+
+	acpi_status = acpi_get_sleep_type_data(ACPI_STATE_S5,
+						&sleep_type_a, &sleep_type_b);
+	if (ACPI_FAILURE(acpi_status))
+		return -ENODEV;
+
+	local_irq_save(flags);
+	in = (struct hv_input_set_system_property *)(*this_cpu_ptr(
+		hyperv_pcpu_input_arg));
+
+	in->property_id = HV_SYSTEM_PROPERTY_SLEEP_STATE;
+	in->set_sleep_state_info.sleep_state = HV_SLEEP_STATE_S5;
+	in->set_sleep_state_info.pm1a_slp_typ = sleep_type_a;
+	in->set_sleep_state_info.pm1b_slp_typ = sleep_type_b;
+
+	status = hv_do_hypercall(HVCALL_SET_SYSTEM_PROPERTY, in, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n",
+			__func__, hv_status_to_string(status));
+		return hv_status_to_errno(status);
+	}
+
+	return 0;
+}
+
+static int hv_call_enter_sleep_state(u32 sleep_state)
+{
+	u64 status;
+	int ret;
+	unsigned long flags;
+	struct hv_input_enter_sleep_state *in;
+
+	ret = hv_initialize_sleep_states();
+	if (ret)
+		return ret;
+
+	local_irq_save(flags);
+	in = (struct hv_input_enter_sleep_state *)(*this_cpu_ptr(
+		hyperv_pcpu_input_arg));
+	in->sleep_state = (enum hv_sleep_state)sleep_state;
+
+	status = hv_do_hypercall(HVCALL_ENTER_SLEEP_STATE, in, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n",
+			__func__, hv_status_to_string(status));
+		return hv_status_to_errno(status);
+	}
+
+	return 0;
+}
+
+static int hv_reboot_notifier_handler(struct notifier_block *this, unsigned long code, void *another)
+{
+	int ret = 0;
+
+	if (SYS_HALT == code || SYS_POWER_OFF == code)
+		ret = hv_call_enter_sleep_state(HV_SLEEP_STATE_S5);
+
+	return ret ? NOTIFY_DONE : NOTIFY_OK;
+}
+
+static struct notifier_block hv_reboot_notifier = {
+	.notifier_call	= hv_reboot_notifier_handler,
+};
+
+static int hv_acpi_sleep_handler(u8 sleep_state, u32 pm1a_cnt, u32 pm1b_cnt)
+{
+	int ret = 0;
+
+	if (sleep_state == ACPI_STATE_S5)
+		ret = hv_call_enter_sleep_state(HV_SLEEP_STATE_S5);
+
+	return ret == 0 ? 1 : -1;
+}
+
+static int hv_acpi_extended_sleep_handler(u8 sleep_state, u32 val_a, u32 val_b)
+{
+	return hv_acpi_sleep_handler(sleep_state, val_a, val_b);
+}
+
+int hv_sleep_notifiers_register(void)
+{
+	int ret;
+
+	acpi_os_set_prepare_sleep(&hv_acpi_sleep_handler);
+	acpi_os_set_prepare_extended_sleep(&hv_acpi_extended_sleep_handler);
+
+	ret = register_reboot_notifier(&hv_reboot_notifier);
+	if (ret)
+		pr_err("%s: cannot register reboot notifier %d\n",
+			__func__, ret);
+
+	return ret;
+}
+
+int hv_retrieve_scheduler_type(enum hv_scheduler_type *out)
+{
+	struct hv_input_get_system_property *input;
+	struct hv_output_get_system_property *output;
+	unsigned long flags;
+	u64 status;
+
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	memset(input, 0, sizeof(*input));
+	memset(output, 0, sizeof(*output));
+	input->property_id = HV_SYSTEM_PROPERTY_SCHEDULER_TYPE;
+
+	status = hv_do_hypercall(HVCALL_GET_SYSTEM_PROPERTY, input, output);
+	if (!hv_result_success(status)) {
+		local_irq_restore(flags);
+		pr_err("%s: %s\n", __func__, hv_status_to_string(status));
+		return hv_status_to_errno(status);
+	}
+
+	*out = output->scheduler_type;
+	local_irq_restore(flags);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(hv_retrieve_scheduler_type);
+
+void hv_identify_partition_type(void)
+{
+	/*
+	 * Check partitions creation privilege.
+	 * Only root of L1VH partitions can have this privilege.
+	 *
+	 * Hyper-V should never specify running as root and as a Confidential
+	 * VM. But to protect against a compromised/malicious Hyper-V trying
+	 * to exploit root behavior to expose Confidential VM memory, ignore
+	 * the root partition setting if also a Confidential VM.
+	 */
+	if ((ms_hyperv.priv_high & HV_CREATE_PARTITIONS) &&
+	    !(ms_hyperv.priv_high & HV_ISOLATION)) {
+		if (ms_hyperv.priv_high & HV_CPU_MANAGEMENT) {
+			ms_hyperv.hv_current_partition = HV_PARTITION_ROOT;
+			pr_info("Hyper-V: running as root partition\n");
+		} else {
+			ms_hyperv.hv_current_partition = HV_PARTITION_L1VH;
+			pr_info("Hyper-V: running as L1VH partition\n");
+		}
+	} else {
+		ms_hyperv.hv_current_partition = HV_PARTITION_GUEST;
+	}
+}

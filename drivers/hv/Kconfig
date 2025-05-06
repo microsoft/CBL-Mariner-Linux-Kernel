@@ -38,6 +38,37 @@ config HYPERV_VTL_MODE
 
 	  If unsure, say N
 
+
+config HV_SECURE_VTL
+	bool "Microsoft Hyper-V VTL1 driver"
+	depends on !MTRR
+	depends on !X86_MPARSE
+	depends on HYPERV_VTL_MODE
+	default n
+	help
+	  Select this option to enable Linux kernel as secure kernel running in VTL1.
+	  If unsure, say N.
+
+config HYPERV_VSM
+	tristate "Microsoft Hyper-V VSM driver"
+	depends on HYPERV
+	help
+	  Select this option to enable Hyper-V Virtual Secure Mode.
+	  Enabling this option will load a secure kernel in VTL1 and
+	  establish an interface between VTL0 and VTL1 to request for
+	  VSM services.
+
+config HYPERV_VSM_DISABLE_IMG_VERIFY
+	bool "Disable Image Verification for VSM binaries"
+	depends on HYPERV_VSM
+	help
+	  Select this option to disable VSM Secure Boot.
+	  Enabling this option will disable verifying the integrity and
+	  authenticity of the VSM secure kernel and loader. Enable this
+	  option only when debugging VSM. If this option is set, the
+	  system can be vulnerable to an attacker changing/replacing the
+	  secure kernel and/or loader.
+
 config HYPERV_TIMER
 	def_bool HYPERV && X86
 
@@ -54,5 +85,41 @@ config HYPERV_BALLOON
 	select PAGE_REPORTING
 	help
 	  Select this option to enable Hyper-V Balloon driver.
+
+config MSHV_ROOT
+	tristate "Microsoft Hyper-V root partition APIs driver"
+	depends on HYPERV
+	select EVENTFD
+	select IRQ_BYPASS_MANAGER
+	help
+	  Select this option when running as the root partition on Microsoft
+	  Hypervisor, to enable interfaces for managing guest virtual
+	  machines.
+
+	  The interfaces are provided via a device named /dev/mshv.
+
+	  To compile this as a module, choose M here.
+
+	  If unsure, say N.
+
+config MSHV_DIAG
+	tristate "Interface to get diagnostic logs from Microsoft Hypervisor: /dev/mshv_diag"
+	depends on HYPERV
+	help
+	  Grants access to Diagnostic(error) logs from Microsoft Hypervisor via char
+	  device interface.
+
+	  To compile this as a module, choose M here.
+
+	  If unsure, say N.
+
+config HYPERV_VSM
+        tristate "Microsoft Hyper-V VSM driver"
+        depends on HYPERV
+        help
+          Select this option to enable Hyper-V Virtual Secure Mode.
+          Enabling this option will load a secure kernel in VTL1 and
+          establish an interface between VTL0 and VTL1 to request for
+          VSM services.
 
 endmenu

@@ -476,8 +476,11 @@ static int vmap_pages_pte_range(pmd_t *pmd, unsigned long addr,
 			return -EBUSY;
 		if (WARN_ON(!page))
 			return -ENOMEM;
+
+#ifndef CONFIG_HV_SECURE_VTL
 		if (WARN_ON(!pfn_valid(page_to_pfn(page))))
 			return -EINVAL;
+#endif
 
 		set_pte_at(&init_mm, addr, pte, mk_pte(page, prot));
 		(*nr)++;
@@ -633,6 +636,11 @@ static int vmap_pages_range(unsigned long addr, unsigned long end,
 	err = vmap_pages_range_noflush(addr, end, prot, pages, page_shift);
 	flush_cache_vmap(addr, end);
 	return err;
+}
+
+int vmap_range(unsigned long addr, unsigned long end, struct page **pages)
+{
+	return vmap_pages_range(addr, end, PAGE_KERNEL, pages, PAGE_SHIFT);
 }
 
 int is_vmalloc_or_module_addr(const void *x)
@@ -2665,6 +2673,14 @@ struct vm_struct *get_vm_area_caller(unsigned long size, unsigned long flags,
 	return __get_vm_area_node(size, 1, PAGE_SHIFT, flags,
 				  VMALLOC_START, VMALLOC_END,
 				  NUMA_NO_NODE, GFP_KERNEL, caller);
+}
+
+struct vm_struct *get_module_vm_area(unsigned long size)
+{
+	return __get_vm_area_node(size, PAGE_SIZE, PAGE_SHIFT,
+				  VM_MAP | VM_UNINITIALIZED | VM_DEFER_KMEMLEAK,
+				  MODULES_VADDR, MODULES_END, NUMA_NO_NODE,
+				  GFP_KERNEL, __builtin_return_address(0));
 }
 
 /**

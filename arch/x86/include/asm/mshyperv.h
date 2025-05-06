@@ -6,10 +6,9 @@
 #include <linux/nmi.h>
 #include <linux/msi.h>
 #include <linux/io.h>
-#include <asm/hyperv-tlfs.h>
 #include <asm/nospec-branch.h>
 #include <asm/paravirt.h>
-#include <asm/mshyperv.h>
+#include <hyperv/hvhdk.h>
 
 /*
  * Hyper-V always provides a single IO-APIC at this MMIO address.
@@ -41,6 +40,7 @@ static inline unsigned char hv_get_nmi_reason(void)
 
 #if IS_ENABLED(CONFIG_HYPERV)
 extern bool hyperv_paravisor_present;
+extern int hv_crash_enabled;
 
 extern void *hv_hypercall_pg;
 
@@ -59,9 +59,9 @@ u64 hv_tdx_hypercall(u64 control, u64 param1, u64 param2);
 #define HV_AP_INIT_GPAT_DEFAULT		0x0007040600070406ULL
 #define HV_AP_SEGMENT_LIMIT		0xffffffff
 
-int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages);
 int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id);
-int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
+int hv_call_notify_all_processors_started(void);
+bool hv_lp_exists(u32 lp_index);
 
 /*
  * If the hypercall involves no input or output parameters, the hypervisor
@@ -246,6 +246,11 @@ static inline struct hv_vp_assist_page *hv_get_vp_assist_page(unsigned int cpu)
 	return hv_vp_assist_page[cpu];
 }
 
+static inline bool hv_should_clear_interrupt(enum hv_interrupt_type type)
+{
+	return type == HV_X64_INTERRUPT_TYPE_EXTINT;
+}
+
 void __init hyperv_init(void);
 void hyperv_setup_mmu_ops(void);
 void set_hv_tscchange_cb(void (*cb)(void));
@@ -266,11 +271,62 @@ bool hv_vcpu_is_preempted(int vcpu);
 static inline void hv_apic_init(void) {}
 #endif
 
+#if IS_ENABLED(CONFIG_HYPERV_IOMMU)
 struct irq_domain *hv_create_pci_msi_domain(void);
 
+int hv_map_msi_interrupt(struct irq_data *data,
+			 struct hv_interrupt_entry *out_entry);
+int hv_unmap_msi_interrupt(struct pci_dev *dev,
+			   struct hv_interrupt_entry *hvirqe);
 int hv_map_ioapic_interrupt(int ioapic_id, bool level, int vcpu, int vector,
 		struct hv_interrupt_entry *entry);
 int hv_unmap_ioapic_interrupt(int ioapic_id, struct hv_interrupt_entry *entry);
+u64 hv_build_devid_oftype(struct pci_dev *pdev, enum hv_device_type type);
+bool hv_pcidev_is_attached_dev(struct pci_dev *pdev);
+u64 hv_iommu_get_curr_partid(void);
+#else
+static inline struct irq_domain *hv_create_pci_msi_domain(void)
+{
+	return NULL;
+}
+static inline int hv_map_msi_interrupt(struct irq_data *data,
+					struct hv_interrupt_entry *out_entry)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_unmap_msi_interrupt(struct pci_dev *dev,
+					  struct hv_interrupt_entry *hvirqe)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_map_ioapic_interrupt(int ioapic_id, bool level,
+					   int vcpu, int vector,
+					   struct hv_interrupt_entry *entry)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_unmap_ioapic_interrupt(int ioapic_id,
+					     struct hv_interrupt_entry *entry)
+{
+	return -EOPNOTSUPP;
+}
+static inline u64 hv_build_devid_oftype(struct pci_dev *pdev,
+					 enum hv_device_type type)
+{
+	return 0;
+}
+static inline bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
+{
+	return false;
+}
+static inline u64 hv_iommu_get_curr_partid(void)
+{
+	return HV_PARTITION_ID_INVALID;
+}
+#endif
+u64 hv_pci_vmbus_device_id(struct pci_dev *pdev);
+void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg);
+extern bool hv_no_attdev;
 
 #ifdef CONFIG_AMD_MEM_ENCRYPT
 bool hv_ghcb_negotiate_protocol(void);
@@ -292,24 +348,24 @@ static inline void hv_ivm_msr_write(u64 msr, u64 value) {}
 static inline void hv_ivm_msr_read(u64 msr, u64 *value) {}
 #endif
 
-static inline bool hv_is_synic_reg(unsigned int reg)
+static inline bool hv_is_synic_msr(unsigned int reg)
 {
-	return (reg >= HV_REGISTER_SCONTROL) &&
-	       (reg <= HV_REGISTER_SINT15);
+	return (reg >= HV_X64_MSR_SCONTROL) &&
+	       (reg <= HV_X64_MSR_SINT15);
 }
 
-static inline bool hv_is_sint_reg(unsigned int reg)
+static inline bool hv_is_sint_msr(unsigned int reg)
 {
-	return (reg >= HV_REGISTER_SINT0) &&
-	       (reg <= HV_REGISTER_SINT15);
+	return (reg >= HV_X64_MSR_SINT0) &&
+	       (reg <= HV_X64_MSR_SINT15);
 }
 
-u64 hv_get_register(unsigned int reg);
-void hv_set_register(unsigned int reg, u64 value);
-u64 hv_get_non_nested_register(unsigned int reg);
-void hv_set_non_nested_register(unsigned int reg, u64 value);
+u64 hv_get_msr(unsigned int reg);
+void hv_set_msr(unsigned int reg, u64 value);
+u64 hv_get_non_nested_msr(unsigned int reg);
+void hv_set_non_nested_msr(unsigned int reg, u64 value);
 
-static __always_inline u64 hv_raw_get_register(unsigned int reg)
+static __always_inline u64 hv_raw_get_msr(unsigned int reg)
 {
 	return __rdmsr(reg);
 }
@@ -330,19 +386,23 @@ static inline int hyperv_flush_guest_mapping_range(u64 as,
 {
 	return -1;
 }
-static inline void hv_set_register(unsigned int reg, u64 value) { }
-static inline u64 hv_get_register(unsigned int reg) { return 0; }
-static inline void hv_set_non_nested_register(unsigned int reg, u64 value) { }
-static inline u64 hv_get_non_nested_register(unsigned int reg) { return 0; }
+static inline void hv_set_msr(unsigned int reg, u64 value) { }
+static inline u64 hv_get_msr(unsigned int reg) { return 0; }
+static inline void hv_set_non_nested_msr(unsigned int reg, u64 value) { }
+static inline u64 hv_get_non_nested_msr(unsigned int reg) { return 0; }
 #endif /* CONFIG_HYPERV */
 
 
 #ifdef CONFIG_HYPERV_VTL_MODE
 void __init hv_vtl_init_platform(void);
-int __init hv_vtl_early_init(void);
+int __init hv_vtl_early_init(u8 vtl);
+int hv_secure_vtl_enable_secondary_cpu(u32 target_vp_index);
+int hv_secure_vtl_init_boot_signal_page(void *shared_data);
 #else
 static inline void __init hv_vtl_init_platform(void) {}
-static inline int __init hv_vtl_early_init(void) { return 0; }
+static inline int __init hv_vtl_early_init(u8 vtl) { return 0; }
+static inline int hv_secure_vtl_enable_secondary_cpu(u32 target_vp_index) { return 0; }
+static inline int hv_secure_vtl_init_boot_signal_page(void *shared_data) { return 0; }
 #endif
 
 #include <asm-generic/mshyperv.h>
