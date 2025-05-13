@@ -15,7 +15,7 @@ struct mshv_setup_data {
 
 static struct efi_hvloader_protocol *efi_mshv;
 
-static inline void efistub_reboot(const char *fmt, ...)
+static inline void mshv_efi_reboot(const char *fmt, ...)
 {
 	va_list args;
 
@@ -144,12 +144,12 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 		 */
 		return EFI_SUCCESS;
 	} else if (status != EFI_SUCCESS)
-		efistub_reboot("LocateProtocol failed "
+		mshv_efi_reboot("LocateProtocol failed "
 			"unexpectedly with code %d", status);
 
 	status = efi_mshv->get_loader_init_status();
 	if (status != EFI_SUCCESS)
-		efistub_reboot("mshv protocol installed but seems to "
+		mshv_efi_reboot("mshv protocol installed but seems to "
 			"have failed with code %d", status);
 
 	/*
@@ -159,7 +159,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 	map_sz = 0;
 	status = efi_mshv->get_hv_ranges((void *)&mem_map, &map_sz, &desc_sz);
 	if (status != EFI_SUCCESS)
-		efistub_reboot("failed to retrieve mshv ranges: error code %d",
+		mshv_efi_reboot("failed to retrieve mshv ranges: error code %d",
 			status);
 
 	/*
@@ -172,7 +172,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 				&mshv_reserved_sz,
 				MSHV_RESERVED_RANGES_COUNT);
 	if (status != EFI_SUCCESS)
-		efistub_reboot("failed to allocate space for hv ranges with code %d",
+		mshv_efi_reboot("failed to allocate space for hv ranges with code %d",
 			status);
 
 	max_ranges = MSHV_RESERVED_RANGES_COUNT;
@@ -203,7 +203,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 			status = mshv_realloc_ranges(&mshv_reserved, &mshv_reserved_sz,
 						max_ranges);
 			if (status != EFI_SUCCESS)
-				efistub_reboot("failed to allocate space for "
+				mshv_efi_reboot("failed to allocate space for "
 					"hv ranges with code %d", status);
 
 			prev = &mshv_reserved[nr_ranges-1];
@@ -214,7 +214,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 	status = mshv_populate_ranges(boot_params, mshv_reserved,
 				nr_ranges * sizeof(struct resource));
 	if (status != EFI_SUCCESS)
-		efistub_reboot("failed to allocate space for hv ranges with code %d",
+		mshv_efi_reboot("failed to allocate space for hv ranges with code %d",
 			status);
 
 	/* Build an indirect setup_data for each mshv reserved range. */
@@ -222,7 +222,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 				nr_ranges * sizeof(struct mshv_setup_data),
 				(void **)&sd_block);
 	if (status != EFI_SUCCESS)
-		efistub_reboot("failed to allocate space for "
+		mshv_efi_reboot("failed to allocate space for "
 			"hv ranges: error code %d", status);
 
 	memset((void *)sd_block, 0, nr_ranges * sizeof(struct mshv_setup_data));
