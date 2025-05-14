@@ -24,6 +24,9 @@ static inline void mshv_efi_reboot(const char *fmt, ...)
 efi_status_t mshv_efi_init(void);
 void mshv_get_hv_ranges(efi_memory_desc_t **mem_map, unsigned long *map_sz,
 			unsigned long *desc_sz);
+void mshv_efi_update_cmdline(efi_memory_desc_t *mem_map,
+		unsigned long map_sz, unsigned long desc_sz, char *cmdline,
+		char *buf, unsigned long buf_sz);
 
 #ifdef CONFIG_X86_64
 efi_status_t mshv_efi_setup(struct boot_params *boot_params);

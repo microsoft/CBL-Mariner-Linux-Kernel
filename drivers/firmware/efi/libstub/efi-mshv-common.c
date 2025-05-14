@@ -39,6 +39,48 @@ void mshv_get_hv_ranges(efi_memory_desc_t **mem_map, unsigned long *map_sz,
 			       status);
 }
 
+/*
+ * Concatenate the hypervisor reserved ranges to the command line.
+ *
+ * The reserved ranges are formatted as follows:
+ * 'hyperv_resvd_new=<size>!<address>,<size>!<address>,...'
+ *
+ * @mem_map:		EFI memory map with the hypervisor reserved ranges
+ * @map_sz:		size of the memory map
+ * @desc_sz:		size of each descriptor in the memory map
+ * @old_cmdline:	old command line
+ * @buf:		buffer to hold the new command line
+ */
+void mshv_efi_update_cmdline(efi_memory_desc_t *mem_map,
+		unsigned long map_sz, unsigned long desc_sz, char *old_cmdline,
+		char *buf, unsigned long buf_sz)
+{
+	int i, cmdline_len, nr_desc;
+
+	cmdline_len = strlen(old_cmdline);
+	memcpy(buf, old_cmdline, cmdline_len + 1);
+
+	cmdline_len += snprintf(buf + cmdline_len,
+				buf_sz - cmdline_len,
+				" hyperv_resvd_new=");
+
+	nr_desc = map_sz / desc_sz;
+	for (i = 0; i < nr_desc; ++i) {
+		efi_memory_desc_t *d;
+		u64 start, end, sz;
+
+		d = efi_memdesc_ptr(mem_map, desc_sz, i);
+		start = d->phys_addr;
+		sz = d->num_pages << PAGE_SHIFT;
+		end = start + sz - 1;
+
+		cmdline_len += snprintf(buf + cmdline_len,
+					buf_sz - cmdline_len,
+					"%s0x%llx!0x%llx", i > 0 ? "," : "",
+					sz, start);
+	}
+}
+
 efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
 {
 	u32 nr_desc;
