@@ -13,20 +13,6 @@ struct mshv_setup_data {
 	struct setup_indirect si;
 } __packed;
 
-static struct efi_hvloader_protocol *efi_mshv;
-
-static inline void mshv_efi_reboot(const char *fmt, ...)
-{
-	va_list args;
-
-	va_start(args, fmt);
-	efi_printk(fmt, args);
-	va_end(args);
-
-	efi_bs_call(stall, 5 * EFI_USEC_PER_SEC);
-	efi_rt_call(reset_system, EFI_RESET_COLD, EFI_ABORTED, 0, NULL);
-}
-
 static int mshv_realloc_ranges(struct resource **data,
 				unsigned long *data_sz, int nr_ranges)
 {
@@ -120,7 +106,6 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 {
 	struct setup_data **setup_data_itr;
 	struct mshv_setup_data *sd_block;
-	static efi_guid_t hv_proto_guid = EFI_MSHV_MEDIA_PROTOCOL_GUID;
 	efi_memory_desc_t *mem_map;
 	unsigned long map_sz, key, desc_sz, setup_data_sz;
 	u32 desc_ver;
@@ -135,32 +120,21 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 	mem_map = NULL;
 	mshv_reserved = NULL;
 
-	status = efi_bs_call(locate_protocol,
-				&hv_proto_guid, NULL, (void **)&efi_mshv);
+	status = mshv_efi_init();
 	if (status == EFI_NOT_FOUND) {
 		/*
 		 * If the protocol is not installed
 		 * we are in a standard Linux boot
 		 */
 		return EFI_SUCCESS;
-	} else if (status != EFI_SUCCESS)
-		mshv_efi_reboot("LocateProtocol failed "
-			"unexpectedly with code %d", status);
-
-	status = efi_mshv->get_loader_init_status();
-	if (status != EFI_SUCCESS)
-		mshv_efi_reboot("mshv protocol installed but seems to "
-			"have failed with code %d", status);
+	}
 
 	/*
 	 * Get mshv memory map to figure out mshv reserved ranges.
 	 */
 
 	map_sz = 0;
-	status = efi_mshv->get_hv_ranges((void *)&mem_map, &map_sz, &desc_sz);
-	if (status != EFI_SUCCESS)
-		mshv_efi_reboot("failed to retrieve mshv ranges: error code %d",
-			status);
+	mshv_get_hv_ranges((void *)&mem_map, &map_sz, &desc_sz);
 
 	/*
 	 * Build an array of kernel 'struct resource' objects that contain mshv
@@ -258,58 +232,3 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 
 	return EFI_SUCCESS;
 }
-
-efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
-{
-	u32 nr_desc;
-	int i;
-	efi_status_t status;
-
-	if (!efi_mshv)
-		return EFI_SUCCESS;
-
-	nr_desc = map->map_size / map->desc_size;
-
-	for (i = 0; i < nr_desc; i++) {
-		efi_memory_desc_t *d;
-
-		d = efi_memdesc_ptr(map->map, map->desc_size, i);
-		switch (d->type) {
-		case EFI_RUNTIME_SERVICES_CODE:
-		case EFI_RUNTIME_SERVICES_DATA:
-			status = efi_mshv->register_range(d->phys_addr >> PAGE_SHIFT,
-								d->num_pages);
-			if (status != EFI_SUCCESS)
-				return status;
-			break;
-		default:
-			/* default case: range is not relevant to mshv */
-			break;
-		}
-	}
-
-	return EFI_SUCCESS;
-}
-
-/*
- * Launch mshv, if enabled.
- *
- * If mshv reports a bad status at this point, abort the boot.
- * To get more information about the failure, the HV loader's internal
- * logging can be used, which is exposed via efi_hv->get_next_log_msg(...).
- *
- */
-efi_status_t mshv_launch(void)
-{
-	struct hvl_return_data ret;
-
-	if (!efi_mshv)
-		return EFI_INVALID_PARAMETER;
-
-	efi_mshv->launch_hv(NULL, &ret);
-	/* TODO: Where/how do we dump the hv loader logs? */
-	if (ret.launch_data.launch_status != 0)
-		efi_rt_call(reset_system, EFI_RESET_COLD, EFI_ABORTED, 0, NULL);
-	return EFI_SUCCESS;
-}
-
