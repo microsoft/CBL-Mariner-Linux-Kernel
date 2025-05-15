@@ -40,7 +40,7 @@
 /* Is Linux running on nested Microsoft Hypervisor */
 bool hv_nested;
 struct ms_hyperv_info ms_hyperv;
-bool mshv_loader_new;
+bool mshv_loader_new = true;
 
 #if IS_ENABLED(CONFIG_HYPERV)
 static inline unsigned int hv_get_nested_msr(unsigned int reg)
@@ -526,65 +526,8 @@ int hv_get_hypervisor_version(union hv_hypervisor_version_info *info)
 }
 EXPORT_SYMBOL_GPL(hv_get_hypervisor_version);
 
-#define HV_MAX_RESVD_RANGES 32
 static int hv_resvd_ranges[HV_MAX_RESVD_RANGES] = {
 					[0 ... HV_MAX_RESVD_RANGES-1] = -1};
-static struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
-static u32 ranges_nr;
-
-/*
- * Parse "hyperv_resvd_new=<size>!<address>,<size>!<address>,...", specifying a
- * list of memory ranges that are reserved by the loader for the hypervisor.
- */
-static int __init hv_parse_hyperv_resvd_new(char *arg)
-{
-	unsigned long long region_start, region_sz;
-	int i = 0;
-	char *curr = arg;
-
-	mshv_loader_new = true;
-
-	if (is_kdump_kernel())
-		return 0;
-
-	while (*curr != 0) {
-		region_sz = simple_strtoull(curr, &curr, 16);
-		if (!region_sz) {
-			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
-			BUG();
-		}
-
-		if (*curr != '!') {
-			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
-			BUG();
-		}
-
-		++curr;
-
-		region_start = simple_strtoull(curr, &curr, 16);
-		if (region_start == 0) {
-			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
-			BUG();
-		}
-
-		memblock_reserve(region_start, region_sz);
-
-		hv_mshv_res[i].name = "Hypervisor Code and Data";
-		hv_mshv_res[i].flags = IORESOURCE_BUSY | IORESOURCE_SYSTEM_RAM;
-		hv_mshv_res[i].start = region_start;
-		hv_mshv_res[i].end = region_start + region_sz - 1;
-
-		if (*curr == ',')
-			++curr;
-
-		++i;
-	}
-
-	ranges_nr = i;
-
-	return 0;
-}
-early_param("hyperv_resvd_new", hv_parse_hyperv_resvd_new);
 
 /*
  * Parse eg "hyperv_resvd=3,7,20" where 3, 7, and 20 are indexes into the e820
@@ -651,33 +594,6 @@ static void __init hv_resv_mshv_memory(void)
 	}
 }
 
-/*
- * Log memory ranges that the hypervisor uses. The ranges are marked
- * by a custom bootloader.
- */
-static void __init hv_dump_mshv_memory(void)
-{
-	u64 start, end;
-	int i;
-
-	for (i = 0; i < ranges_nr; i++) {
-		start = hv_mshv_res[i].start;
-		end = hv_mshv_res[i].end;
-		pr_info("Hyper-V reserve [mem %#018Lx-%#018Lx]\n", start, end);
-	}
-}
-
-#if IS_ENABLED(CONFIG_MSHV_ROOT)
-/* This cannot be done during platform init, hence called from hyperv_init() */
-void __init hv_mark_resources(void)
-{
-	int i, max = ARRAY_SIZE(hv_mshv_res);
-
-	for (i = 0; i < max && hv_mshv_res[i].end; i++)
-		insert_resource(&iomem_resource, &hv_mshv_res[i]);
-}
-#endif
-
 static void hv_reserve_irq_vectors(void)
 {
 	#define HYPERV_DBG_FASTFAIL_VECTOR	0x29
@@ -691,6 +607,21 @@ static void hv_reserve_irq_vectors(void)
 
 	pr_info("Hyper-V:reserve vectors: %d %d %d\n", HYPERV_DBG_ASSERT_VECTOR,
 		HYPERV_DBG_SERVICE_VECTOR, HYPERV_DBG_FASTFAIL_VECTOR);
+}
+
+static void __init __maybe_unused hv_preset_lpj(void)
+{
+	unsigned long khz;
+	u64 lpj;
+
+	if (!x86_platform.calibrate_tsc)
+		return;
+
+	khz = x86_platform.calibrate_tsc();
+
+	lpj = ((u64)khz * 1000);
+	do_div(lpj, HZ);
+	preset_lpj = lpj;
 }
 
 static void __init ms_hyperv_init_platform(void)

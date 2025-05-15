@@ -20,6 +20,7 @@
 #include <linux/types.h>
 #include <linux/atomic.h>
 #include <linux/bitops.h>
+#include <linux/ioport.h>
 #include <acpi/acpi_numa.h>
 #include <linux/cpumask.h>
 #include <linux/nmi.h>
@@ -253,6 +254,13 @@ int hv_common_cpu_init(unsigned int cpu);
 int hv_common_cpu_die(unsigned int cpu);
 void hv_identify_partition_type(void);
 
+#define HV_MAX_RESVD_RANGES 32
+extern struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
+extern u32 ranges_nr;
+
+void __init hv_dump_mshv_memory(void);
+void __init hv_mark_resources(void);
+
 /**
  * hv_cpu_number_to_vp_number() - Map CPU to VP.
  * @cpu_number: CPU number in Linux terms
@@ -414,7 +422,6 @@ int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id);
 int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
 u64 mshv_current_partid(void);
 
-void __init hv_mark_resources(void);
 bool hv_lp_exists(u32 lp_index);
 int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages);
 
@@ -441,7 +448,6 @@ static inline int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u3
 	return -EOPNOTSUPP;
 }
 
-static inline void __init hv_mark_resources(void) {}
 static inline u64 mshv_current_partid(void)
 {
 	return HV_PARTITION_ID_INVALID;
