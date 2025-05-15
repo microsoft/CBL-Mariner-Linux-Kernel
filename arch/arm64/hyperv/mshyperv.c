@@ -104,6 +104,11 @@ static int __init hyperv_init(void)
 
 	hv_identify_partition_type();
 
+	if (hv_root_partition()) {
+		hv_dump_mshv_memory();
+		hv_mark_resources();
+	}
+
 	ret = hv_common_init();
 	if (ret)
 		return ret;
