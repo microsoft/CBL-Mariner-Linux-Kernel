@@ -92,6 +92,9 @@ lib-$(subst m,y,$(CONFIG_MSHV_ROOT)) += efi-mshv-common.o
 ifdef CONFIG_X86_64
 lib-$(CONFIG_MSHV_ROOT)	+= x86-efi-mshv.o
 endif
+ifdef CONFIG_ARM64
+lib-$(subst m,y,$(CONFIG_MSHV_ROOT)) += arm64-efi-mshv.o
+endif
 CFLAGS_arm32-stub.o		:= -DTEXT_OFFSET=$(TEXT_OFFSET)
 
 zboot-obj-y			:= zboot-decompress-gzip.o
