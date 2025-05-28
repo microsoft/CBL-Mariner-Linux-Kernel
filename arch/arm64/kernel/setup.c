@@ -54,6 +54,7 @@
 #include <asm/efi.h>
 #include <asm/xen/hypervisor.h>
 #include <asm/mmu_context.h>
+#include <asm/mshyperv.h>
 
 static int num_standard_resources;
 static struct resource *standard_resources;
@@ -375,6 +376,11 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 			"This indicates a broken bootloader or old kernel\n",
 			boot_args[1], boot_args[2], boot_args[3]);
 	}
+}
+
+void __init arch_post_acpi_subsys_init(void)
+{
+	BUG_ON(hyperv_init());
 }
 
 static inline bool cpu_can_disable(unsigned int cpu)

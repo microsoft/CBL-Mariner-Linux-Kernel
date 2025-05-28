@@ -21,6 +21,8 @@
 #include <linux/arm-smccc.h>
 #include <hyperv/hvhdk.h>
 
+int __init hyperv_init(void);
+
 /*
  * Declare calls to get and set Hyper-V VP register values on ARM64, which
  * requires a hypercall.
