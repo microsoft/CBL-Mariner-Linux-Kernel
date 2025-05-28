@@ -865,6 +865,11 @@ static int __init hv_parse_hyperv_resvd_new(char *arg)
 		return 0;
 
 	while (*curr != 0) {
+		if (i >= HV_MAX_RESVD_RANGES) {
+			pr_err("Hyper-V: too many hyperv_resvd_new ranges specified: %s\n", arg);
+			BUG();
+		}
+
 		region_sz = simple_strtoull(curr, &curr, 16);
 		if (!region_sz) {
 			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
