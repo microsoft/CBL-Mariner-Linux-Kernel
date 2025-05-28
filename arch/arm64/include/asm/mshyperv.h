@@ -24,6 +24,8 @@
 
 extern u64 hv_current_partition_id;
 
+int __init hyperv_init(void);
+
 /*
  * Declare calls to get and set Hyper-V VP register values on ARM64, which
  * requires a hypercall.
