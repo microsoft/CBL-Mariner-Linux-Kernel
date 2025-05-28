@@ -71,7 +71,7 @@ static bool __init hyperv_detect_via_smccc(void)
 	return arm_smccc_hypervisor_has_uuid(&hyperv_uuid);
 }
 
-static int __init hyperv_init(void)
+int __init hyperv_init(void)
 {
 	struct hv_get_vp_registers_output	result;
 	u64	guest_id;
@@ -130,8 +130,6 @@ static int __init hyperv_init(void)
 	hyperv_initialized = true;
 	return 0;
 }
-
-early_initcall(hyperv_init);
 
 bool hv_is_hyperv_initialized(void)
 {
