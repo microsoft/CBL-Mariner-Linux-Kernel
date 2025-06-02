@@ -151,8 +151,10 @@ static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd)
 	if (hv_scheduler_type != HV_SCHEDULER_TYPE_ROOT)
 		return -EOPNOTSUPP;
 
+#if IS_ENABLED(CONFIG_x86)
 	if (irq->lapic_control.logical_dest_mode)
 		return -EOPNOTSUPP;
+#endif
 
 	vp = partition->pt_vp_array[irq->lapic_apic_id];
 
@@ -184,8 +186,10 @@ static void mshv_assert_irq_slow(struct mshv_irqfd *irqfd)
 	unsigned int seq;
 	int idx;
 
+#if IS_ENABLED(CONFIG_x86)
 	WARN_ON(irqfd->irqfd_resampler &&
 		!irq->lapic_control.level_triggered);
+#endif
 
 	idx = srcu_read_lock(&partition->pt_irq_srcu);
 	if (irqfd->irqfd_girq_ent.guest_irq_num) {
@@ -405,13 +409,22 @@ static int hv_vpset_from_hyp_disabled(
 	input->target_partid = partid;
 	input->dest_address = lapic_irq->lapic_apic_id;
 	input->input_vtl = 0;
+#if IS_ENABLED(CONFIG_x86)
 	input->destmode_logical = lapic_irq->lapic_control.logical_dest_mode;
+#endif
 
 	status = hv_do_hypercall(HVCALL_GET_VPSET_FROM_MDA, input, output);
-	if (!hv_result_success(status))
+	if (!hv_result_success(status)) {
+#if IS_ENABLED(CONFIG_x86)
 		pr_err("Hyper-V: failed to get vpset. 0x%llx/0x%llx log:%d\n",
 		       status, lapic_irq->lapic_apic_id,
 		       lapic_irq->lapic_control.logical_dest_mode);
+#endif
+#if IS_ENABLED(CONFIG_ARM64)
+		pr_err("Hyper-V: failed to get vpset. 0x%llx/0x%llx\n",
+		       status, lapic_irq->lapic_apic_id);
+#endif
+	}
 
 	return hv_result_to_errno(status);
 }
@@ -695,6 +708,7 @@ static int mshv_irqfd_assign(struct mshv_partition *pt,
 	init_poll_funcptr(&irqfd->irqfd_polltbl, mshv_irqfd_queue_proc);
 
 	spin_lock_irq(&pt->pt_irqfds_lock);
+#if IS_ENABLED(CONFIG_x86)
 	if (args->flags & BIT(MSHV_IRQFD_BIT_RESAMPLE) &&
 	    !irqfd->irqfd_lapic_irq.lapic_control.level_triggered) {
 		/*
@@ -705,6 +719,7 @@ static int mshv_irqfd_assign(struct mshv_partition *pt,
 		ret = -EINVAL;
 		goto fail;
 	}
+#endif
 	ret = 0;
 	hlist_for_each_entry(tmp, &pt->pt_irqfds_list, irqfd_hnode) {
 		if (irqfd->irqfd_eventfd_ctx != tmp->irqfd_eventfd_ctx)
