@@ -8,6 +8,7 @@
  * Authors: Microsoft Linux virtualization team
  */
 
+#include <linux/acpi.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -16,7 +17,9 @@
 #include <linux/file.h>
 #include <linux/anon_inodes.h>
 #include <linux/mm.h>
+#include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/irq.h>
 #include <linux/cpuhotplug.h>
 #include <linux/random.h>
 #include <asm/mshyperv.h>
@@ -28,6 +31,8 @@
 #include <linux/crash_dump.h>
 #include <linux/panic_notifier.h>
 #include <linux/vmalloc.h>
+
+#include <acpi/acrestyp.h>
 
 #include <trace/events/mshv.h>
 
@@ -64,6 +69,18 @@ static int mshv_init_async_handler(struct mshv_partition *partition);
 static void mshv_async_hvcall_handler(void *data, u64 *status);
 static struct mshv_mem_region
 	*mshv_partition_region_by_gfn(struct mshv_partition *pt, u64 gfn);
+
+
+#ifdef HYPERVISOR_CALLBACK_VECTOR
+int mshv_interrupt = HYPERVISOR_CALLBACK_VECTOR;
+#else
+/*
+ * Reserve last PPI interrupt ID for MSHV related interrupts.
+ */
+int mshv_interrupt = 31;
+#endif
+int mshv_irq = -1;
+static long __percpu *mshv_evt;
 
 static const union hv_input_vtl input_vtl_zero;
 static const union hv_input_vtl input_vtl_normal = {
@@ -3491,6 +3508,54 @@ root_sched_deinit:
 	return err;
 }
 
+#if IS_ENABLED(CONFIG_ARM64)
+static irqreturn_t mshv_percpu_isr(int irq, void *dev_id)
+{
+	mshv_isr();
+	add_interrupt_randomness(irq);
+	return IRQ_HANDLED;
+}
+
+static int mshv_arch_parent_partition_init(struct device *dev)
+{
+	int ret;
+
+	mshv_irq = acpi_register_gsi(NULL, mshv_interrupt, ACPI_EDGE_SENSITIVE,
+				     ACPI_ACTIVE_HIGH);
+	if (mshv_irq < 0) {
+		dev_err(dev, "Failed to register interrupt ARM64\n");
+		return mshv_irq;
+	}
+
+	mshv_evt = alloc_percpu(long);
+	if (!mshv_evt) {
+		dev_err(dev, "Failed to allocate percpu event\n");
+		ret = -ENOMEM;
+		goto free_irq;
+	}
+
+	ret = request_percpu_irq(mshv_irq, mshv_percpu_isr, "MSHV", mshv_evt);
+	if (ret) {
+		dev_err(dev, "Failed to request percpu irq\n");
+		goto free_percpu_buf;
+	}
+
+	return ret;
+
+free_percpu_buf:
+	free_percpu(mshv_evt);
+free_irq:
+	acpi_unregister_gsi(mshv_interrupt);
+	free_irq(mshv_irq, NULL);
+	return ret;
+}
+#else
+static int mshv_arch_parent_partition_init(struct device *dev)
+{
+	return 0;
+}
+#endif
+
 static int __init mshv_parent_partition_init(void)
 {
 	int ret;
@@ -3508,6 +3573,10 @@ static int __init mshv_parent_partition_init(void)
 		return ret;
 
 	dev = mshv_dev.this_device;
+
+	ret = mshv_arch_parent_partition_init(dev);
+	if (ret)
+		return ret;
 
 	if (version_info.build_number < MSHV_HV_MIN_VERSION ||
 	    version_info.build_number > MSHV_HV_MAX_VERSION) {
@@ -3587,6 +3656,16 @@ static void __exit mshv_parent_partition_exit(void)
 	mshv_irqfd_wq_cleanup();
 	if (hv_root_partition())
 		mshv_root_partition_exit();
+	if (mshv_irq >= 0) {
+		if (mshv_evt) {
+			free_percpu_irq(mshv_irq, mshv_evt);
+			free_percpu(mshv_evt);
+			mshv_evt = NULL;
+		}
+		acpi_unregister_gsi(mshv_interrupt);
+		free_irq(mshv_irq, NULL);
+		mshv_irq = -1;
+	}
 	cpuhp_remove_state(mshv_cpuhp_online);
 	free_percpu(mshv_root.synic_pages);
 }
