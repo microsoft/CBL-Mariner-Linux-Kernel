@@ -1578,13 +1578,16 @@ union hv_interrupt_control {
 	u64 as_uint64;
 	struct {
 		u32 interrupt_type; /* enum hv_interrupt type */
+#if IS_ENABLED(CONFIG_x86)
 		u32 level_triggered : 1;
 		u32 logical_dest_mode : 1;
+		u32 reserved : 30;
+#endif
 #if IS_ENABLED(CONFIG_ARM64)
+		u32 reserved1 : 2;
 		u32 asserted : 1;
-		u32 rsvd : 29;
+		u32 reserved2 : 29;
 #else
-		u32 rsvd : 30;
 #endif
 	} __packed;
 };
