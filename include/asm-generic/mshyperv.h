@@ -219,6 +219,9 @@ void hv_setup_mshv_handler(void (*handler)(void));
 extern int vmbus_interrupt;
 extern int vmbus_irq;
 
+extern int mshv_interrupt;
+extern int mshv_irq;
+
 static inline int hv_root_partition(void)
 {
 	return ms_hyperv.hv_current_partition == HV_PARTITION_ROOT;
