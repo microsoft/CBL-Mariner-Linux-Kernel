@@ -353,21 +353,13 @@ hvcall_fail:
 	return ret;
 }
 
-/* Returns : 0 on success. -errno on failure */
-int __init mshv_diaglog_init(void)
+static int __init map_root_diag_buffers(uint tot_pages, struct page ***pppages)
 {
-	uint i, j, tot_pages, page_index = 0;
-	int ret;
-	unsigned long flags, pfn;
+	uint i, j, page_index = 0;
+	int ret = 0;
 	u64 status;
+	unsigned long flags, pfn;
 	struct page **ppages;
-
-	ret = get_diaglog_info();
-	if (ret)
-		return ret;
-
-	tot_pages = hv_logbuf_info.buffer_count *
-				hv_logbuf_info.buffer_size_in_pages;
 
 	ppages = kcalloc(tot_pages, sizeof(struct page *), GFP_KERNEL);
 	if (!ppages)
@@ -376,6 +368,7 @@ int __init mshv_diaglog_init(void)
 	for (i = 0; i < hv_logbuf_info.buffer_count; i++) {
 		struct hv_input_map_eventlog_buffer *input_page;
 		struct hv_output_map_eventlog_buffer *output_page;
+
 		do {
 			local_irq_save(flags);
 
@@ -389,7 +382,7 @@ int __init mshv_diaglog_init(void)
 
 			/* Get pfns of all pages in the buffer */
 			status = hv_do_hypercall(HVCALL_MAP_EVENT_LOG_BUFFER,
-						input_page, output_page);
+						       input_page, output_page);
 
 			if (hv_result(status) == HV_STATUS_SUCCESS)
 				break;
@@ -421,12 +414,44 @@ int __init mshv_diaglog_init(void)
 		if (j < hv_logbuf_info.buffer_size_in_pages) {
 			local_irq_restore(flags);
 			pr_err("%s: bad pfn %lx i:%d j:%d\n", __func__,
-			       pfn, i, j);
+				pfn, i, j);
 			unmap_diaglog_pages(i+1);
 			goto out;
 		}
 
 		local_irq_restore(flags);
+	}
+
+	*pppages = ppages;
+	return 0;
+
+out:
+	kfree(ppages);
+	return ret;
+}
+
+/* Returns : 0 on success. -errno on failure */
+int __init mshv_diaglog_init(void)
+{
+	uint tot_pages;
+	int ret;
+	struct page **ppages = NULL;
+
+	ret = get_diaglog_info();
+	if (ret)
+		return ret;
+
+	tot_pages = hv_logbuf_info.buffer_count *
+				hv_logbuf_info.buffer_size_in_pages;
+
+	if (hv_root_partition()) {
+		ret = map_root_diag_buffers(tot_pages, &ppages);
+		if (ret)
+			return ret;
+	} else {
+		pr_err("%s: diag log not supported in current partition\n",
+		       __func__);
+		return -ENODEV;
 	}
 
 	logbuf_sz = hv_logbuf_info.buffer_size_in_pages * PAGE_SIZE;
