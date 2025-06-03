@@ -39,6 +39,7 @@ struct fd_ctx {
 };
 
 static void *vmap_start;
+static struct page **diag_ppages;
 struct hv_system_diag_log_buffer_config hv_logbuf_info;
 static uint logbuf_sz;	/* once set, it doesn't change */
 
@@ -353,6 +354,10 @@ hvcall_fail:
 	return ret;
 }
 
+/*
+ * In root partition, pages are allocated by the hypervisor and mapped into
+ * kernel address space.
+ */
 static int __init map_root_diag_buffers(uint tot_pages, struct page ***pppages)
 {
 	uint i, j, page_index = 0;
@@ -436,12 +441,108 @@ out:
 	return ret;
 }
 
+static void free_diag_pages(struct page **ppages, uint tot_pages)
+{
+	uint i;
+
+	if (hv_l1vh_partition()) {
+		for (i = 0; i < tot_pages; i++)
+			__free_page(ppages[i]);
+	}
+
+	kfree(ppages);
+}
+
+/*
+ * In l1vh parent, pages are allocated by the kernel and passed to the
+ * hypervisor.
+ */
+static int __init map_l1vh_diag_buffers(uint tot_pages, struct page ***pppages)
+{
+	struct page **ppages;
+	uint i, j;
+	unsigned long flags;
+	u64 status;
+	int ret = 0;
+
+	ppages = kcalloc(tot_pages, sizeof(struct page *), GFP_KERNEL);
+	if (!ppages)
+		return -ENOMEM;
+
+	for (i = 0; i < tot_pages; i++) {
+		ppages[i] = alloc_page(GFP_KERNEL);
+		if (!ppages[i]) {
+			ret = -ENOMEM;
+			tot_pages = i;
+			pr_err("%s: alloc_page failed\n", __func__);
+			goto cleanup;
+		}
+	}
+
+	for (i = 0; i < hv_logbuf_info.buffer_count; i++) {
+		struct hv_input_map_partition_eventlog_buffer *input_page;
+		uint buffer_start = i * hv_logbuf_info.buffer_size_in_pages;
+
+		do {
+			local_irq_save(flags);
+
+			input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
+			memset(input_page, 0, sizeof(*input_page));
+			input_page->type = HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS;
+			input_page->buffer_index = i;
+			input_page->partition_id = HV_PARTITION_ID_SELF;
+
+			/* gpa_page_list - will fit in input_page */
+			for (j = 0; j < hv_logbuf_info.buffer_size_in_pages;
+				j++) {
+				input_page->gpa_page_list[j] =
+					page_to_pfn(ppages[buffer_start + j]);
+			}
+
+			status = hv_do_rep_hypercall(
+					HVCALL_MAP_PARTITION_EVENT_LOG_BUFFER,
+					hv_logbuf_info.buffer_size_in_pages, 0,
+					input_page, NULL);
+
+			if (hv_result(status) == HV_STATUS_SUCCESS)
+				break;
+
+			if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
+				local_irq_restore(flags);
+				pr_err("%s: hypercall: status %s\n", __func__,
+					hv_result_to_string(status));
+				ret = hv_result_to_errno(status);
+				unmap_diaglog_pages(i);
+				goto cleanup;
+			}
+			local_irq_restore(flags);
+			ret = hv_call_deposit_pages(NUMA_NO_NODE,
+						hv_current_partition_id, 1);
+			if (ret) {
+				pr_err("%s: hv_call_deposit_pages failed: %d\n",
+				       __func__, ret);
+				unmap_diaglog_pages(i);
+				goto cleanup;
+			}
+
+		} while (!ret);
+		local_irq_restore(flags);
+
+	}
+
+	*pppages = ppages;
+	return 0;
+
+cleanup:
+	free_diag_pages(ppages, tot_pages);
+	return ret;
+}
+
 /* Returns : 0 on success. -errno on failure */
 int __init mshv_diaglog_init(void)
 {
 	uint tot_pages;
 	int ret;
-	struct page **ppages = NULL;
 
 	ret = get_diaglog_info();
 	if (ret)
@@ -451,46 +552,64 @@ int __init mshv_diaglog_init(void)
 				hv_logbuf_info.buffer_size_in_pages;
 
 	if (hv_root_partition()) {
-		ret = map_root_diag_buffers(tot_pages, &ppages);
+		ret = map_root_diag_buffers(tot_pages, &diag_ppages);
 		if (ret)
 			return ret;
-	} else {
-		pr_err("%s: diag log not supported in current partition\n",
-		       __func__);
-		return -ENODEV;
+	} else { /* l1vh parent */
+		ret = map_l1vh_diag_buffers(tot_pages, &diag_ppages);
+		if (ret)
+			return ret;
 	}
 
 	logbuf_sz = hv_logbuf_info.buffer_size_in_pages * PAGE_SIZE;
 
-	vmap_start = vmap(ppages, tot_pages, VM_MAP, PAGE_KERNEL_RO);
+	vmap_start = vmap(diag_ppages, tot_pages, VM_MAP, PAGE_KERNEL_RO);
 	if (vmap_start == NULL) {
 		pr_err("%s: vmap failed", __func__);
 		ret = -ENOMEM;
-		goto out;
+		goto cleanup;
 	}
 
 	pr_info("Hyper-V: Diagnostics log initialized: %d bufs, each %d pgs\n",
 		hv_logbuf_info.buffer_count,
 		hv_logbuf_info.buffer_size_in_pages);
 
-	/*
-	 * Initialize diagnostic logs with some hv details. Ignore failure and
-	 * continue collecting logs
-	 */
-	if (hv_root_partition())
+	if (hv_root_partition()) {
+
+		/*
+		 * If root_partition, the physical buffer pages are managed by the
+		 * hypervisor. Kernel only has to unmap the pages from it virtual mem.
+		 * There is no need to keep track of ppages.
+		 */
+		kfree(diag_ppages);
+
+		/*
+		 * Initialize diagnostic logs with some hv details. Ignore failure and
+		 * continue collecting logs
+		 */
 		get_hv_header_in_diaglog();
 
-out:
-	kfree(ppages);
+	}
+
+	return 0;
+
+cleanup:
+	free_diag_pages(diag_ppages, tot_pages);
+
 	return ret;
 }
 
 int mshv_diaglog_exit(void)
 {
 	int ret;
+	uint tot_pages;
+
+	tot_pages = hv_logbuf_info.buffer_count *
+				hv_logbuf_info.buffer_size_in_pages;
 
 	vunmap(vmap_start);	/* checks for null addr */
 	ret = unmap_diaglog_pages(hv_logbuf_info.buffer_count);
+	free_diag_pages(diag_ppages, tot_pages);
 
 	return ret;
 }
