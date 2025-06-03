@@ -31,6 +31,13 @@ union hv_input_unmap_eventlog_buffer { /* HV_INPUT_UNMAP_EVENTLOG_BUFFER */
 	} __packed;
 };
 
+struct hv_input_map_partition_eventlog_buffer { /* HV_INPUT_MAP_PARTITION_EVENTLOG_BUFFER*/
+	__u64 partition_id;
+	__u32 type; /* HV_EVENTLOG_TYPE */
+	__u32 buffer_index;
+	__u64 gpa_page_list[];
+} __packed;
+
 enum hv_eventlog_buffer_state { /* HV_EVENTLOG_BUFFER_STATE */
 	HV_EVENT_LOG_BUFFER_STATE_STANDBY = 0,
 	HV_EVENT_LOG_BUFFER_STATE_FREE = 1,
