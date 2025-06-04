@@ -131,6 +131,55 @@ int __init hyperv_init(void)
 	return 0;
 }
 
+void __init hv_smp_prepare_cpus(unsigned int max_cpus)
+{
+	int cpu, ccpu = smp_processor_id();
+	int ret;
+
+	if (!hv_root_partition())
+		return;
+
+	for_each_present_cpu(cpu) {
+		if (cpu == ccpu)
+			continue;
+
+		hv_call_add_logical_proc(early_cpu_to_node(cpu), cpu,
+				cpu_physical_id(cpu));
+	}
+
+	hv_call_notify_all_processors_started();
+
+	for_each_present_cpu(cpu) {
+		if (cpu == ccpu)
+			continue;
+
+		hv_call_create_vp(NUMA_NO_NODE, hv_current_partition_id, cpu,
+				cpu);
+	}
+}
+
+int hv_cpu_on(unsigned int cpu, phys_addr_t entry_point)
+{
+	struct hv_input_start_vp *input;
+	u64 status;
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(input, 0, sizeof(*input));
+
+	input->partition_id = hv_current_partition_id;
+	input->vp_index = cpu;
+	input->target_vtl.target_vtl = 0;
+	input->vp_context.pc = entry_point;
+
+	status = hv_do_hypercall(HVCALL_START_VP, input, NULL);
+
+	if (!hv_result_success(status))
+		pr_err("Failed to start VP %d, status: %s\n", cpu,
+		       hv_result_to_string(status));
+
+	return hv_result_to_errno(status);
+}
+
 bool hv_is_hyperv_initialized(void)
 {
 	return hyperv_initialized;
