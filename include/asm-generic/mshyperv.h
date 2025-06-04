@@ -420,6 +420,7 @@ bool hv_result_needs_memory(u64 status);
 int hv_deposit_memory_node(int node, u64 partition_id, u64 status);
 int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id);
 int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
+int hv_call_notify_all_processors_started(void);
 u64 mshv_current_partid(void);
 
 bool hv_lp_exists(u32 lp_index);
@@ -439,6 +440,10 @@ static inline int hv_call_deposit_pages(int node, u64 partition_id, u64 num_page
 	return -EOPNOTSUPP;
 }
 static inline int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_call_notify_all_processors_started(void)
 {
 	return -EOPNOTSUPP;
 }

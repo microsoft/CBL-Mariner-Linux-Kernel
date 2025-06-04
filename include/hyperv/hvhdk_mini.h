@@ -344,6 +344,19 @@ union hv_gpa_page_access_state {
 	u8 as_uint8;
 } __packed;
 
+union hv_partition_event_input {
+	u64 reserved;
+};
+
+enum hv_partition_event {
+	HV_PARTITION_ALL_LOGICAL_PROCESSORS_STARTED = 4,
+};
+
+struct hv_input_notify_partition_event {
+	u32 event;	/* enum hv_partition_event */
+	union hv_partition_event_input input;
+} __packed;
+
 struct hv_lp_startup_status {
 	u64 hv_status;
 	u64 substatus1;

@@ -503,6 +503,7 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_ATTACH_DEVICE				0x0082
 #define HVCALL_DETACH_DEVICE				0x0083
 #define HVCALL_ENTER_SLEEP_STATE			0x0084
+#define HVCALL_NOTIFY_PARTITION_EVENT			0x0087
 #define HVCALL_NOTIFY_PORT_RING_EMPTY			0x008b
 #define HVCALL_REGISTER_INTERCEPT_RESULT		0x0091
 #define HVCALL_ASSERT_VIRTUAL_INTERRUPT			0x0094
@@ -905,6 +906,17 @@ union hv_input_vtl {
 } __packed;
 
 struct hv_init_vp_context {
+#if defined(CONFIG_ARM64)
+	u64 pc;
+	u64 sp_elh;
+	u64 sctlr_el1;
+	u64 mair_el1;
+	u64 tcr_el1;
+	u64 vbar_el1;
+	u64 ttbr0_el1;
+	u64 ttbr1_el1;
+	u64 x18;
+#else /* CONFIG_ARM64 */
 	u64 rip;
 	u64 rsp;
 	u64 rflags;
@@ -926,6 +938,7 @@ struct hv_init_vp_context {
 	u64 cr3;
 	u64 cr4;
 	u64 msr_cr_pat;
+#endif /* !CONFIG_ARM64 */
 } __packed;
 
 struct hv_input_start_vp { /* HV_INPUT_START_VIRTUAL_PROCESSOR */
