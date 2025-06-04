@@ -492,7 +492,7 @@ int hv_call_assert_virtual_interrupt(
 	 * NOTE: dest_addr only needs to be provided while asserting an
 	 * interrupt on x86 platform
 	 */
-#if IS_ENABLED(CONFIG_x86)
+#if IS_ENABLED(CONFIG_X86)
 	input->dest_addr = dest_addr;
 #endif
 	input->control = control;
