@@ -50,14 +50,10 @@
 #define VSM_PDP_TABLE_SHIFT     30
 #define VSM_PML4_TABLE_SHIFT    39
 
-/* Helpers to convert kernel virtual address to PAs and vice versa */
-#define VSM_NON_LOGICAL_PHYS_TO_VIRT(pa) ((pa) - vsm_skm_pa + vsm_skm_va)
-#define VSM_NON_LOGICAL_VIRT_TO_PHYS(va) ((va) - vsm_skm_va + vsm_skm_pa)
-
 /* Given VA, get index into the page table at a given level */
-#define VSM_GET_PML4_INDEX_FROM_VA(va) (((va) >> VSM_PML4_TABLE_SHIFT) & 0x1FF)
-#define VSM_GET_PDP_INDEX_FROM_VA(va) (((va) >> VSM_PDP_TABLE_SHIFT) & 0x1FF)
-#define VSM_GET_PD_INDEX_FROM_VA(va) (((va) >> VSM_PD_TABLE_SHIFT) & 0x1FF)
+#define VSM_GET_PML4_INDEX(addr) (((addr) >> VSM_PML4_TABLE_SHIFT) & 0x1FF)
+#define VSM_GET_PDP_INDEX(addr) (((addr) >> VSM_PDP_TABLE_SHIFT) & 0x1FF)
+#define VSM_GET_PD_INDEX(addr) (((addr) >> VSM_PD_TABLE_SHIFT) & 0x1FF)
 
 /*
  * Initial memory that will be mapped for secure kernel.
@@ -331,7 +327,7 @@ static void hv_vsm_dump_pt(u64 root, int lvl)
 
 	for (n = 0; n < VSM_ENTRIES_PER_PT; n++) {
 		entry_pa = root + (n * sizeof(u64));
-		entry_va = VSM_NON_LOGICAL_PHYS_TO_VIRT(entry_pa);
+		entry_va = phys_to_virt(entry_pa);
 
 		if (*entry_va)
 			pr_info("\t\t Entry: %i/%i - 0x%llx\n", n, lvl,
@@ -678,15 +674,17 @@ static void __init hv_vsm_init_cpu(struct hv_init_vp_context *vp_ctx,
 static void __init hv_vsm_init_gdt(struct hv_init_vp_context *vp_ctx)
 {
 	phys_addr_t gdt_pa, tss_pa, kstack_pa;
+	void *gdt_va;
 	u64 tss_sk_va, gdt;
 	struct x86_hw_tss *tss;
 	size_t gdt_size = sizeof(gdt), tss_size = sizeof(*tss), gdt_offset = 0;
 
 	/* Get a page for the GDT */
 	gdt_pa = PAGE_AT(vsm_skm_pa, VSM_GDT_PAGE);
+	gdt_va = phys_to_virt(gdt_pa);
 	/* Get a page for the TSS */
 	tss_pa = PAGE_AT(vsm_skm_pa, VSM_TSS_PAGE);
-	tss = VSM_NON_LOGICAL_PHYS_TO_VIRT(tss_pa);
+	tss = phys_to_virt(tss_pa);
 	/* Compute the VA that secure kernele will see for the TSS */
 	tss_sk_va = VSM_VA_FROM_PA(tss_pa);
 	/* Get a page for the secure kernel initial stack */
@@ -697,22 +695,22 @@ static void __init hv_vsm_init_gdt(struct hv_init_vp_context *vp_ctx)
 
 	/* Make and add the NULL descriptor to the GDT */
 	gdt = GDT_ENTRY(0x2018, 0, 0);
-	memcpy(VSM_NON_LOGICAL_PHYS_TO_VIRT(gdt_pa + gdt_offset), &gdt, gdt_size);
+	memcpy(gdt_va + gdt_offset, &gdt, gdt_size);
 	gdt_offset += gdt_size;
 
 	/* Make and add a code segment descriptor to the GDT */
 	gdt = GDT_ENTRY(0x2098, 0, 0);
-	memcpy(VSM_NON_LOGICAL_PHYS_TO_VIRT(gdt_pa + gdt_offset), &gdt, gdt_size);
+	memcpy(gdt_va + gdt_offset, &gdt, gdt_size);
 	gdt_offset += gdt_size;
 
 	/* Make and add a data segment descriptor to the GDT */
 	gdt = GDT_ENTRY(0x90, 0, 0);
-	memcpy(VSM_NON_LOGICAL_PHYS_TO_VIRT(gdt_pa + gdt_offset), &gdt, gdt_size);
+	memcpy(gdt_va + gdt_offset, &gdt, gdt_size);
 	gdt_offset += gdt_size;
 
 	/* Make and add a system segment descriptor for the TSS in the GDT */
 	gdt = GDT_ENTRY(0x89, tss_sk_va, tss_size);
-	memcpy(VSM_NON_LOGICAL_PHYS_TO_VIRT(gdt_pa + gdt_offset), &gdt, gdt_size);
+	memcpy(gdt_va + gdt_offset, &gdt, gdt_size);
 	gdt_offset += gdt_size;
 
 	/* Set up the GDT register */
@@ -783,7 +781,7 @@ static void __init hv_vsm_fill_pte_tables(u64 *pde, int pd_index, int num_pte_ta
 	/* Fill page tables with entries */
 	for (i = 0; i < num_pte_tables; i++) {
 		pte_pa = PAGE_AT(vsm_skm_pa, VSM_PTE_PAGES + i);
-		pte = VSM_NON_LOGICAL_PHYS_TO_VIRT(pte_pa);
+		pte = phys_to_virt(pte_pa);
 		*(pde + pd_index + i) = pte_pa | VSM_PAGE_PTE_MASK;
 		for (j = 0; j < VSM_ENTRIES_PER_PT; j++) {
 			*(pte + j) =
@@ -807,9 +805,9 @@ static void __init hv_vsm_init_page_tables(struct hv_init_vp_context *vp_ctx)
 	int num_pte_tables;
 
 	/* Get offset to know where to start mapping. Note vsm_skm_pa is the VA for OP-TEE */
-	pml4_index = VSM_GET_PML4_INDEX_FROM_VA(vsm_skm_pa);
-	pdp_index = VSM_GET_PDP_INDEX_FROM_VA(vsm_skm_pa);
-	pd_index = VSM_GET_PD_INDEX_FROM_VA(vsm_skm_pa);
+	pml4_index = VSM_GET_PML4_INDEX(vsm_skm_pa);
+	pdp_index = VSM_GET_PDP_INDEX(vsm_skm_pa);
+	pd_index = VSM_GET_PD_INDEX(vsm_skm_pa);
 
 #ifdef CONFIG_HYPERV_VSM_DEBUG
 	pr_info("%s: pml4_index = 0x%llx, pdp_index = 0x%llx, pd_index=0x%llx\n",
@@ -820,9 +818,9 @@ static void __init hv_vsm_init_page_tables(struct hv_init_vp_context *vp_ctx)
 	pdpe_pa = PAGE_AT(vsm_skm_pa, VSM_PDPE_PAGE);
 	pde_pa = PAGE_AT(vsm_skm_pa, VSM_PDE_PAGE);
 
-	pml4e = VSM_NON_LOGICAL_PHYS_TO_VIRT(pml4e_pa);
-	pdpe = VSM_NON_LOGICAL_PHYS_TO_VIRT(pdpe_pa);
-	pde = VSM_NON_LOGICAL_PHYS_TO_VIRT(pde_pa);
+	pml4e = phys_to_virt(pml4e_pa);
+	pdpe = phys_to_virt(pdpe_pa);
+	pde = phys_to_virt(pde_pa);
 
 	/* N.B.: Adding '+ 1' to a pointer moves the underlying value forward by 8 bytes! */
 	*(pml4e + pml4_index) = pdpe_pa | VSM_PAGE_MASK;
