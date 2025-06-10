@@ -1824,13 +1824,59 @@ errout:
 	return ret;
 }
 
+static void mshv_partition_destroy_region(struct mshv_mem_region *region)
+{
+	struct mshv_partition *partition = region->partition;
+	u64 page_offset, page_count;
+	u32 unmap_flags = 0;
+	int ret;
+
+	hlist_del(&region->hnode);
+
+	if (mshv_partition_encrypted(partition)) {
+		ret = mshv_partition_region_share(region);
+		if (ret) {
+			pt_err(partition,
+			       "Failed to regain access to memory, unpinning user pages will fail and crash the host error: %d\n",
+			       ret);
+			return;
+		}
+	}
+
+	if (region->flags.large_pages)
+		unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
+
+	/*
+	 * Unmap only the mapped pages to optimize performance,
+	 * especially for large memory regions.
+	 */
+	for (page_offset = 0; page_offset < region->nr_pages; page_offset += page_count) {
+		page_count = 1;
+		if (!region->pages[page_offset])
+			continue;
+
+		for (; page_count < region->nr_pages - page_offset; page_count++) {
+			if (!region->pages[page_offset + page_count])
+				break;
+		}
+
+		/* ignore unmap failures and continue as process may be exiting */
+		hv_call_unmap_gpa_pages(partition->pt_id,
+					region->start_gfn + page_offset,
+					page_count, unmap_flags);
+	}
+
+	mshv_region_evict(region);
+
+	vfree(region);
+}
+
 /* Called for unmapping both the guest ram and the mmio space */
 static long
 mshv_unmap_user_memory(struct mshv_partition *partition,
 		       struct mshv_user_mem_region mem)
 {
 	struct mshv_mem_region *region;
-	u32 unmap_flags = 0;
 
 	if (!(mem.flags & BIT(MSHV_SET_MEM_BIT_UNMAP)))
 		return -EINVAL;
@@ -1845,18 +1891,7 @@ mshv_unmap_user_memory(struct mshv_partition *partition,
 	    region->nr_pages != HVPFN_DOWN(mem.size))
 		return -EINVAL;
 
-	hlist_del(&region->hnode);
-
-	if (region->flags.large_pages)
-		unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
-
-	/* ignore unmap failures and continue as process may be exiting */
-	hv_call_unmap_gpa_pages(partition->pt_id, region->start_gfn,
-				region->nr_pages, unmap_flags);
-
-	mshv_region_evict(region);
-
-	vfree(region);
+	mshv_partition_destroy_region(region);
 	return 0;
 }
 
@@ -2642,28 +2677,10 @@ static int destroy_snp_partition_state(struct mshv_partition *partition)
 {
 	int i, ret = 0;
 	struct mshv_vp *vp;
-	struct mshv_mem_region *region;
-	u32 unmap_flags;
-	struct hlist_node *n;
 	struct hv_register_assoc explicit_suspend = {
 		.name = HV_REGISTER_EXPLICIT_SUSPEND,
 		.value.explicit_suspend.suspended = 1,
 	};
-
-	hlist_for_each_entry_safe(region, n, &partition->pt_mem_regions,
-				  hnode) {
-		if (region->flags.large_pages)
-			unmap_flags = HV_UNMAP_GPA_LARGE_PAGE;
-		else
-			unmap_flags = 0;
-		ret = hv_call_unmap_gpa_pages(partition->pt_id,
-					      region->start_gfn,
-					      region->nr_pages, unmap_flags);
-		if (ret) {
-			pt_err(partition, "Failed to unmap guest memory region\n");
-			goto out;
-		}
-	}
 
 	/*
 	 * Explicit suspend all the present VPs for the partition.
@@ -2748,7 +2765,6 @@ out:
 static void destroy_partition(struct mshv_partition *partition)
 {
 	struct mshv_vp *vp;
-	struct mshv_mem_region *region;
 	int i, ret;
 	struct hlist_node *n;
 
@@ -2761,6 +2777,8 @@ static void destroy_partition(struct mshv_partition *partition)
 	trace_mshv_destroy_partition(partition->pt_id);
 
 	if (partition->pt_initialized) {
+		struct mshv_mem_region *region;
+
 #ifdef HV_SUPPORTS_SEV_SNP_GUESTS
 		if (mshv_partition_encrypted(partition)) {
 			ret = destroy_snp_partition_state(partition);
@@ -2820,6 +2838,10 @@ static void destroy_partition(struct mshv_partition *partition)
 			partition->pt_vp_array[i] = NULL;
 		}
 
+		hlist_for_each_entry_safe(region, n, &partition->pt_mem_regions,
+					  hnode)
+			mshv_partition_destroy_region(region);
+
 		mshv_debugfs_partition_remove(partition);
 
 		/* Deallocates and unmaps everything including vcpus, GPA mappings etc */
@@ -2829,26 +2851,6 @@ static void destroy_partition(struct mshv_partition *partition)
 	}
 
 	remove_partition(partition);
-
-	/* Remove regions, regain access to the memory and unpin the pages */
-	hlist_for_each_entry_safe(region, n, &partition->pt_mem_regions,
-				  hnode) {
-		hlist_del(&region->hnode);
-
-		if (mshv_partition_encrypted(partition)) {
-			ret = mshv_partition_region_share(region);
-			if (ret) {
-				pt_err(partition,
-				       "Failed to regain access to memory, unpinning user pages will fail and crash the host error: %d\n",
-				      ret);
-				return;
-			}
-		}
-
-		mshv_region_evict(region);
-
-		vfree(region);
-	}
 
 	/* Withdraw and free all pages we deposited */
 	hv_call_withdraw_memory(U64_MAX, NUMA_NO_NODE, partition->pt_id);
