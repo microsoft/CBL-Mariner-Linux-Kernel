@@ -610,6 +610,8 @@ static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
 			err = PTR_ERR(pstats[HV_STATS_AREA_PARENT]);
 			goto unmap_self;
 		}
+		if (!pstats[HV_STATS_AREA_PARENT])
+			pstats[HV_STATS_AREA_PARENT] = pstats[HV_STATS_AREA_SELF];
 	}
 
 	dentry = debugfs_create_file("stats", 0400, parent,
@@ -809,6 +811,8 @@ static int mshv_debugfs_partition_stats_create(u64 partition_id,
 			err = PTR_ERR(pstats[HV_STATS_AREA_PARENT]);
 			goto unmap_self;
 		}
+		if (!pstats[HV_STATS_AREA_PARENT])
+			pstats[HV_STATS_AREA_PARENT] = pstats[HV_STATS_AREA_SELF];
 	}
 
 	dentry = debugfs_create_file("stats", 0400, parent,
