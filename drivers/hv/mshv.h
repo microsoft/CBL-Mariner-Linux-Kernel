@@ -25,4 +25,9 @@ int hv_call_get_partition_property(u64 partition_id, u64 property_code,
 
 int mshv_do_pre_guest_mode_work(ulong th_flags);
 
+#if IS_ENABLED(CONFIG_MSHV_DIAG)
+void register_mshv_trcbuf_complete_cb(
+		    void (*cb)(const struct hv_eventlog_message_payload *msg));
+#endif /* CONFIG_MSHV_DIAG */
+
 #endif /* _MSHV_H */
