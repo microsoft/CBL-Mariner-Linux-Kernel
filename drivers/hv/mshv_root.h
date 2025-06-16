@@ -415,12 +415,6 @@ int hv_call_issue_psp_guest_request(u64 partition_id, u64 req_pfn, u64 rsp_pfn,
 				    void *completion_data);
 #endif /* HV_SUPPORTS_SEV_SNP_GUESTS */
 
-#if IS_ENABLED(CONFIG_MSHV_DIAG)
-void mshv_trace_buffer_complete(const struct hv_eventlog_message_payload *msg);
-#else
-static inline void mshv_trace_buffer_complete(const struct hv_eventlog_message_payload *msg) {}
-#endif /* CONFIG_MSHV_DIAG */
-
 extern struct mshv_root mshv_root;
 extern enum hv_scheduler_type hv_scheduler_type;
 extern u8 * __percpu *hv_synic_eventring_tail;
