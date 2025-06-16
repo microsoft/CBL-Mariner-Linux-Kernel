@@ -61,7 +61,8 @@ static struct mshv_trace_buffer *mshv_trace_next_buffer(u32 next_buffer_index)
 	return &mshv_trace_state->tbs[next_buffer_index];
 }
 
-void mshv_trace_buffer_complete(const struct hv_eventlog_message_payload *msg)
+static void mshv_trace_buffer_complete(
+				const struct hv_eventlog_message_payload *msg)
 {
 	struct mshv_trace_state *state = mshv_trace_state;
 	struct mshv_trace *trace;
@@ -90,7 +91,6 @@ void mshv_trace_buffer_complete(const struct hv_eventlog_message_payload *msg)
 
 	wake_up(&trace->events_queue);
 }
-EXPORT_SYMBOL_GPL(mshv_trace_buffer_complete);
 
 static int hv_call_unmap_event_log_buffer(enum hv_eventlog_type type,
 					  u32 index)

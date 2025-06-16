@@ -18,6 +18,9 @@
 #include "mshv_eventfd.h"
 #include "mshv_root.h"
 
+static void (*mshv_trcbuf_complete_cb)(
+				const struct hv_eventlog_message_payload *msg);
+
 static u32 synic_event_ring_get_queued_port(u32 sint_index)
 {
 	struct hv_synic_event_ring_page **event_ring_page;
@@ -400,12 +403,23 @@ unlock_out:
 	return handled;
 }
 
+#if IS_ENABLED(CONFIG_MSHV_DIAG)
+void register_mshv_trcbuf_complete_cb(void (*cb)(const struct hv_eventlog_message_payload *msg))
+{
+	mshv_trcbuf_complete_cb = cb;
+}
+EXPORT_SYMBOL_GPL(register_mshv_trcbuf_complete_cb);
+#endif
+
 static bool mshv_eventlog_buffer_completion_isr(struct hv_message *msg)
 {
 	if (msg->header.message_type != HVMSG_EVENTLOG_BUFFERCOMPLETE)
 		return false;
 
-	mshv_trace_buffer_complete((void *)msg->u.payload);
+	if (mshv_trcbuf_complete_cb)
+		mshv_trcbuf_complete_cb((void *)msg->u.payload);
+	else
+		pr_warn_once("%s: Handler for eventlog buffer complete ISR has not been registered\n", __func__);
 
 	return true;
 }
