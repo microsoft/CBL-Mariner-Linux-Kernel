@@ -4,7 +4,7 @@
 
 config MSHV_DIAG
         tristate "Interface to get telemetry/diagnostics from mshv"
-        depends on HYPERV
+        depends on MSHV_ROOT
         help
           In a configuration with Linux as Root Partition, this driver
           exposes diagnostics/telemetry from Microsoft Hypervisor (mshv) to
