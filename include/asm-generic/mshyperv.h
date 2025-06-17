@@ -268,10 +268,6 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
 int hv_call_notify_all_processors_started(void);
 bool hv_lp_exists(u32 lp_index);
 
-#define HV_MAX_RESVD_RANGES 32
-static struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
-static u32 ranges_nr;
-
 void __init hv_dump_mshv_memory(void);
 void __init hv_mark_resources(void);
 
