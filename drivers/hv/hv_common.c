@@ -35,6 +35,10 @@
 u64 hv_current_partition_id = HV_PARTITION_ID_SELF;
 EXPORT_SYMBOL_GPL(hv_current_partition_id);
 
+#define HV_MAX_RESVD_RANGES 32
+static struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
+static u32 ranges_nr;
+
 /*
  * hv_current_partition, ms_hyperv and hv_nested are defined here with other
  * Hyper-V specific globals so they are shared across all architectures and are
