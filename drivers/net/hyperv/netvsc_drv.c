@@ -134,6 +134,19 @@ static int netvsc_open(struct net_device *net)
 	}
 
 	if (vf_netdev) {
+		if (!net_eq(dev_net(net), dev_net(vf_netdev))) {
+			ret = dev_change_net_namespace(vf_netdev, dev_net(net),
+						       "eth%d");
+			if (ret)
+				netdev_err(vf_netdev,
+					"Cannot move to same namespace as %s: %d\n",
+					net->name, ret);
+			else
+				netdev_info(vf_netdev,
+					"Moved VF to namespace with: %s\n",
+					net->name);
+		}
+
 		/* Setting synthetic device up transparently sets
 		 * slave as up. If open fails, then slave will be
 		 * still be offline (and not used).
@@ -807,6 +820,7 @@ void netvsc_linkstatus_callback(struct net_device *net,
 	schedule_delayed_work(&ndev_ctx->dwork, 0);
 }
 
+/* This function should only be called after skb_record_rx_queue() */
 static void netvsc_xdp_xmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	int rc;
@@ -982,8 +996,8 @@ int netvsc_recv_callback(struct net_device *net,
 static void netvsc_get_drvinfo(struct net_device *net,
 			       struct ethtool_drvinfo *info)
 {
-	strlcpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
-	strlcpy(info->fw_version, "N/A", sizeof(info->fw_version));
+	strscpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
+	strscpy(info->fw_version, "N/A", sizeof(info->fw_version));
 }
 
 static void netvsc_get_channels(struct net_device *net,
@@ -2614,7 +2628,7 @@ static int netvsc_probe(struct hv_device *dev,
 		goto rndis_failed;
 	}
 
-	memcpy(net->dev_addr, device_info->mac_adr, ETH_ALEN);
+	eth_hw_addr_set(net, device_info->mac_adr);
 
 	if (nvdev->num_chn > 1)
 		schedule_work(&nvdev->subchan_work);
@@ -2686,7 +2700,7 @@ no_net:
 	return ret;
 }
 
-static int netvsc_remove(struct hv_device *dev)
+static void netvsc_remove(struct hv_device *dev)
 {
 	struct net_device_context *ndev_ctx;
 	struct net_device *vf_netdev, *net;
@@ -2695,7 +2709,7 @@ static int netvsc_remove(struct hv_device *dev)
 	net = hv_get_drvdata(dev);
 	if (net == NULL) {
 		dev_err(&dev->device, "No net device to remove\n");
-		return 0;
+		return;
 	}
 
 	ndev_ctx = netdev_priv(net);
@@ -2729,7 +2743,6 @@ static int netvsc_remove(struct hv_device *dev)
 
 	free_percpu(ndev_ctx->vf_stats);
 	free_netdev(net);
-	return 0;
 }
 
 static int netvsc_suspend(struct hv_device *dev)
@@ -2813,31 +2826,6 @@ static struct  hv_driver netvsc_drv = {
 	},
 };
 
-/* Set VF's namespace same as the synthetic NIC */
-static void netvsc_event_set_vf_ns(struct net_device *ndev)
-{
-	struct net_device_context *ndev_ctx = netdev_priv(ndev);
-	struct net_device *vf_netdev;
-	int ret;
-
-	vf_netdev = rtnl_dereference(ndev_ctx->vf_netdev);
-	if (!vf_netdev)
-		return;
-
-	if (!net_eq(dev_net(ndev), dev_net(vf_netdev))) {
-		ret = dev_change_net_namespace(vf_netdev, dev_net(ndev),
-					       "eth%d");
-		if (ret)
-			netdev_err(vf_netdev,
-				   "Cannot move to same namespace as %s: %d\n",
-				   ndev->name, ret);
-		else
-			netdev_info(vf_netdev,
-				    "Moved VF to namespace with: %s\n",
-				    ndev->name);
-	}
-}
-
 /*
  * On Hyper-V, every VF interface is matched with a corresponding
  * synthetic interface. The synthetic interface is presented first
@@ -2849,11 +2837,6 @@ static int netvsc_netdev_event(struct notifier_block *this,
 {
 	struct net_device *event_dev = netdev_notifier_info_to_dev(ptr);
 	int ret = 0;
-
-	if (event_dev->netdev_ops == &device_ops && event == NETDEV_REGISTER) {
-		netvsc_event_set_vf_ns(event_dev);
-		return NOTIFY_DONE;
-	}
 
 	ret = check_dev_is_matching_vf(event_dev);
 	if (ret != 0)
