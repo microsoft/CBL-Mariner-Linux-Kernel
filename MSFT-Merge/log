@@ -1,0 +1,16 @@
+Name                                               SHA1
+----                                               ----
+config/mariner-3                                   66f82d9917d5f07b4b7c8de2f300fbaee70a8e60
+feature/dxgkrnl/6.6                                d4ec8a2216634e7c0ca058214febce3a2f029bc6
+feature/hvlite_virtio_pmem/6.6                     ed182130a52524b3225bd20f88dbdec80b8f5bbe
+feature/cifs/6.6                                   0226a001d65bde600d4a83c15f198156c81739f4
+feature/mana/6.6                                   1fb69fa139d9718b58e0526f68a6e1049cfe58b0
+feature/ipe/6.6                                    8fff8914ea9829c8637e4e3030c2fa6ca69d6a32
+feature/secure-boot-lockdown/6.6                   8cc9e1439c0be3fa15910262fd8fe1356f09ff4e
+feature/mana-infiniband/6.6                        3fa1ea3ede181bf11c329df056840b04ec2e3dca
+feature/mariner-3-tdx/6.6                          fe724c7cecdc0495b46cd5f7e058fda814b3e57f
+feature/nvidia-gb-200/6.6                          0b52057b6515f10132c527b754931b9740a8445f
+feature/gb200-cx8/6.6                              557615abe4250e27d35fc890b22b19304781da35
+feature/jitterentropy/6.6                          348279f45b79f422a03b5c9a35018995fcb05a2f
+feature/dm-verity/6.6                              7ee777438bbc6fc78caf85ff5d067b9768a8cf4b
+feature/reverts/6.6                                6a4cda44818be15e9a38d84ca2a714317e8e6866
