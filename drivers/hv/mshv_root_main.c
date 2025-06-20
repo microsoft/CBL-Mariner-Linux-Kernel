@@ -1831,19 +1831,24 @@ mshv_map_user_memory(struct mshv_partition *partition,
 			ret = hv_call_map_mmio_pages(partition->pt_id,
 						     mem.guest_pfn, mmio_pfn,
 						     HVPFN_DOWN(mem.size));
-	} else
+	} else {
 		ret = mshv_partition_mem_region_map(region);
+	}
 
-	if (ret)
-		goto errout;
+	if (ret) {
+		vfree(region);
+		goto out;
+	}
 
 	/* Install the new region */
 	hlist_add_head(&region->hnode, &partition->pt_mem_regions);
 
-	return 0;
+out:
+	trace_mshv_map_user_memory(partition->pt_id, region->start_uaddr,
+				   region->start_gfn, region->nr_pages,
+				   region->hv_map_flags,
+				   region->flags.memreg_isram, ret);
 
-errout:
-	vfree(region);
 	return ret;
 }
 
