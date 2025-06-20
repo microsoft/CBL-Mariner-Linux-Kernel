@@ -9,6 +9,7 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <asm/mshyperv.h>
+#include <trace/events/mshv.h>
 
 #include "mshv_eventfd.h"
 #include "mshv_root.h"
@@ -70,6 +71,10 @@ swap_routes:
 	mutex_unlock(&partition->pt_irq_lock);
 
 	synchronize_srcu_expedited(&partition->pt_irq_srcu);
+
+	trace_mshv_update_routing_table(partition->pt_id,
+					old, new, numents);
+
 	new = old;
 
 out:
