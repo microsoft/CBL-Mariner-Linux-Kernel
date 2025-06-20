@@ -441,6 +441,32 @@ TRACE_EVENT(mshv_hvcall_dispatch_vp,
 	)
 );
 
+TRACE_EVENT(mshv_update_routing_table,
+		TP_PROTO(u64 partition_id, void *old, void *new, u32 numents),
+		TP_ARGS(partition_id, old, new, numents),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(struct mshv_girq_routing_table *, old)
+		__field(struct mshv_girq_routing_table *, new)
+		__field(u32, numents)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->old = old;
+		__entry->new = new;
+		__entry->numents = numents;
+	),
+
+	TP_printk("partition_id=%llu old=%p new=%p numents=%u",
+		__entry->partition_id,
+		__entry->old,
+		__entry->new,
+		__entry->numents
+	)
+);
+
 #endif /* _TRACE_MSHV_MAIN_H */
 
 /* This part must be outside protection */
