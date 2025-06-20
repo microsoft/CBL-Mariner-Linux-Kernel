@@ -3009,6 +3009,7 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 	disabled_procs->cet_ss_support = 0;
 	disabled_procs->smep_support = 0;
 	disabled_procs->rdtscp_support = 0;
+	disabled_procs->tsc_invariant_support = 0;
 
 	/* Enable default XSave features that are known to be supported*/
 	disabled_xsave = &cr_props->disabled_processor_xsave_features;
