@@ -502,6 +502,73 @@ TRACE_EVENT(mshv_map_user_memory,
 	)
 );
 
+TRACE_EVENT(mshv_assign_ioeventfd,
+		TP_PROTO(u64 partition_id, u64 addr, u64 length, u64 datamatch, bool wildcard, void *eventfd, int ret),
+		TP_ARGS(partition_id, addr, length, datamatch, wildcard, eventfd, ret),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(u64, addr)
+		__field(u64, length)
+		__field(u64, datamatch)
+		__field(bool, wildcard)
+		__field(struct eventfd_ctx *, eventfd)
+		__field(int, ret)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->addr = addr;
+		__entry->length = length;
+		__entry->datamatch = datamatch;
+		__entry->wildcard = wildcard;
+		__entry->eventfd = eventfd;
+		__entry->ret = ret;
+	),
+
+	TP_printk("partition_id=%llu addr=%#016llx length=%#llx datamatch=0x%llx wildcard=%d eventfd=%p ret=%d",
+		  __entry->partition_id,
+		  __entry->addr,
+		  __entry->length,
+		  __entry->datamatch,
+		  __entry->wildcard,
+		  __entry->eventfd,
+		  __entry->ret
+		 )
+);
+
+TRACE_EVENT(mshv_deassign_ioeventfd,
+		TP_PROTO(u64 partition_id, u64 addr, u64 length, u64 datamatch, bool wildcard, void *eventfd),
+		TP_ARGS(partition_id, addr, length, datamatch, wildcard, eventfd),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(u64, addr)
+		__field(u64, length)
+		__field(u64, datamatch)
+		__field(bool, wildcard)
+		__field(struct eventfd_ctx *, eventfd)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->addr = addr;
+		__entry->length = length;
+		__entry->datamatch = datamatch;
+		__entry->wildcard = wildcard;
+		__entry->eventfd = eventfd;
+	),
+
+	TP_printk("partition_id=%llu addr=%#016llx length=%#llx datamatch=0x%llx wildcard=%d eventfd=%p",
+		  __entry->partition_id,
+		  __entry->addr,
+		  __entry->length,
+		  __entry->datamatch,
+		  __entry->wildcard,
+		  __entry->eventfd
+		 )
+);
+
 #endif /* _TRACE_MSHV_MAIN_H */
 
 /* This part must be outside protection */
