@@ -1249,8 +1249,6 @@ static int mshv_vp_stats_map(u64 partition_id, u32 vp_index,
 				&stats_pages[HV_STATS_AREA_PARENT]);
 	if (err)
 		goto unmap_self;
-	if (!stats_pages[HV_STATS_AREA_PARENT])
-		stats_pages[HV_STATS_AREA_PARENT] = stats_pages[HV_STATS_AREA_SELF];
 
 	return 0;
 
