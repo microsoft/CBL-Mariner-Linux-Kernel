@@ -41,7 +41,6 @@ enum hv_partition_type hv_current_partition;
 /* Is Linux running on nested Microsoft Hypervisor */
 bool hv_nested;
 struct ms_hyperv_info ms_hyperv;
-bool mshv_loader_new;
 
 /* Used in modules via hv_do_hypercall(): see arch/x86/include/asm/mshyperv.h */
 bool hyperv_paravisor_present __ro_after_init;
@@ -768,8 +767,6 @@ static void __init __maybe_unused hv_preset_lpj(void)
 }
 
 #define HV_MAX_RESVD_RANGES 32
-static int hv_resvd_ranges[HV_MAX_RESVD_RANGES] = {
-					[0 ... HV_MAX_RESVD_RANGES-1] = -1};
 static struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
 static u32 ranges_nr;
 
@@ -782,8 +779,6 @@ static int __init hv_parse_hyperv_resvd_new(char *arg)
 	unsigned long long region_start, region_sz;
 	int i = 0;
 	char *curr = arg;
-
-	mshv_loader_new = true;
 
 	if (is_kdump_kernel())
 		return 0;
@@ -826,71 +821,6 @@ static int __init hv_parse_hyperv_resvd_new(char *arg)
 	return 0;
 }
 early_param("hyperv_resvd_new", hv_parse_hyperv_resvd_new);
-
-/*
- * Parse eg "hyperv_resvd=3,7,20" where 3, 7, and 20 are indexes into the e820
- * table for ranges that are reserved by the loader for the hypervisor
- */
-static int __init hv_parse_hyperv_resvd(char *arg)
-{
-	int idx, max = ARRAY_SIZE(hv_resvd_ranges);
-	int i = 0;
-
-	mshv_loader_new = false;
-
-	if (is_kdump_kernel())
-		return 0;
-
-	if (hv_resvd_ranges[0] != -1) {
-		pr_err("Hyper-V: multile hyperv_resvd not supported\n");
-		return 0;
-	}
-
-	while (get_option(&arg, &idx)) {
-		if (i >= max) {
-			pr_err("Hyper-V: resvd ranges tbl full %d\n", idx);
-			break;
-		}
-
-		hv_resvd_ranges[i++] = idx;
-	}
-
-	return 0;
-}
-early_param("hyperv_resvd", hv_parse_hyperv_resvd);
-
-/*
- * Reserve memory that the hypervisor is using early on. The ranges are marked
- * reserved by a custom bootloader, change that to usable and reserve that
- * range. Note, the bootloader sanitizes the e820 before passing on here.
- */
-static void __init hv_resv_mshv_memory(void)
-{
-	u64 start, end, size;
-	int i, idx, max = ARRAY_SIZE(hv_resvd_ranges);
-
-	for (i = 0; i < max && hv_resvd_ranges[i] != -1; i++) {
-
-		idx = hv_resvd_ranges[i];
-		if (idx < 0 || idx >= e820_table->nr_entries) {
-			pr_info("Hyper-V: invalid resvd idx %d\n", idx);
-			continue;
-		}
-
-		start = e820_table->entries[idx].addr;
-		size = e820_table->entries[idx].size;
-		end = start + size - 1;
-
-		memblock_reserve(start, size);
-		e820_table->entries[idx].type = E820_TYPE_RAM;
-		pr_info("Hyper-V reserve [mem %#018Lx-%#018Lx]\n", start, end);
-
-		hv_mshv_res[i].name = "Hypervisor Code and Data";
-		hv_mshv_res[i].flags = IORESOURCE_BUSY | IORESOURCE_SYSTEM_RAM;
-		hv_mshv_res[i].start = start;
-		hv_mshv_res[i].end = end;
-	}
-}
 
 /*
  * Log memory ranges that the hypervisor uses. The ranges are marked
@@ -949,13 +879,8 @@ static void __init ms_hyperv_init_platform(void)
 
 	hv_identify_partition_type();
 
-	if (hv_root_partition()) {
-		/* very first thing, reserve/log exclusive hypervisor memory */
-		if (mshv_loader_new)
-			hv_dump_mshv_memory();
-		else
-			hv_resv_mshv_memory();
-	}
+	if (hv_root_partition())
+		hv_dump_mshv_memory();
 
 	if (ms_hyperv.hints & HV_X64_HYPERV_NESTED) {
 		hv_nested = true;
