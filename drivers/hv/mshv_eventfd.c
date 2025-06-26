@@ -402,8 +402,6 @@ static int hv_vpset_from_hyp_disabled(
 	u64 status;
 
 	memset(input, 0, sizeof(*input));
-	memset(output, 0, sizeof(*output));
-
 	input->target_partid = partid;
 	input->dest_address = lapic_irq->lapic_apic_id;
 	input->input_vtl = 0;
