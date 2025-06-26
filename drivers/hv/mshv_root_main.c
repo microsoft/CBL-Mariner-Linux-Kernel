@@ -1211,8 +1211,7 @@ mshv_vp_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index,
-				void *stats_pages[])
+static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index)
 {
 	union hv_stats_object_identity identity = {
 		.vp.partition_id = partition_id,
@@ -1221,9 +1220,6 @@ static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index,
 
 	identity.vp.stats_area_type = HV_STATS_AREA_SELF;
 	hv_unmap_stats_page(HV_STATS_OBJECT_VP, NULL, &identity);
-
-	if (stats_pages[HV_STATS_AREA_PARENT] == stats_pages[HV_STATS_AREA_SELF])
-		return;
 
 	identity.vp.stats_area_type = HV_STATS_AREA_PARENT;
 	hv_unmap_stats_page(HV_STATS_OBJECT_VP, NULL, &identity);
@@ -1385,7 +1381,7 @@ free_vp:
 	kfree(vp);
 unmap_stats_pages:
 	if (!hv_l1vh_partition())
-		mshv_vp_stats_unmap(partition->pt_id, args.vp_index, stats_pages);
+		mshv_vp_stats_unmap(partition->pt_id, args.vp_index);
 unmap_ghcb_page:
 	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available()) {
 		input_vtl.as_uint8 = 0;
@@ -2766,8 +2762,7 @@ static void destroy_partition(struct mshv_partition *partition)
 			mshv_debugfs_vp_remove(vp);
 
 			if (!hv_l1vh_partition())
-				mshv_vp_stats_unmap(partition->pt_id, vp->vp_index,
-						    (void **)vp->vp_stats_pages);
+				mshv_vp_stats_unmap(partition->pt_id, vp->vp_index);
 
 			if (vp->vp_register_page) {
 				input_vtl.as_uint8 = 0;
