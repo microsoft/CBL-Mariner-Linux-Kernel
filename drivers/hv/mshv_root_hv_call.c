@@ -1180,38 +1180,6 @@ hv_call_map_stats_page2(enum hv_stats_object_type type,
 	return ret;
 }
 
-static u8
-hv_stats_get_area_type(enum hv_stats_object_type type,
-		       const union hv_stats_object_identity *identity)
-{
-	if (type == HV_STATS_OBJECT_PARTITION)
-		return identity->partition.stats_area_type;
-	else if (type == HV_STATS_OBJECT_VP)
-		return identity->vp.stats_area_type;
-
-	return -1;
-}
-
-/*
- * GE HyperV does not expect two pages for mapping stats. HyperV returns
- * HV_STATUS_INVALID_PARAMETER for the second call. Currently there is no
- * reliable way to detect HyperV version. So, it is safe if mshv gracefully
- * ignores this error.
- */
-static bool
-ignore_parent_counter_map_result(enum hv_stats_object_type type,
-				 const union hv_stats_object_identity *identity,
-				 const int hv_status)
-{
-	u8 stats_area_type;
-
-	stats_area_type = hv_stats_get_area_type(type, identity);
-	if (stats_area_type != HV_STATS_AREA_PARENT)
-		return false;
-
-	return hv_status == HV_STATUS_INVALID_PARAMETER;
-}
-
 static int
 hv_call_map_stats_page(enum hv_stats_object_type type,
 		       const union hv_stats_object_identity *identity,
@@ -1221,7 +1189,7 @@ hv_call_map_stats_page(enum hv_stats_object_type type,
 	struct hv_input_map_stats_page *input;
 	struct hv_output_map_stats_page *output;
 	u64 status, pfn;
-	int hv_status, ret = 0;
+	int ret;
 
 	do {
 		local_irq_save(flags);
@@ -1236,17 +1204,9 @@ hv_call_map_stats_page(enum hv_stats_object_type type,
 		pfn = output->map_location;
 
 		local_irq_restore(flags);
-		hv_status = hv_result(status);
-		if (hv_status != HV_STATUS_INSUFFICIENT_MEMORY) {
+		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
 			if (hv_result_success(status))
 				break;
-
-			if (ignore_parent_counter_map_result(type, identity, hv_status)) {
-				pr_warn_once("%s: map stats page with PARENT area type is in supported in GE HyperV\n",
-					     __func__);
-				*addr = NULL;
-				return 0;
-			}
 
 			pr_err("%s: %s\n", __func__,
 			       hv_status_to_string(status));
