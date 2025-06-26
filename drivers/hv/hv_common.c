@@ -737,6 +737,7 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+		memset(input, 0, sizeof(*input));
 		input->partition_id = partition_id;
 		input->vp_index = vp_index;
 		input->flags = flags;
@@ -828,6 +829,7 @@ int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages)
 
 	input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+	memset(input_page, 0, sizeof(*input_page));
 	input_page->partition_id = partition_id;
 
 	/* Populate gpa_page_list - these will fit on the input page */
@@ -889,9 +891,9 @@ static int hv_initialize_sleep_states(void)
 		return -ENODEV;
 
 	local_irq_save(flags);
-	in = (struct hv_input_set_system_property *)(*this_cpu_ptr(
-		hyperv_pcpu_input_arg));
+	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+	memset(in, 0, sizeof(*in));
 	in->property_id = HV_SYSTEM_PROPERTY_SLEEP_STATE;
 	in->set_sleep_state_info.sleep_state = HV_SLEEP_STATE_S5;
 	in->set_sleep_state_info.pm1a_slp_typ = sleep_type_a;
@@ -921,8 +923,9 @@ static int hv_call_enter_sleep_state(u32 sleep_state)
 		return ret;
 
 	local_irq_save(flags);
-	in = (struct hv_input_enter_sleep_state *)(*this_cpu_ptr(
-		hyperv_pcpu_input_arg));
+	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	memset(in, 0, sizeof(*in));
 	in->sleep_state = (enum hv_sleep_state)sleep_state;
 
 	status = hv_do_hypercall(HVCALL_ENTER_SLEEP_STATE, in, NULL);
@@ -993,7 +996,6 @@ int hv_retrieve_scheduler_type(enum hv_scheduler_type *out)
 	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
 	memset(input, 0, sizeof(*input));
-	memset(output, 0, sizeof(*output));
 	input->property_id = HV_SYSTEM_PROPERTY_SCHEDULER_TYPE;
 
 	status = hv_do_hypercall(HVCALL_GET_SYSTEM_PROPERTY, input, output);

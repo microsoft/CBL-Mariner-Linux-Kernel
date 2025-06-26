@@ -153,7 +153,7 @@ int hv_call_create_partition(
 
 int hv_call_initialize_partition(u64 partition_id)
 {
-	struct hv_input_initialize_partition input;
+	struct hv_input_initialize_partition input = { 0 };
 	u64 status;
 	int ret;
 
@@ -188,7 +188,7 @@ int hv_call_initialize_partition(u64 partition_id)
 
 int hv_call_finalize_partition(u64 partition_id)
 {
-	struct hv_input_finalize_partition input;
+	struct hv_input_finalize_partition input = { 0 };
 	u64 status;
 
 	input.partition_id = partition_id;
@@ -206,7 +206,7 @@ int hv_call_finalize_partition(u64 partition_id)
 
 int hv_call_delete_partition(u64 partition_id)
 {
-	struct hv_input_delete_partition input;
+	struct hv_input_delete_partition input = { 0 };
 	u64 status;
 
 	input.partition_id = partition_id;
@@ -255,6 +255,7 @@ static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 		local_irq_save(irq_flags);
 		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+		memset(input_page, 0, sizeof(*input_page));
 		input_page->target_partition_id = partition_id;
 		input_page->target_gpa_base = gfn + (done << large_shift);
 		input_page->map_flags = flags;
@@ -369,6 +370,7 @@ int hv_call_unmap_gpa_pages(
 		local_irq_save(irq_flags);
 		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+		memset(input_page, 0, sizeof(*input_page));
 		input_page->target_partition_id = partition_id;
 		input_page->target_gpa_base = gfn + (done << large_shift);
 		input_page->unmap_flags = flags;
@@ -413,6 +415,7 @@ int hv_call_get_gpa_access_states(
 		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
 		output_page = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
+		memset(input_page, 0, sizeof(*input_page));
 		input_page->partition_id = partition_id;
 		input_page->hv_gpa_page_number = gpa_base_pfn + *written_total;
 		input_page->flags = state_flags;
@@ -455,6 +458,8 @@ int hv_call_install_intercept(
 	do {
 		local_irq_save(flags);
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+		memset(input, 0, sizeof(*input));
 		input->partition_id = partition_id;
 		input->access_type = access_type;
 		input->intercept_type = intercept_type;
@@ -489,6 +494,7 @@ int hv_call_assert_virtual_interrupt(
 
 	local_irq_save(flags);
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
 	memset(input, 0, sizeof(*input));
 	input->partition_id = partition_id;
 	input->vector = vector;
@@ -554,9 +560,8 @@ int hv_call_get_vp_state(
 		local_irq_save(flags);
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 		output = *this_cpu_ptr(hyperv_pcpu_output_arg);
-		memset(input, 0, sizeof(*input));
-		memset(output, 0, sizeof(*output));
 
+		memset(input, 0, sizeof(*input));
 		input->partition_id = partition_id;
 		input->vp_index = vp_index;
 		input->state_data = state_data;
@@ -622,8 +627,8 @@ int hv_call_set_vp_state(
 	do {
 		local_irq_save(flags);
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
-		memset(input, 0, sizeof(*input));
 
+		memset(input, 0, sizeof(*input));
 		input->partition_id = partition_id;
 		input->vp_index = vp_index;
 		input->state_data = state_data;
@@ -675,6 +680,7 @@ static int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 		output = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
+		memset(input, 0, sizeof(*input));
 		input->partition_id = partition_id;
 		input->vp_index = vp_index;
 		input->type = type;
@@ -750,7 +756,6 @@ static int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
 	memset(input, 0, sizeof(*input));
-
 	input->partition_id = partition_id;
 	input->vp_index = vp_index;
 	input->type = type;
@@ -796,6 +801,7 @@ int hv_call_set_partition_property(
 
 	local_irq_save(flags);
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
 	memset(input, 0, sizeof(*input));
 	input->partition_id = partition_id;
 	input->property_code = property_code;
@@ -834,8 +840,6 @@ int hv_call_translate_virtual_address(
 	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
 	memset(input, 0, sizeof(*input));
-	memset(output, 0, sizeof(*output));
-
 	input->partition_id = partition_id;
 	input->vp_index = vp_index;
 	input->control_flags = flags;
@@ -893,8 +897,8 @@ hv_call_create_port(u64 port_partition_id, union hv_port_id port_id,
 	do {
 		local_irq_save(flags);
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
-		memset(input, 0, sizeof(*input));
 
+		memset(input, 0, sizeof(*input));
 		input->port_partition_id = port_partition_id;
 		input->port_id = port_id;
 		input->connection_partition_id = connection_partition_id;
@@ -960,6 +964,7 @@ hv_call_connect_port(u64 port_partition_id, union hv_port_id port_id,
 	do {
 		local_irq_save(flags);
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
 		memset(input, 0, sizeof(*input));
 		input->port_partition_id = port_partition_id;
 		input->port_id = port_id;
@@ -1051,6 +1056,8 @@ int hv_call_register_intercept_result(u32 vp_index,
 	do {
 		local_irq_save(flags);
 		in = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+		memset(in, 0, sizeof(*in));
 		in->vp_index = vp_index;
 		in->partition_id = partition_id;
 		in->intercept_type = intercept_type;
@@ -1094,6 +1101,7 @@ int hv_call_signal_event_direct(u32 vp_index,
 	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	out = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
+	memset(in, 0, sizeof(*in));
 	in->target_partition = partition_id;
 	in->target_vp = vp_index;
 	in->target_vtl = vtl;
@@ -1126,6 +1134,7 @@ int hv_call_post_message_direct(u32 vp_index,
 	local_irq_save(flags);
 	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+	memset(in, 0, sizeof(*in));
 	in->partition_id = partition_id;
 	in->vp_index = vp_index;
 	in->vtl = vtl;
@@ -1157,7 +1166,7 @@ int hv_call_get_vp_cpuid_values(u32 vp_index,
 	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
 	out = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
-	memset(in, 0, sizeof(*in)+sizeof(*info));
+	memset(in, 0, sizeof(*in) + sizeof(*info));
 	in->partition_id = partition_id;
 	in->vp_index = vp_index;
 	in->flags = values_flags;
@@ -1446,6 +1455,8 @@ int hv_call_import_isolated_pages(
 
 		local_irq_save(irq_flags);
 		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+		memset(input_page, 0, sizeof(*input_page));
 		input_page->partition_id = partition_id;
 		input_page->page_type = page_type;
 		input_page->page_size = page_size;
@@ -1496,6 +1507,7 @@ int hv_call_complete_isolated_import(
 	local_irq_save(flags);
 	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+	memset(in, 0, sizeof(*in));
 	in->partition_id = partition_id;
 	memcpy(&in->import_data, import_data, sizeof(*import_data));
 
@@ -1534,8 +1546,6 @@ int hv_call_read_gpa(
 	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
 	memset(input, 0, sizeof(*input));
-	memset(output, 0, sizeof(*output));
-
 	input->partition_id = partition_id;
 	input->vp_index = vp_index;
 	input->control_flags = flags;
@@ -1580,8 +1590,6 @@ int hv_call_write_gpa(
 	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
 
 	memset(input, 0, sizeof(*input));
-	memset(output, 0, sizeof(*output));
-
 	input->partition_id = partition_id;
 	input->vp_index = vp_index;
 	input->control_flags = flags;
@@ -1623,6 +1631,7 @@ int hv_call_issue_psp_guest_request(
 	local_irq_save(flags);
 	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
 
+	memset(in, 0, sizeof(*in));
 	in->partition_id = partition_id;
 	in->request_page = req_pfn;
 	in->response_page = rsp_pfn;
