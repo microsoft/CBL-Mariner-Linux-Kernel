@@ -121,16 +121,15 @@ efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
  * logging can be used, which is exposed via efi_hv->get_next_log_msg(...).
  *
  */
-efi_status_t mshv_launch(void)
+void mshv_launch(void)
 {
 	struct hvl_return_data ret;
 
 	if (!efi_mshv)
-		return EFI_INVALID_PARAMETER;
+		return;
 
 	efi_mshv->launch_hv(NULL, &ret);
 	/* TODO: Where/how do we dump the hv loader logs? */
 	if (ret.launch_data.launch_status != 0)
 		efi_rt_call(reset_system, EFI_RESET_COLD, EFI_ABORTED, 0, NULL);
-	return EFI_SUCCESS;
 }
