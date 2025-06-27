@@ -41,20 +41,12 @@ static int mshv_realloc_ranges(struct resource **data,
 }
 
 static efi_status_t mshv_populate_ranges(struct boot_params *boot_params,
-			void *mshv_reserved, unsigned long mshv_reserved_sz)
+			efi_memory_desc_t *mem_map, unsigned long map_sz,
+			unsigned long desc_sz)
 {
 	unsigned long cmdline_ptr;
-	struct resource *res;
-	int res_len, i;
 	u32 cmdline_size;
-	u32 cmdline_len;
 	static u8 mshv_cmdline[COMMAND_LINE_SIZE];
-
-	if (!efi_mshv)
-		return EFI_SUCCESS;
-
-	res = mshv_reserved;
-	res_len = mshv_reserved_sz / sizeof(struct resource);
 
 	memset(mshv_cmdline, 0, sizeof(mshv_cmdline));
 
@@ -62,30 +54,9 @@ static efi_status_t mshv_populate_ranges(struct boot_params *boot_params,
 	cmdline_ptr |= (u64)boot_params->ext_cmd_line_ptr << 32;
 	cmdline_size = boot_params->hdr.cmdline_size;
 
-	cmdline_len = strnlen((const char *)cmdline_ptr, cmdline_size);
-	if (cmdline_len >= sizeof(mshv_cmdline))
-		return EFI_BUFFER_TOO_SMALL;
-	memcpy(mshv_cmdline, (void *)cmdline_ptr, cmdline_len);
-
-	/*
-	 * Create the 'hyperv_resvd_new' command line option:
-	 * 'hyperv_resvd_new=<size>!<address>,<size>!<address>,...'
-	 */
-	cmdline_len += snprintf(&mshv_cmdline[cmdline_len],
-				sizeof(mshv_cmdline) - cmdline_len,
-				" hyperv_resvd_new=");
-
-	for (i = 0; i < res_len; ++i) {
-		resource_size_t sz = res[i].end - res[i].start + 1;
-
-		cmdline_len += snprintf(&mshv_cmdline[cmdline_len],
-					sizeof(mshv_cmdline) - cmdline_len,
-					"%s0x%llx!0x%llx", i == 0 ? "" : ",", sz,
-					res[i].start);
-
-		if (cmdline_len >= sizeof(mshv_cmdline) - 1)
-			return EFI_BUFFER_TOO_SMALL;
-	}
+	mshv_efi_update_cmdline(mem_map, map_sz, desc_sz,
+				(char *)cmdline_ptr,
+				(char *)mshv_cmdline, COMMAND_LINE_SIZE);
 
 	boot_params->hdr.cmd_line_ptr = (u32)((unsigned long)mshv_cmdline);
 	boot_params->ext_cmd_line_ptr = (u32)((unsigned long)mshv_cmdline >> 32);
@@ -184,8 +155,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 		}
 	}
 
-	status = mshv_populate_ranges(boot_params, mshv_reserved,
-				nr_ranges * sizeof(struct resource));
+	status = mshv_populate_ranges(boot_params, mem_map, map_sz, desc_sz);
 	if (status != EFI_SUCCESS)
 		mshv_efi_reboot("failed to allocate space for hv ranges with code %d",
 			status);
