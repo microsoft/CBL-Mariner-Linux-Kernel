@@ -686,9 +686,13 @@ union hv_partition_processor_features {
 		u64 sve_v2 : 1;
 		u64 sve_v2p1 : 1;
 		u64 spec_fpacc : 1;
-
+		u64 sve_aes : 1;
+		u64 sve_bit_perm : 1;
+		u64 sve_sha3 : 1;
+		u64 sve_sm4 : 1;
+		u64 e0_pd : 1;
 		/* Remaining reserved bits */
-		u64 reserved_bank1 : 23;
+		u64 reserved_bank1 : 18;
 
 	} __packed;
 #endif
@@ -812,7 +816,18 @@ union hv_partition_processor_features {
 		u64 rfds_clear_support : 1;
 		u64 sm3_support : 1;
 		u64 sm4_support : 1;
-		u64 reserved_bank1 : 12;
+		u64 secure_avic_support : 1;
+		u64	guest_intercept_ctrl_support : 1;
+		u64	sbpb_supported : 1;
+		u64	ibpb_br_type_supported : 1;
+		u64	srso_no_supported : 1;
+		u64	srso_user_kernel_no_supported : 1;
+		u64	vrew_clear_supported : 1;
+		u64	tsa_l1_no_supported : 1;
+		u64	tsa_sq_no_supported : 1;
+		u64	lass_support : 1;
+		/* Remaining reserved bits */
+		u64 reserved_bank1 : 2;
 	} __packed;
 #endif
 };
