@@ -12,6 +12,7 @@
 #include <asm/efi.h>
 
 #include "efistub.h"
+#include "efi-mshv.h"
 
 #define EFI_DT_ADDR_CELLS_DEFAULT 2
 #define EFI_DT_SIZE_CELLS_DEFAULT 2
@@ -191,6 +192,7 @@ struct exit_boot_struct {
 static efi_status_t exit_boot_func(struct efi_boot_memmap *map, void *priv)
 {
 	struct exit_boot_struct *p = priv;
+	efi_status_t status;
 
 	p->boot_memmap = map;
 
@@ -201,6 +203,10 @@ static efi_status_t exit_boot_func(struct efi_boot_memmap *map, void *priv)
 	 */
 	efi_get_virtmap(map->map, map->map_size, map->desc_size,
 			p->runtime_map, &p->runtime_entry_count);
+
+	status = mshv_set_efi_rt_range(map);
+	if (status != EFI_SUCCESS)
+		return status;
 
 	return update_fdt_memmap(p->new_fdt_addr, map);
 }
@@ -356,6 +362,12 @@ efi_status_t efi_boot_kernel(void *handle, efi_loaded_image_t *image,
 
 	if (IS_ENABLED(CONFIG_ARM))
 		efi_handle_post_ebs_state();
+
+	status = mshv_launch();
+	if (status != EFI_SUCCESS) {
+		efi_err("Failed to launch MSHV\n");
+		return status;
+	}
 
 	efi_enter_kernel(kernel_addr, fdt_addr, fdt_totalsize((void *)fdt_addr));
 	/* not reached */
