@@ -1003,9 +1003,8 @@ void __noreturn efi_stub_entry(efi_handle_t handle,
 
 	efi_5level_switch();
 
-	if (mshv_status == EFI_SUCCESS) {
-		mshv_status = mshv_launch();
-	}
+	if (mshv_status == EFI_SUCCESS)
+		mshv_launch();
 
 	enter_kernel(kernel_entry, boot_params);
 

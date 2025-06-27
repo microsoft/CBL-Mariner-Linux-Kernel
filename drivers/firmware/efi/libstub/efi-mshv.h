@@ -25,10 +25,7 @@ static inline efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
 	return EFI_SUCCESS;
 }
 
-static inline efi_status_t mshv_launch(void)
-{
-	return EFI_SUCCESS;
-}
+static inline void mshv_launch(void) {}
 #else /* !CONFIG_MSHV_ROOT */
 
 extern struct efi_hvloader_protocol *efi_mshv;
@@ -61,7 +58,7 @@ efi_status_t mshv_efi_setup(char **cmdline_ptr);
 #endif /* CONFIG_ARM64 */
 
 efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map);
-efi_status_t mshv_launch(void);
+void mshv_launch(void);
 
 struct hvl_dbg_data {
 	u8 unused[552];
