@@ -122,8 +122,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 	struct mshv_setup_data *sd_block;
 	static efi_guid_t hv_proto_guid = EFI_MSHV_MEDIA_PROTOCOL_GUID;
 	efi_memory_desc_t *mem_map;
-	unsigned long map_sz, key, desc_sz, setup_data_sz;
-	u32 desc_ver;
+	unsigned long map_sz, desc_sz;
 	u64 start, end;
 	struct resource *mshv_range, *prev;
 	struct resource *mshv_reserved;
@@ -194,7 +193,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 		mshv_range->flags = IORESOURCE_BUSY | IORESOURCE_SYSTEM_RAM;
 		mshv_range->start = d->phys_addr;
 		mshv_range->end = d->phys_addr + (d->num_pages << PAGE_SHIFT) - 1;
-		
+
 		prev = mshv_range++;
 		nr_ranges++;
 		if (nr_ranges >= max_ranges) {
@@ -210,7 +209,7 @@ efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 			mshv_range = prev + 1;
 		}
 	}
-	
+
 	status = mshv_populate_ranges(boot_params, mshv_reserved,
 				nr_ranges * sizeof(struct resource));
 	if (status != EFI_SUCCESS)
