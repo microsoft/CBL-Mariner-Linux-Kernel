@@ -363,11 +363,7 @@ efi_status_t efi_boot_kernel(void *handle, efi_loaded_image_t *image,
 	if (IS_ENABLED(CONFIG_ARM))
 		efi_handle_post_ebs_state();
 
-	status = mshv_launch();
-	if (status != EFI_SUCCESS) {
-		efi_err("Failed to launch MSHV\n");
-		return status;
-	}
+	mshv_launch();
 
 	efi_enter_kernel(kernel_addr, fdt_addr, fdt_totalsize((void *)fdt_addr));
 	/* not reached */
