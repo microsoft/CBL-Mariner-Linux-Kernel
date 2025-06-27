@@ -1013,7 +1013,7 @@ struct hv_init_vp_context {
 #endif /* !CONFIG_ARM64 */
 } __packed;
 
-struct hv_enable_vp_vtl {
+struct hv_input_start_vp { /* HV_INPUT_START_VIRTUAL_PROCESSOR */
 	u64				partition_id;
 	u32				vp_index;
 	union hv_input_vtl		target_vtl;
