@@ -13,12 +13,22 @@ static inline efi_status_t mshv_efi_setup(struct boot_params *boot_params)
 }
 #endif /* CONFIG_X86_64 */
 
+#ifdef CONFIG_ARM64
+static inline efi_status_t mshv_efi_setup(char **cmdline_ptr)
+{
+	return EFI_SUCCESS;
+}
+#endif /* CONFIG_ARM64 */
+
 static inline efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
 {
 	return EFI_SUCCESS;
 }
 
-static inline efi_status_t mshv_launch(void) {}
+static inline efi_status_t mshv_launch(void)
+{
+	return EFI_SUCCESS;
+}
 #else /* !CONFIG_MSHV_ROOT */
 
 extern struct efi_hvloader_protocol *efi_mshv;
@@ -45,6 +55,10 @@ void mshv_efi_update_cmdline(efi_memory_desc_t *mem_map,
 #ifdef CONFIG_X86_64
 efi_status_t mshv_efi_setup(struct boot_params *boot_params);
 #endif /* CONFIG_X86_64 */
+
+#ifdef CONFIG_ARM64
+efi_status_t mshv_efi_setup(char **cmdline_ptr);
+#endif /* CONFIG_ARM64 */
 
 efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map);
 efi_status_t mshv_launch(void);
