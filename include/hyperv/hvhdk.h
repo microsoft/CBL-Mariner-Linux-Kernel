@@ -474,7 +474,7 @@ union hv_vp_register_page_interrupt_vectors {
 	} __packed;
 } __packed;
 
-struct hv_vp_register_page {
+struct hv_vp_register_page { /* HV_VP_REGISTER_PAGE */
 	u16 version;
 	u8 isvalid;
 	u8 rsvdz;
