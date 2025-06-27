@@ -298,7 +298,7 @@ int hv_snp_boot_ap(u32 apic_id, unsigned long start_ip, unsigned int cpu)
 	struct sev_es_save_area *cur_vmsa;
 	struct desc_ptr gdtr;
 	u64 ret, retry = 5;
-	struct hv_enable_vp_vtl *start_vp_input;
+	struct hv_input_start_vp *start_vp_input;
 	unsigned long flags;
 	int vp_index;
 
@@ -354,7 +354,7 @@ int hv_snp_boot_ap(u32 apic_id, unsigned long start_ip, unsigned int cpu)
 	}
 
 	local_irq_save(flags);
-	start_vp_input = (struct hv_enable_vp_vtl *)ap_start_input_arg;
+	start_vp_input = (struct hv_input_start_vp *)ap_start_input_arg;
 	memset(start_vp_input, 0, sizeof(*start_vp_input));
 	start_vp_input->partition_id = -1;
 	start_vp_input->vp_index = vp_index;
