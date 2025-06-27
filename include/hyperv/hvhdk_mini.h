@@ -477,7 +477,12 @@ struct hv_lp_startup_status {
 
 struct hv_input_add_logical_processor {
 	u32 lp_index;
+#if defined(CONFIG_ARM64)
+	u32 padding;
+	u64 apic_id;
+#else
 	u32 apic_id;
+#endif
 	struct hv_proximity_domain_info proximity_domain_info;
 } __packed;
 

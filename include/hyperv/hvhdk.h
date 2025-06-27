@@ -361,7 +361,8 @@ enum hv_stats_vp_counters {			/* HV_THREAD_COUNTER */
 	VpDeviceDomainHypercalls			= 91,
 	VpDepositHypercalls				= 92,
 	VpSvmHypercalls					= 93,
-	VpRootDispatchThreadBlocked			= 94,
+	VpLoadAvg					= 94,
+	VpRootDispatchThreadBlocked			= 95,
 #endif
 	VpStatsMaxCounter
 };
