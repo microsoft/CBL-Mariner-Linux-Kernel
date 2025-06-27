@@ -274,7 +274,8 @@ enum hv_stats_vp_counters {			/* HV_THREAD_COUNTER */
 	VpDepositHypercalls				= 198,
 	VpSvmHypercalls					= 199,
 	VpBusLockAcquisitionCount			= 200,
-	VpRootDispatchThreadBlocked			= 201,
+	VpUnused					= 201,
+	VpRootDispatchThreadBlocked			= 202,
 #elif IS_ENABLED(CONFIG_ARM64)
 	VpSysRegAccessesCount				= 9,
 	VpSysRegAccessesTime				= 10,
