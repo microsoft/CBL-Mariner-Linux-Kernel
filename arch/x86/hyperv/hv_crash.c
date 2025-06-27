@@ -515,23 +515,6 @@ static int hv_crash_trampoline_setup(void)
 	return 0;
 }
 
-static bool hv_supports_devirt(void)
-{
-	union hv_hypervisor_version_info version_info;
-
-	if (hv_get_hypervisor_version(&version_info))
-		return false;
-
-	if (version_info.major_version < 10)
-		return false;
-	else if (version_info.major_version == 10) {
-		if (version_info.build_number < 27562)
-			return false;
-	}
-
-	return true;
-}
-
 /* Do the setup for kdump kexec to collect core when running as mshv root */
 void hv_root_crash_init(void)
 {
@@ -543,9 +526,6 @@ void hv_root_crash_init(void)
 	union hv_pfn_range cda_info;
 
 	crash_kexec_post_notifiers = true;
-
-	if (!hv_supports_devirt())
-		goto err_out;
 
 	local_irq_save(flags);
 	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
@@ -561,6 +541,11 @@ void hv_root_crash_init(void)
 
 	cda_info.as_uint64 = output->hv_cda_info.as_uint64;
 	local_irq_restore(flags);
+
+	if (cda_info.base_pfn == 0) {
+		pr_err("Hyper-V: hypervisor crash cda pfn is 0\n");
+		goto err_out;
+	}
 
 	hv_cda = phys_to_virt(cda_info.base_pfn << PAGE_SHIFT);
 
