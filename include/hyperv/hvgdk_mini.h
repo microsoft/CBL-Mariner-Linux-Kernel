@@ -987,7 +987,15 @@ union hv_input_vtl {
 
 struct hv_init_vp_context {
 #if defined(CONFIG_ARM64)
-	u64 rsvd[9];
+	u64 pc;
+	u64 sp_elh;
+	u64 sctlr_el1;
+	u64 mair_el1;
+	u64 tcr_el1;
+	u64 vbar_el1;
+	u64 ttbr0_el1;
+	u64 ttbr1_el1;
+	u64 x18;
 #else /* CONFIG_ARM64 */
 	u64 rip;
 	u64 rsp;
