@@ -31,6 +31,7 @@
 #include <linux/crash_dump.h>
 #include <linux/panic_notifier.h>
 #include <linux/vmalloc.h>
+#include <linux/hmm.h>
 
 #include <acpi/acrestyp.h>
 
@@ -39,6 +40,8 @@
 #include "mshv_eventfd.h"
 #include "mshv.h"
 #include "mshv_root.h"
+
+#define MSHV_MAP_FAULT_IN_PAGES			HPAGE_PMD_NR
 
 MODULE_AUTHOR("Microsoft");
 MODULE_LICENSE("GPL");
@@ -69,6 +72,9 @@ static int mshv_init_async_handler(struct mshv_partition *partition);
 static void mshv_async_hvcall_handler(void *data, u64 *status);
 static struct mshv_mem_region
 	*mshv_partition_region_by_gfn(struct mshv_partition *pt, u64 gfn);
+static int mshv_region_remap_pages(struct mshv_mem_region *region,
+				   u32 map_flags, u64 page_offset,
+				   u64 page_count);
 
 
 #ifdef HYPERVISOR_CALLBACK_VECTOR
@@ -437,6 +443,170 @@ static int mshv_chk_get_mmio_start_pfn(u64 uaddr, u64 *mmio_pfnp)
 
 #ifdef CONFIG_X86_64
 
+#if defined(CONFIG_MMU_NOTIFIER)
+/**
+ * mshv_region_hmm_fault_and_lock - Handle HMM faults and lock the memory region
+ * @region: Pointer to the memory region structure
+ * @range: Pointer to the HMM range structure
+ *
+ * This function performs the following steps:
+ * 1. Reads the notifier sequence for the HMM range.
+ * 2. Acquires a read lock on the memory map.
+ * 3. Handles HMM faults for the specified range.
+ * 4. Releases the read lock on the memory map.
+ * 5. If successful, locks the memory region mutex.
+ * 6. Verifies if the notifier sequence has changed during the operation.
+ *    If it has, releases the mutex and returns -EBUSY to match with
+ *    hmm_range_fault() return code for repeating.
+ *
+ * Return: 0 on success, a negative error code otherwise.
+ */
+static int mshv_region_hmm_fault_and_lock(struct mshv_mem_region *region,
+					  struct hmm_range *range)
+{
+	int ret;
+
+	range->notifier_seq = mmu_interval_read_begin(range->notifier);
+	mmap_read_lock(region->memreg_mni.mm);
+	ret = hmm_range_fault(range);
+	mmap_read_unlock(region->memreg_mni.mm);
+	if (ret)
+		return ret;
+
+	mutex_lock(&region->memreg_mutex);
+
+	if (mmu_interval_read_retry(range->notifier, range->notifier_seq)) {
+		mutex_unlock(&region->memreg_mutex);
+		cond_resched();
+		return -EBUSY;
+	}
+
+	return 0;
+}
+
+/**
+ * mshv_region_range_fault - Handle memory range faults for a given region.
+ * @region: Pointer to the memory region structure.
+ * @page_offset: Offset of the page within the region.
+ * @page_count: Number of pages to handle.
+ *
+ * This function resolves memory faults for a specified range of pages
+ * within a memory region. It uses HMM (Heterogeneous Memory Management)
+ * to fault in the required pages and updates the region's page array.
+ *
+ * Return: 0 on success, negative error code on failure.
+ */
+static int mshv_region_range_fault(struct mshv_mem_region *region,
+				   u64 page_offset, u64 page_count)
+{
+	struct hmm_range range = {
+		.notifier = &region->memreg_mni,
+		.default_flags = HMM_PFN_REQ_FAULT | HMM_PFN_REQ_WRITE,
+	};
+	unsigned long *pfns;
+	int ret;
+	u64 i;
+
+	pfns = kmalloc_array(page_count, sizeof(unsigned long), GFP_KERNEL);
+	if (!pfns)
+		return -ENOMEM;
+
+	range.hmm_pfns = pfns;
+	range.start = region->start_uaddr + page_offset * HV_HYP_PAGE_SIZE;
+	range.end = range.start + page_count * HV_HYP_PAGE_SIZE;
+
+	do {
+		ret = mshv_region_hmm_fault_and_lock(region, &range);
+	} while (ret == -EBUSY);
+
+	if (ret)
+		goto out;
+
+	for (i = 0; i < page_count; i++)
+		region->pages[page_offset + i] = hmm_pfn_to_page(pfns[i]);
+
+	if (PageHuge(region->pages[page_offset]))
+		region->flags.large_pages = true;
+
+	ret = mshv_region_remap_pages(region, region->hv_map_flags,
+				      page_offset, page_count);
+
+	mutex_unlock(&region->memreg_mutex);
+out:
+	kfree(pfns);
+	return ret;
+}
+#else /* CONFIG_MMU_NOTIFIER */
+static int mshv_region_range_fault(struct mshv_mem_region *region,
+				   u64 page_offset, u64 page_count)
+{
+	return -ENODEV;
+}
+#endif /* CONFIG_MMU_NOTIFIER */
+
+static bool mshv_region_handle_gfn_fault(struct mshv_mem_region *region, u64 gfn)
+{
+	u64 page_offset, page_count;
+	int ret;
+
+	if (WARN_ON_ONCE(region->flags.memreg_pinned))
+		return false;
+
+	/* Align the page offset to the nearest MSHV_MAP_FAULT_IN_PAGES. */
+	page_offset = ALIGN_DOWN(gfn - region->start_gfn,
+				 MSHV_MAP_FAULT_IN_PAGES);
+
+	/* Map more pages than requested to reduce the number of faults. */
+	page_count = min(region->nr_pages - page_offset,
+			 MSHV_MAP_FAULT_IN_PAGES);
+
+	ret = mshv_region_range_fault(region, page_offset, page_count);
+
+	WARN_ONCE(ret,
+		  "p%llu: GPA intercept failed: region %#llx-%#llx, gfn %#llx, page_offset %llu, page_count %llu\n",
+		  region->partition->pt_id, region->start_uaddr,
+		  region->start_uaddr + (region->nr_pages << HV_HYP_PAGE_SHIFT),
+		  gfn, page_offset, page_count);
+
+	return !ret;
+}
+
+/**
+ * mshv_handle_gpa_intercept - Handle GPA (Guest Physical Address) intercepts.
+ * @vp: Pointer to the virtual processor structure.
+ *
+ * This function processes GPA intercepts by identifying the memory region
+ * corresponding to the intercepted GPA, aligning the page offset, and
+ * mapping the required pages. It ensures that the region is valid and
+ * handles faults efficiently by mapping multiple pages at once.
+ *
+ * Return: true if the intercept was handled successfully, false otherwise.
+ */
+static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
+{
+	struct mshv_partition *p = vp->vp_partition;
+	struct mshv_mem_region *region;
+	struct hv_x64_memory_intercept_message *msg;
+	u64 gfn;
+
+	msg = (struct hv_x64_memory_intercept_message *)
+		vp->vp_intercept_msg_page->u.payload;
+
+	gfn = HVPFN_DOWN(msg->guest_physical_address);
+
+	region = mshv_partition_region_by_gfn(p, gfn);
+	if (!region)
+		return false;
+
+	if (WARN_ON_ONCE(!region->flags.memreg_isram))
+		return false;
+
+	if (WARN_ON_ONCE(region->flags.memreg_pinned))
+		return false;
+
+	return mshv_region_handle_gfn_fault(region, gfn);
+}
+
 /* Returns: True if valid mmio intercept and it was handled, else false */
 static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 {
@@ -488,6 +658,8 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 {
 	return false;
 }
+
+static bool mshv_handle_gpa_intercept(struct mshv_vp *vp) { return false; }
 
 #endif	/* CONFIG_X86_64 */
 
@@ -838,6 +1010,8 @@ static bool mshv_vp_handle_intercept(struct mshv_vp *vp)
 	switch (vp->vp_intercept_msg_page->header.message_type) {
 	case HVMSG_UNMAPPED_GPA:
 		return mshv_handle_unmapped_gpa(vp);
+	case HVMSG_GPA_INTERCEPT:
+		return mshv_handle_gpa_intercept(vp);
 	}
 	return false;
 }
@@ -1592,7 +1766,7 @@ static void
 mshv_region_evict_pages(struct mshv_mem_region *region,
 			u64 page_offset, u64 page_count)
 {
-	if (region->flags.memreg_isram)
+	if (region->flags.memreg_pinned)
 		unpin_user_pages(region->pages + page_offset, page_count);
 
 	memset(region->pages + page_offset, 0,
@@ -1605,7 +1779,6 @@ mshv_region_evict(struct mshv_mem_region *region)
 	mshv_region_evict_pages(region, 0, region->nr_pages);
 }
 
-/* Note: at present, entire guest ram is pinned */
 static int
 mshv_region_populate_pages(struct mshv_mem_region *region,
 			   u64 page_offset, u64 page_count)
@@ -1634,14 +1807,9 @@ mshv_region_populate_pages(struct mshv_mem_region *region,
 		 * with the FOLL_LONGTERM flag does a large temporary
 		 * allocation of contiguous memory.
 		 */
-		if (region->flags.memreg_isram)
-			ret = pin_user_pages_fast(userspace_addr,
-						  nr_pages,
-						  FOLL_WRITE | FOLL_LONGTERM,
-						  pages);
-		else
-			ret = -EOPNOTSUPP;
-
+		ret = pin_user_pages_fast(userspace_addr, nr_pages,
+					  FOLL_WRITE | FOLL_LONGTERM,
+					  pages);
 		if (ret < 0)
 			goto release_pages;
 	}
@@ -1691,6 +1859,103 @@ mshv_partition_region_by_uaddr(struct mshv_partition *partition, u64 uaddr)
 	return NULL;
 }
 
+#if defined(CONFIG_MMU_NOTIFIER)
+static void mshv_region_movable_fini(struct mshv_mem_region *region)
+{
+	if (region->flags.memreg_pinned)
+		return;
+
+	mmu_interval_notifier_remove(&region->memreg_mni);
+}
+
+/**
+ * mshv_region_invalidate - Invalidate a memory region
+ * @mni: Pointer to the mmu_interval_notifier structure
+ * @range: Pointer to the mmu_notifier_range structure
+ * @cur_seq: Current sequence number for the interval notifier
+ *
+ * This function invalidates a memory region by remapping its pages with
+ * no access permissions. It locks the region's mutex to ensure thread safety
+ * and updates the sequence number for the interval notifier. If the range
+ * is blockable, it uses a blocking lock; otherwise, it attempts a non-blocking
+ * lock and returns false if unsuccessful.
+ *
+ * Return: true if the region was successfully invalidated, false otherwise.
+ */
+static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
+				   const struct mmu_notifier_range *range,
+				   unsigned long cur_seq)
+{
+	struct mshv_mem_region *region = container_of(mni,
+						struct mshv_mem_region,
+						memreg_mni);
+	u64 page_offset, page_count;
+	int ret;
+
+	if (!mmget_not_zero(mni->mm))
+		return true;
+
+	if (mmu_notifier_range_blockable(range)) {
+		mutex_lock(&region->memreg_mutex);
+	} else if (!mutex_trylock(&region->memreg_mutex)) {
+		mmput(mni->mm);
+		return false;
+	}
+
+	mmu_interval_set_seq(mni, cur_seq);
+
+	page_offset = HVPFN_DOWN(range->start - region->start_uaddr);
+	page_count = HVPFN_DOWN(range->end - range->start);
+
+	ret = mshv_region_remap_pages(region, HV_MAP_GPA_NO_ACCESS,
+				      page_offset, page_count);
+
+	WARN_ONCE(ret,
+		  "Failed to invalidate region %#llx-%#llx (range %#lx-%#lx, event: %u, pages %#llx-%#llx, mm: %#llx): %d\n",
+		  region->start_uaddr,
+		  region->start_uaddr + (region->nr_pages << HV_HYP_PAGE_SHIFT),
+		  range->start, range->end, range->event,
+		  page_offset, page_offset + page_count - 1, (u64)range->mm, ret);
+
+	memset(region->pages + page_offset, 0,
+	       page_count * sizeof(struct page *));
+
+	mutex_unlock(&region->memreg_mutex);
+	mmput(mni->mm);
+
+	return true;
+}
+
+static const struct mmu_interval_notifier_ops mshv_region_mni_ops = {
+	.invalidate = mshv_region_invalidate,
+};
+
+static bool mshv_region_movable_init(struct mshv_mem_region *region)
+{
+	int ret;
+
+	ret = mmu_interval_notifier_insert(&region->memreg_mni, current->mm,
+					   region->start_uaddr,
+					   region->nr_pages << HV_HYP_PAGE_SHIFT,
+					   &mshv_region_mni_ops);
+	if (ret)
+		return false;
+
+	mutex_init(&region->memreg_mutex);
+
+	return true;
+}
+#else
+static inline void mshv_region_movable_fini(struct mshv_mem_region *region)
+{
+}
+
+static inline bool mshv_region_movable_init(struct mshv_mem_region *region)
+{
+	return false;
+}
+#endif
+
 /*
  * NB: caller checks and makes sure mem->size is page aligned
  * Returns: 0 with regionpp updated on success, or -errno
@@ -1723,9 +1988,14 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 	if (mem->flags & BIT(MSHV_SET_MEM_BIT_EXECUTABLE))
 		region->hv_map_flags |= HV_MAP_GPA_EXECUTABLE;
 
-	/* Note: large_pages flag populated when we pin the pages */
-	if (!is_mmio)
+	/* Note: large_pages flag populated when pages are allocated. */
+	if (!is_mmio) {
 		region->flags.memreg_isram = true;
+
+		if (mshv_partition_encrypted(partition) ||
+		    !mshv_region_movable_init(region))
+			region->flags.memreg_pinned = true;
+	}
 
 	region->partition = partition;
 
@@ -1841,8 +2111,16 @@ mshv_map_user_memory(struct mshv_partition *partition,
 			ret = hv_call_map_mmio_pages(partition->pt_id,
 						     mem.guest_pfn, mmio_pfn,
 						     HVPFN_DOWN(mem.size));
-	} else {
+	} else if (region->flags.memreg_pinned) {
 		ret = mshv_handle_pinned_region(region);
+	} else {
+		/*
+		 * For non-pinned regions, remap with no access to let the
+		 * hypervisor track dirty pages, enabling precopy live
+		 * migration.
+		 */
+		ret = mshv_region_remap_pages(region, HV_MAP_GPA_NO_ACCESS,
+					       0, region->nr_pages);
 	}
 
 	if (ret) {
@@ -1870,6 +2148,9 @@ static void mshv_partition_destroy_region(struct mshv_mem_region *region)
 	int ret;
 
 	hlist_del(&region->hnode);
+
+	if (region->flags.memreg_isram)
+		mshv_region_movable_fini(region);
 
 	if (mshv_partition_encrypted(partition)) {
 		ret = mshv_partition_region_share(region);
