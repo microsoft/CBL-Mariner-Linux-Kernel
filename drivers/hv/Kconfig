@@ -61,6 +61,7 @@ config MSHV_ROOT
 	depends on !HYPERV_VTL_MODE
 	select EVENTFD
 	select IRQ_BYPASS_MANAGER
+	select HMM_MIRROR
 	help
 	  Select this option when running as the root partition on Microsoft
 	  Hypervisor, to enable interfaces for managing guest virtual
