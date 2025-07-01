@@ -18,6 +18,7 @@
 #include <hyperv/hvtrapi.h>
 #include <asm/mshyperv.h>
 
+#include "../mshv.h"
 #include "mshv_diag.h"
 
 struct mshv_trace_buffer {
@@ -597,11 +598,13 @@ static int mshv_trace_state_create(struct mshv_trace_state **statep,
 	enum hv_eventlog_type type = HV_EVENT_LOG_TYPE_LOCAL_DIAGNOSTICS;
 	int err;
 
+	register_mshv_trcbuf_complete_cb(mshv_trace_buffer_complete);
+
 	err = mshv_trace_buffers_group_init(cfg, type, &state);
 	if (err) {
 		pr_err("%s: failed to initialize trace buffer group: %d\n",
 		       __func__, err);
-		return err;
+		goto unregister_cb;
 	}
 
 	err = mshv_trace_buffers_create(state);
@@ -626,6 +629,8 @@ delete_tbs:
 	(void)mshv_trace_buffers_delete(state);
 finalize_state:
 	(void)mshv_trace_buffers_group_fini(state);
+unregister_cb:
+	register_mshv_trcbuf_complete_cb(NULL);
 	return err;
 }
 
@@ -643,6 +648,7 @@ static int mshv_trace_state_destroy(struct mshv_trace_state **statep)
 
 	*statep = NULL;
 
+	register_mshv_trcbuf_complete_cb(NULL);
 	return 0;
 }
 
