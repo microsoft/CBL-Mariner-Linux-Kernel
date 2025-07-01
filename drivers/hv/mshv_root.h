@@ -15,6 +15,7 @@
 #include <linux/hashtable.h>
 #include <linux/dev_printk.h>
 #include <linux/build_bug.h>
+#include <linux/mmu_notifier.h>
 #include <hyperv/hvhdk.h>
 #include <uapi/linux/mshv.h>
 
@@ -83,9 +84,14 @@ struct mshv_mem_region {
 	struct {
 		u64 large_pages:  1; /* 2MiB */
 		u64 memreg_isram: 1; /* mem region can be ram or mmio */
+		u64 memreg_pinned:1; /* true if region pages are pinned */
 		u64 reserved:	 62;
 	} flags;
 	struct mshv_partition *partition;
+#if defined(CONFIG_MMU_NOTIFIER)
+	struct mmu_interval_notifier memreg_mni;
+	struct mutex memreg_mutex;	/* protects region pages remapping */
+#endif
 	struct page *pages[];
 };
 
