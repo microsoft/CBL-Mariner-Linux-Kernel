@@ -1,0 +1,11 @@
+Name                                               SHA1
+----                                               ----
+feature/dxgkrnl/5.15                               11934514c51253dff4a40e4f5e3d50036015c5c1
+feature/vpci/5.15                                  ff657fb69ad701f0c6113824504f430797aa2f46
+feature/fs-idmapped-overlayfs/5.15                 8b388fca9eeb37e7581689aad265d4eb7be5c6ce
+feature/vmbus/5.15                                 bcbb81d120aaad3b379a329d94a64eef6be071f0
+feature/mana/5.15                                  4aa813857d3e2b339d80e3ac6bdb41f7910c2d8b
+feature/netvsc/5.15                                cbea77d336475bf26937afeb1545e3505a03c2d9
+feature/cifs/5.15                                  6d718266a1fd97783cd4b847bf88d9abc0ea4835
+feature/fs-dynamic-note-size/5.15                  88029094b302cd2e12bf37316ffd1e5db9334650
+feature/reverts/5.15                               8f89f2ba82c73c7a6d07e3f1b23cd03caccd814f
