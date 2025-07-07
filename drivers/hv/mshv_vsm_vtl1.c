@@ -196,6 +196,13 @@ struct vtl0 {
 #endif /* CONFIG_KEXEC_FILE */
 } vtl0;
 
+static LIST_HEAD(vtl1_mem_ranges_list);
+struct vtl1_mem_ranges {
+	struct list_head list;
+	phys_addr_t pa;
+	phys_addr_t epa;
+};
+
 struct hv_input_modify_vtl_protection_mask {
 	u64 partition_id;
 	u32 map_flags;
@@ -464,6 +471,8 @@ static int hv_modify_vtl_protection_mask(u64 start, u64 number_of_pages, u32 pag
 	unsigned long flags;
 	size_t max_pages_per_request;
 	int i;
+	struct vtl1_mem_ranges *vtl1_range;
+	phys_addr_t __start, __end , vtl0_range_epa;
 
 	/* Check parameters */
 	if (number_of_pages <= 0 || number_of_pages >= UINT_MAX)
@@ -494,27 +503,78 @@ static int hv_modify_vtl_protection_mask(u64 start, u64 number_of_pages, u32 pag
 	pages_processed = 0;
 	total_pages_processed = 0;
 
-	while (total_pages_processed < number_of_pages) {
-		for (i = 0; ((i < max_pages_per_request) &&
-			     ((total_pages_processed + i) < number_of_pages)); i++)
-			hvin->gpa_page_list[i] =
-				VSM_PAGE_TO_PFN(VSM_PAGE_AT(start, total_pages_processed + i));
+	vtl0_range_epa = start + (number_of_pages << PAGE_SHIFT);
+	__start = start;
 
-		/* Perform the hypercall */
-		status = hv_do_rep_hypercall(HVCALL_MODIFY_VTL_PROTECTION_MASK, i, 0, hvin, NULL);
+	/* Do not modify protections of ranges in VTL1 memory range */
+	list_for_each_entry(vtl1_range, &vtl1_mem_ranges_list, list) {
+		/* No overlap */
+		if (__start >= vtl1_range->epa || vtl0_range_epa <= vtl1_range->pa)
+			continue;
 
-		/*
-		 * Update page accounting for the next iteration, if any
-		 * N.B.: pages_processed is correct even if Hyper-V returned an error.
-		 */
-		pages_processed = hv_repcomp(status);
-		total_pages_processed += pages_processed;
+		/* Overlaps VTL1 memory */
+		pr_debug("%s: Skipping VTL1 memory region 0x%llx:0x%llx", __func__,
+			 max(__start, vtl1_range->pa), min(vtl0_range_epa, vtl1_range->epa));
+			__end = vtl1_range->pa;
 
-		/* See how things went */
-		if (!hv_result_success(status))
-			break;
+		if (__start < __end) {
+			number_of_pages = (__end - __start) >> PAGE_SHIFT;
+			pr_debug("Protect VTL0 memory region 0x%llx:0x%llx",
+					__start, __end);
+			while (total_pages_processed < number_of_pages) {
+				for (i = 0; ((i < max_pages_per_request) &&
+						((total_pages_processed + i) < number_of_pages)); i++)
+					hvin->gpa_page_list[i] =
+					VSM_PAGE_TO_PFN(VSM_PAGE_AT(start, total_pages_processed + i));
+
+				/* Perform the hypercall */
+				status = hv_do_rep_hypercall(HVCALL_MODIFY_VTL_PROTECTION_MASK,
+									i, 0, hvin, NULL);
+
+				/*
+					* Update page accounting for the next iteration, if any
+					* N.B.: pages_processed is correct even if Hyper-V returned an error.
+					*/
+				pages_processed = hv_repcomp(status);
+				total_pages_processed += pages_processed;
+
+				/* See how things went */
+				if (!hv_result_success(status))
+					goto out;
+			}
+		}
+		__start = vtl1_range->epa;
 	}
 
+	if (__start < vtl0_range_epa) {
+		total_pages_processed = 0;
+		number_of_pages = (vtl0_range_epa - __start) >> PAGE_SHIFT;
+		pr_debug("VSM: Protect VTL0 memory region 0x%llx:0x%llx",
+			 __start, vtl0_range_epa);
+		while (total_pages_processed < number_of_pages) {
+		       for (i = 0; ((i < max_pages_per_request) &&
+			     ((total_pages_processed + i) < number_of_pages)); i++)
+				hvin->gpa_page_list[i] =
+					VSM_PAGE_TO_PFN(VSM_PAGE_AT(start, total_pages_processed + i));
+
+			/* Perform the hypercall */
+			status = hv_do_rep_hypercall(HVCALL_MODIFY_VTL_PROTECTION_MASK,
+						     i, 0, hvin, NULL);
+
+		    /*
+			 * Update page accounting for the next iteration, if any
+			 * N.B.: pages_processed is correct even if Hyper-V returned an error.
+			 */
+			pages_processed = hv_repcomp(status);
+			total_pages_processed += pages_processed;
+
+			/* See how things went */
+			if (!hv_result_success(status))
+				break;
+		}
+	}
+
+out:
 	/* Enable interrupts */
 	local_irq_restore(flags);
 	/* Done */
@@ -2788,6 +2848,7 @@ static int __init mshv_vtl1_init(void)
 	for (i = 0; i < E820_MAX_ENTRIES_ZEROPAGE; i++) {
 		if (e820_table[i].type == E820_TYPE_RAM) {
 			u64 start, end, page_count;
+			struct vtl1_mem_ranges *range;
 
 			start = e820_table[i].addr;
 			end = e820_table[i].addr + e820_table[i].size;
@@ -2795,9 +2856,20 @@ static int __init mshv_vtl1_init(void)
 
 			page_count = e820_table[i].size / PAGE_SIZE;
 			ret = hv_modify_vtl_protection_mask(start, page_count, permissions);
-			if (ret)
+			if (ret) {
 				pr_err("Could not protect VTL1 mem addr:0x%llx, pg_count 0x%llx",
 				       start, page_count);
+				continue;
+			}
+
+			range = kzalloc(sizeof(*range), GFP_KERNEL);
+			if (!range) {
+				pr_err("Could not allocate memory for VTL1 mem range\n");
+				continue;
+			}
+			range->pa = start;
+			range->epa = end;
+			list_add(&range->list, &vtl1_mem_ranges_list);
 		}
 	}
 
