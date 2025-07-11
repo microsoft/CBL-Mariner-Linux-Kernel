@@ -3882,6 +3882,27 @@ root_sched_deinit:
 	return err;
 }
 
+static int mshv_init_vmm_caps(struct device *dev)
+{
+	int ret;
+
+	memset(&mshv_root.vmm_caps, 0, sizeof(mshv_root.vmm_caps));
+	ret = hv_call_get_partition_property_ex(HV_PARTITION_ID_SELF,
+						HV_PARTITION_PROPERTY_VMM_CAPABILITIES,
+						0, &mshv_root.vmm_caps,
+						sizeof(mshv_root.vmm_caps));
+
+	/* HV_PARTITION_PROPERTY_VMM_CAPABILITIES is not supported in
+	 * older hyperv. Ignore the -EIO error code.
+	 */
+	if (ret && ret != -EIO)
+		return ret;
+
+	dev_dbg(dev, "vmm_caps=0x%llx\n", mshv_root.vmm_caps.as_uint64[0]);
+
+	return 0;
+}
+
 #if IS_ENABLED(CONFIG_ARM64)
 static irqreturn_t mshv_percpu_isr(int irq, void *dev_id)
 {
@@ -3984,6 +4005,11 @@ static int __init mshv_parent_partition_init(void)
 	if (ret)
 		goto remove_cpu_state;
 
+	ret = mshv_init_vmm_caps(dev);
+	if (ret) {
+		dev_err(dev, "Failed to get VMM capabilities: %d\n", ret);
+		goto exit_partition;
+	}
 
 	ret = mshv_debugfs_init();
 	if (ret)
