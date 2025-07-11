@@ -1269,6 +1269,42 @@ struct hv_input_set_partition_property {
 	u64 property_value;
 } __packed;
 
+union hv_partition_property_arg {
+	u64 as_uint64;
+	struct {
+		union {
+			u32 arg;
+			u32 vp_index;
+		};
+		u16 reserved0;
+		u8 reserved1;
+		u8 object_type;
+	};
+} __packed;
+
+struct hv_input_get_partition_property_ex {
+	u64 partition_id;
+	u32 property_code; /* enum hv_partition_property_code */
+	u32 padding;
+	union {
+		union hv_partition_property_arg arg_data;
+		u64 arg;
+	};
+} __packed;
+
+#define HV_PARTITION_PROPERTY_EX_MAX_VAR_SIZE \
+	(HV_HYP_PAGE_SIZE - sizeof(struct hv_input_get_partition_property_ex))
+
+union hv_partition_property_ex {
+	u8 buffer[HV_PARTITION_PROPERTY_EX_MAX_VAR_SIZE];
+	struct hv_partition_property_vmm_capabilities vmm_capabilities;
+	/* More fields to be filled in when needed */
+} __packed;
+
+struct hv_output_get_partition_property_ex {
+	union hv_partition_property_ex property_value;
+} __packed;
+
 enum hv_vp_state_page_type {
 	HV_VP_STATE_PAGE_REGISTERS,
 	HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
