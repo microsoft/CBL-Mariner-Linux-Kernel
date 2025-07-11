@@ -337,6 +337,8 @@ int hv_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 int hv_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 			   void *page_addr,
 			   union hv_input_vtl input_vtl);
+int hv_call_get_partition_property_ex(u64 partition_id, u64 property_code, u64 arg,
+				      void *property_value, size_t property_value_sz);
 int hv_call_set_partition_property(u64 partition_id, u64 property_code,
 				   u64 property_value,
 				   void (*completion_handler)(void * /* data */,
