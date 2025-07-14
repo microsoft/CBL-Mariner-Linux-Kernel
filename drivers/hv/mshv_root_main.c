@@ -1734,12 +1734,20 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 	return 0;
 }
 
-/*
- * Map guest ram. if snp, make sure to release that from the host first
- * Side Effects: In case of failure, pages are unpinned when feasible.
+/**
+ * mshv_handle_pinned_region - Handle pinned memory regions
+ * @region: Pointer to the memory region structure
+ *
+ * This function processes memory regions that are explicitly marked as pinned.
+ * Pinned regions are preallocated, mapped upfront, and do not rely on fault-based
+ * population. The function ensures the region is properly populated, handles
+ * encryption requirements for SNP partitions if applicable, maps the region,
+ * and performs necessary sharing or eviction operations based on the mapping
+ * result.
+ *
+ * Return: 0 on success, negative error code on failure.
  */
-static int
-mshv_partition_mem_region_map(struct mshv_mem_region *region)
+static int mshv_handle_pinned_region(struct mshv_mem_region *region)
 {
 	struct mshv_partition *partition = region->partition;
 	int ret;
@@ -1834,7 +1842,7 @@ mshv_map_user_memory(struct mshv_partition *partition,
 						     mem.guest_pfn, mmio_pfn,
 						     HVPFN_DOWN(mem.size));
 	} else {
-		ret = mshv_partition_mem_region_map(region);
+		ret = mshv_handle_pinned_region(region);
 	}
 
 	if (ret) {
