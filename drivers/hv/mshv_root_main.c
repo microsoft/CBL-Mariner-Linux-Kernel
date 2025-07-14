@@ -438,7 +438,7 @@ static int mshv_chk_get_mmio_start_pfn(u64 uaddr, u64 *mmio_pfnp)
 #ifdef CONFIG_X86_64
 
 /* Returns: True if valid mmio intercept and it was handled, else false */
-static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
+static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 {
 	struct hv_message *hvmsg = vp->vp_intercept_msg_page;
 	struct hv_x64_memory_intercept_message *msg;
@@ -484,7 +484,7 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 
 bool hv_no_attdev = true;	/* no direct attach on arm */
 
-static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
+static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 {
 	return false;
 }
@@ -833,27 +833,29 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 static_assert(sizeof(struct hv_message) <= MSHV_RUN_VP_BUF_SZ,
 	      "sizeof(struct hv_message) must not exceed MSHV_RUN_VP_BUF_SZ");
 
+static bool mshv_vp_handle_intercept(struct mshv_vp *vp)
+{
+	switch (vp->vp_intercept_msg_page->header.message_type) {
+	case HVMSG_UNMAPPED_GPA:
+		return mshv_handle_unmapped_gpa(vp);
+	}
+	return false;
+}
+
 static long mshv_vp_ioctl_run_vp(struct mshv_vp *vp, void __user *ret_msg)
 {
 	long rc;
-	u32 msg_type;
 	char *schednm;
 
 	schednm = hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT ? "root" : "hv";
 	trace_mshv_run_vp_entry(vp->vp_partition->pt_id, vp->vp_index, schednm);
 
-	while (true) {
+	do {
 		if (hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT)
 			rc = mshv_run_vp_with_root_scheduler(vp);
 		else
 			rc = mshv_run_vp_with_hyp_scheduler(vp);
-
-		msg_type = vp->vp_intercept_msg_page->header.message_type;
-		if (rc == 0 && msg_type == HVMSG_UNMAPPED_GPA)
-			if (mshv_handle_gpa_intercept(vp))
-				continue;
-		break;
-	}
+	} while (rc == 0 && mshv_vp_handle_intercept(vp));
 
 	trace_mshv_run_vp_exit(rc, vp->vp_partition->pt_id, vp->vp_index,
 			       vp->vp_intercept_msg_page->header.message_type);
