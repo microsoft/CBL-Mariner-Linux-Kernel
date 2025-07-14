@@ -435,7 +435,7 @@ static int mshv_chk_get_mmio_start_pfn(u64 uaddr, u64 *mmio_pfnp)
 	return 0;
 }
 
-#ifdef CONFIG_X86
+#ifdef CONFIG_X86_64
 
 /* Returns: True if valid mmio intercept and it was handled, else false */
 static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
@@ -480,7 +480,7 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 	return rc == 0;
 }
 
-#else	/* CONFIG_X86 */
+#else	/* CONFIG_X86_64 */
 
 bool hv_no_attdev = true;	/* no direct attach on arm */
 
@@ -489,7 +489,7 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 	return false;
 }
 
-#endif	/* CONFIG_X86 */
+#endif	/* CONFIG_X86_64 */
 
 /*
  * Explicitly suspend this vcpu. Hyp will not run it until the suspension is
