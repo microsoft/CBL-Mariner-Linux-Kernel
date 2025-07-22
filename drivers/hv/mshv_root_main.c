@@ -2167,27 +2167,11 @@ out:
 	return ret;
 }
 
-static void mshv_partition_destroy_region(struct mshv_mem_region *region)
+static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 {
 	struct mshv_partition *partition = region->partition;
 	u64 page_offset, page_count;
 	u32 unmap_flags = 0;
-	int ret;
-
-	hlist_del(&region->hnode);
-
-	if (region->flags.memreg_isram)
-		mshv_region_movable_fini(region);
-
-	if (mshv_partition_encrypted(partition)) {
-		ret = mshv_partition_region_share(region);
-		if (ret) {
-			pt_err(partition,
-			       "Failed to regain access to memory, unpinning user pages will fail and crash the host error: %d\n",
-			       ret);
-			return;
-		}
-	}
 
 	if (region->flags.large_pages)
 		unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
@@ -2210,6 +2194,27 @@ static void mshv_partition_destroy_region(struct mshv_mem_region *region)
 		hv_call_unmap_gpa_pages(partition->pt_id,
 					region->start_gfn + page_offset,
 					page_count, unmap_flags);
+	}
+}
+
+static void mshv_partition_destroy_region(struct mshv_mem_region *region)
+{
+	struct mshv_partition *partition = region->partition;
+	int ret;
+
+	hlist_del(&region->hnode);
+
+	if (region->flags.memreg_isram)
+		mshv_region_movable_fini(region);
+
+	if (mshv_partition_encrypted(partition)) {
+		ret = mshv_partition_region_share(region);
+		if (ret) {
+			pt_err(partition,
+			       "Failed to regain access to memory, unpinning user pages will fail and crash the host error: %d\n",
+			       ret);
+			return;
+		}
 	}
 
 	mshv_region_evict(region);
@@ -2237,6 +2242,7 @@ mshv_unmap_user_memory(struct mshv_partition *partition,
 	    region->nr_pages != HVPFN_DOWN(mem.size))
 		return -EINVAL;
 
+	mshv_partition_unmap_region(region);
 	mshv_partition_destroy_region(region);
 	return 0;
 }
@@ -3126,6 +3132,10 @@ static void destroy_partition(struct mshv_partition *partition)
 		struct mshv_mem_region *region;
 
 #ifdef HV_SUPPORTS_SEV_SNP_GUESTS
+		hlist_for_each_entry_safe(region, n, &partition->pt_mem_regions,
+					  hnode)
+			mshv_partition_unmap_region(region);
+
 		if (mshv_partition_encrypted(partition)) {
 			ret = destroy_snp_partition_state(partition);
 			if (ret) {
