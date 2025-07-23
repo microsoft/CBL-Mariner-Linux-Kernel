@@ -443,8 +443,6 @@ static int mshv_chk_get_mmio_start_pfn(u64 uaddr, u64 *mmio_pfnp)
 	return 0;
 }
 
-#ifdef CONFIG_X86_64
-
 #if defined(CONFIG_MMU_NOTIFIER)
 /**
  * mshv_region_hmm_fault_and_lock - Handle HMM faults and lock the memory region
@@ -573,21 +571,10 @@ static bool mshv_region_handle_gfn_fault(struct mshv_mem_region *region, u64 gfn
 	return !ret;
 }
 
-/**
- * mshv_handle_gpa_intercept - Handle GPA (Guest Physical Address) intercepts.
- * @vp: Pointer to the virtual processor structure.
- *
- * This function processes GPA intercepts by identifying the memory region
- * corresponding to the intercepted GPA, aligning the page offset, and
- * mapping the required pages. It ensures that the region is valid and
- * handles faults efficiently by mapping multiple pages at once.
- *
- * Return: true if the intercept was handled successfully, false otherwise.
- */
-static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
+#ifdef CONFIG_X86_64
+
+static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp)
 {
-	struct mshv_partition *p = vp->vp_partition;
-	struct mshv_mem_region *region;
 	struct hv_x64_memory_intercept_message *msg;
 	u64 gfn;
 
@@ -596,17 +583,7 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 
 	gfn = HVPFN_DOWN(msg->guest_physical_address);
 
-	region = mshv_partition_region_by_gfn(p, gfn);
-	if (!region)
-		return false;
-
-	if (WARN_ON_ONCE(!region->flags.memreg_isram))
-		return false;
-
-	if (WARN_ON_ONCE(region->flags.memreg_pinned))
-		return false;
-
-	return mshv_region_handle_gfn_fault(region, gfn);
+	return gfn;
 }
 
 /* Returns: True if valid mmio intercept and it was handled, else false */
@@ -652,7 +629,7 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 	return rc == 0;
 }
 
-#else	/* CONFIG_X86_64 */
+#elif defined(CONFIG_ARM64)
 
 bool hv_no_attdev = true;	/* no direct attach on arm */
 
@@ -661,9 +638,52 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 	return false;
 }
 
-static bool mshv_handle_gpa_intercept(struct mshv_vp *vp) { return false; }
+static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp)
+{
+	struct hv_arm64_memory_intercept_message *msg;
+	u64 gfn;
+
+	msg = (struct hv_arm64_memory_intercept_message *)
+		vp->vp_intercept_msg_page->u.payload;
+
+	gfn = HVPFN_DOWN(msg->guest_physical_address);
+
+	return gfn;
+}
 
 #endif	/* CONFIG_X86_64 */
+
+/**
+ * mshv_handle_gpa_intercept - Handle GPA (Guest Physical Address) intercepts.
+ * @vp: Pointer to the virtual processor structure.
+ *
+ * This function processes GPA intercepts by identifying the memory region
+ * corresponding to the intercepted GPA, aligning the page offset, and
+ * mapping the required pages. It ensures that the region is valid and
+ * handles faults efficiently by mapping multiple pages at once.
+ *
+ * Return: true if the intercept was handled successfully, false otherwise.
+ */
+static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
+{
+	struct mshv_partition *p = vp->vp_partition;
+	struct mshv_mem_region *region;
+	u64 gfn;
+
+	gfn = mshv_get_gpa_intercept_gfn(vp);
+
+	region = mshv_partition_region_by_gfn(p, gfn);
+	if (!region)
+		return false;
+
+	if (WARN_ON_ONCE(!region->flags.memreg_isram))
+		return false;
+
+	if (WARN_ON_ONCE(region->flags.memreg_pinned))
+		return false;
+
+	return mshv_region_handle_gfn_fault(region, gfn);
+}
 
 /*
  * Explicitly suspend this vcpu. Hyp will not run it until the suspension is
