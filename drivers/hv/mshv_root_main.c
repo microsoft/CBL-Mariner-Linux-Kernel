@@ -1892,6 +1892,7 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 						struct mshv_mem_region,
 						memreg_mni);
 	u64 page_offset, page_count;
+	unsigned long mstart, mend;
 	int ret;
 
 	if (!mmget_not_zero(mni->mm))
@@ -1906,8 +1907,12 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 
 	mmu_interval_set_seq(mni, cur_seq);
 
-	page_offset = HVPFN_DOWN(range->start - region->start_uaddr);
-	page_count = HVPFN_DOWN(range->end - range->start);
+	mstart = max(range->start, region->start_uaddr);
+	mend = min(range->end, region->start_uaddr +
+		   (region->nr_pages << HV_HYP_PAGE_SHIFT));
+
+	page_offset = HVPFN_DOWN(mstart - region->start_uaddr);
+	page_count = HVPFN_DOWN(mend - mstart);
 
 	ret = mshv_region_remap_pages(region, HV_MAP_GPA_NO_ACCESS,
 				      page_offset, page_count);
