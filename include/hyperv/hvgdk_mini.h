@@ -345,6 +345,7 @@ union hv_hypervisor_version_info {
 #define HV_X64_HYPERV_NESTED				BIT(12)
 #define HV_X64_ENLIGHTENED_VMCS_RECOMMENDED		BIT(14)
 #define HV_X64_USE_MMIO_HYPERCALLS			BIT(21)
+#define HV_MAP_PARTITION_EVENT_LOG_BUFFER		BIT(26)
 
 /*
  * CPU management features identification.
@@ -411,6 +412,10 @@ union hv_x64_msr_hypercall_contents {
 #if defined(CONFIG_ARM64)
 #define HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE	BIT(8)
 #define HV_STIMER_DIRECT_MODE_AVAILABLE		BIT(13)
+
+/* HV_ARM64_ENLIGHTENMENT_INFORMATION */
+#define HV_MAP_PARTITION_EVENT_LOG_BUFFER		BIT(26)
+
 #endif /* CONFIG_ARM64 */
 
 #if defined(CONFIG_X86)
