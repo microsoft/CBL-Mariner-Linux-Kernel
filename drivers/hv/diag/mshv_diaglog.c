@@ -43,6 +43,12 @@ static struct page **diag_ppages;
 struct hv_system_diag_log_buffer_config hv_logbuf_info;
 static uint logbuf_sz;	/* once set, it doesn't change */
 
+static inline bool should_alloc_diag_pages(void)
+{
+	return hv_l1vh_partition() &&
+	       ms_hyperv.hints & HV_MAP_PARTITION_EVENT_LOG_BUFFER;
+}
+
 /* Return the starting address of buffer given its index */
 static void *bufhdr_from_idx(int idx)
 {
@@ -355,10 +361,10 @@ hvcall_fail:
 }
 
 /*
- * In root partition, pages are allocated by the hypervisor and mapped into
+ * For the cases where pages are allocated by the hypervisor and mapped into
  * kernel address space.
  */
-static int __init map_root_diag_buffers(uint tot_pages, struct page ***pppages)
+static int __init map_diag_buffers(uint tot_pages, struct page ***pppages)
 {
 	uint i, j, page_index = 0;
 	int ret = 0;
@@ -445,7 +451,7 @@ static void free_diag_pages(struct page **ppages, uint tot_pages)
 {
 	uint i;
 
-	if (hv_l1vh_partition()) {
+	if (should_alloc_diag_pages()) {
 		for (i = 0; i < tot_pages; i++)
 			__free_page(ppages[i]);
 	}
@@ -454,10 +460,11 @@ static void free_diag_pages(struct page **ppages, uint tot_pages)
 }
 
 /*
- * In l1vh parent, pages are allocated by the kernel and passed to the
+ * For the cases where pages are allocated by the kernel and passed to the
  * hypervisor.
  */
-static int __init map_l1vh_diag_buffers(uint tot_pages, struct page ***pppages)
+static int __init alloc_and_map_diag_buffers(uint tot_pages,
+					     struct page ***pppages)
 {
 	struct page **ppages;
 	uint i, j;
@@ -551,15 +558,13 @@ int __init mshv_diaglog_init(void)
 	tot_pages = hv_logbuf_info.buffer_count *
 				hv_logbuf_info.buffer_size_in_pages;
 
-	if (hv_root_partition()) {
-		ret = map_root_diag_buffers(tot_pages, &diag_ppages);
-		if (ret)
-			return ret;
-	} else { /* l1vh parent */
-		ret = map_l1vh_diag_buffers(tot_pages, &diag_ppages);
-		if (ret)
-			return ret;
-	}
+	if (should_alloc_diag_pages())
+		ret = alloc_and_map_diag_buffers(tot_pages, &diag_ppages);
+	else
+		ret = map_diag_buffers(tot_pages, &diag_ppages);
+
+	if (ret)
+		return ret;
 
 	logbuf_sz = hv_logbuf_info.buffer_size_in_pages * PAGE_SIZE;
 
@@ -574,11 +579,10 @@ int __init mshv_diaglog_init(void)
 		hv_logbuf_info.buffer_count,
 		hv_logbuf_info.buffer_size_in_pages);
 
-	if (hv_root_partition()) {
-
+	if (!should_alloc_diag_pages()) {
 		/*
-		 * If root_partition, the physical buffer pages are managed by the
-		 * hypervisor. Kernel only has to unmap the pages from it virtual mem.
+		 * The physical buffer pages are managed by the hypervisor.
+		 * Kernel only has to unmap the pages from its virtual mem.
 		 * There is no need to keep track of ppages.
 		 */
 		kfree(diag_ppages);
@@ -588,7 +592,8 @@ int __init mshv_diaglog_init(void)
 		 * Initialize diagnostic logs with some hv details. Ignore failure and
 		 * continue collecting logs
 		 */
-		get_hv_header_in_diaglog();
+		if (hv_root_partition())
+			get_hv_header_in_diaglog();
 
 	}
 
