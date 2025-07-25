@@ -582,6 +582,7 @@ int __init mshv_diaglog_init(void)
 		 * There is no need to keep track of ppages.
 		 */
 		kfree(diag_ppages);
+		diag_ppages = NULL;
 
 		/*
 		 * Initialize diagnostic logs with some hv details. Ignore failure and
@@ -609,7 +610,8 @@ int mshv_diaglog_exit(void)
 
 	vunmap(vmap_start);	/* checks for null addr */
 	ret = unmap_diaglog_pages(hv_logbuf_info.buffer_count);
-	free_diag_pages(diag_ppages, tot_pages);
+	if (diag_ppages)
+		free_diag_pages(diag_ppages, tot_pages);
 
 	return ret;
 }
