@@ -1,0 +1,6 @@
+Name                                               SHA1
+----                                               ----
+config/azure-mos-v6.12                             c1872262336cf088694aaaa96571ff89dbfb8e87
+feature/efi-slack-slots/6.12                       d8a01904ccf84ef0aa9fe1b6330a844ff1e8abe6
+feature/nvidia-gb-200/6.12                         88dbdeb08b08356915438b7383da9bfd5d6313b9
+feature/gb200-cx8/6.12                             bf9a67d307a656007b0a031f45764d058c892dc7
