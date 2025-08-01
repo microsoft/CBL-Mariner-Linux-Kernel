@@ -22,6 +22,8 @@
 static struct dentry *mshv_debugfs;
 static struct dentry *mshv_debugfs_partition;
 static struct dentry *mshv_debugfs_lp;
+static struct dentry **parent_vp_stats;
+static struct dentry *parent_partition_stats;
 
 static u64 mshv_lps_count;
 
@@ -900,14 +902,17 @@ static void mshv_debugfs_parent_partition_remove(void)
 	int idx;
 
 	for_each_online_cpu(idx)
-		vp_debugfs_remove(hv_current_partition_id, idx, NULL);
+		vp_debugfs_remove(hv_current_partition_id, idx,
+				  parent_vp_stats[idx]);
 
-	partition_debugfs_remove(hv_current_partition_id, NULL);
+	partition_debugfs_remove(hv_current_partition_id,
+				 parent_partition_stats);
+	kfree(parent_vp_stats);
 }
 
 static int __init mshv_debugfs_parent_partition_create(void)
 {
-	struct dentry *partition_stats, *vp_dir;
+	struct dentry *vp_dir;
 	int err, idx, i;
 
 	mshv_debugfs_partition = debugfs_create_dir("partition",
@@ -917,17 +922,22 @@ static int __init mshv_debugfs_parent_partition_create(void)
 
 	err = partition_debugfs_create(hv_current_partition_id,
 				       &vp_dir,
-				       &partition_stats,
+				       &parent_partition_stats,
 				       mshv_debugfs_partition);
 	if (err)
 		goto remove_debugfs_partition;
 
+	parent_vp_stats = kcalloc(num_possible_cpus(), sizeof(*parent_vp_stats), GFP_KERNEL);
+	if (!parent_vp_stats) {
+		err = -ENOMEM;
+		goto remove_debugfs_partition;
+	}
+
 	for_each_online_cpu(idx) {
-		struct dentry *vp_stats;
 
 		err = vp_debugfs_create(hv_current_partition_id,
 					hv_vp_index[idx],
-					&vp_stats,
+					&parent_vp_stats[idx],
 					vp_dir);
 		if (err)
 			goto remove_debugfs_partition_vp;
@@ -939,9 +949,15 @@ remove_debugfs_partition_vp:
 	for_each_online_cpu(i) {
 		if (i >= idx)
 			break;
-		vp_debugfs_remove(hv_current_partition_id, i, NULL);
+		vp_debugfs_remove(hv_current_partition_id, i,
+				  parent_vp_stats[idx]);
 	}
-	partition_debugfs_remove(hv_current_partition_id, NULL);
+	partition_debugfs_remove(hv_current_partition_id,
+				 parent_partition_stats);
+
+	kfree(parent_vp_stats);
+	parent_vp_stats = NULL;
+
 remove_debugfs_partition:
 	debugfs_remove_recursive(mshv_debugfs_partition);
 	return err;
