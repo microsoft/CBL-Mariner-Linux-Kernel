@@ -895,8 +895,11 @@ void start_kernel(void)
 	boot_cpu_init();
 	page_address_init();
 	pr_notice("%s", linux_banner);
-	early_security_init();
 	setup_arch(&command_line);
+	/* Static keys and static calls are needed by LSMs */
+	jump_label_init();
+	static_call_init();
+	early_security_init();
 	setup_boot_config();
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
@@ -906,7 +909,6 @@ void start_kernel(void)
 
 	pr_notice("Kernel command line: %s\n", saved_command_line);
 	/* parameters may set static keys */
-	jump_label_init();
 	parse_early_param();
 	after_dashes = parse_args("Booting kernel",
 				  static_command_line, __start___param,
