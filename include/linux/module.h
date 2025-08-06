@@ -542,6 +542,8 @@ struct module {
 	struct static_call_site *static_call_sites;
 #endif
 #if IS_ENABLED(CONFIG_KUNIT)
+	int num_kunit_init_suites;
+	struct kunit_suite **kunit_init_suites;
 	int num_kunit_suites;
 	struct kunit_suite **kunit_suites;
 #endif
@@ -590,6 +592,7 @@ struct module {
 #ifdef CONFIG_DYNAMIC_DEBUG_CORE
 	struct _ddebug_info dyndbg_info;
 #endif
+	long heki_token;
 } ____cacheline_aligned __randomize_layout;
 #ifndef MODULE_ARCH_INIT
 #define MODULE_ARCH_INIT {}

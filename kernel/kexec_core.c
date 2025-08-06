@@ -255,7 +255,7 @@ struct kimage *do_kimage_alloc_init(void)
 	struct kimage *image;
 
 	/* Allocate a controlling structure */
-	image = kzalloc(sizeof(*image), GFP_KERNEL);
+	image = alloc_pages_exact(sizeof(*image), GFP_KERNEL);
 	if (!image)
 		return NULL;
 
@@ -478,8 +478,14 @@ static struct page *kimage_alloc_crash_control_pages(struct kimage *image,
 	}
 
 	/* Ensure that these pages are decrypted if SME is enabled. */
-	if (pages)
+	if (pages) {
+		if (image->file_mode) {
+			/* Remember the allocated page... */
+			set_page_private(pages, order);
+			list_add(&pages->lru, &image->control_pages);
+		}
 		arch_kexec_post_alloc_pages(page_address(pages), 1 << order, 0);
+	}
 
 	return pages;
 }
@@ -530,6 +536,7 @@ int kimage_crash_copy_vmcoreinfo(struct kimage *image)
 		return -ENOMEM;
 	}
 
+	image->vmcoreinfo_page = vmcoreinfo_page;
 	image->vmcoreinfo_data_copy = safecopy;
 	crash_update_vmcoreinfo_safecopy(safecopy);
 
@@ -597,11 +604,6 @@ void kimage_terminate(struct kimage *image)
 	*image->entry = IND_DONE;
 }
 
-#define for_each_kimage_entry(image, ptr, entry) \
-	for (ptr = &image->head; (entry = *ptr) && !(entry & IND_DONE); \
-		ptr = (entry & IND_INDIRECTION) ? \
-			boot_phys_to_virt((entry & PAGE_MASK)) : ptr + 1)
-
 static void kimage_free_entry(kimage_entry_t entry)
 {
 	struct page *page;
@@ -644,7 +646,8 @@ void kimage_free(struct kimage *image)
 	machine_kexec_cleanup(image);
 
 	/* Free the kexec control pages... */
-	kimage_free_page_list(&image->control_pages);
+	if (image->type != KEXEC_TYPE_CRASH)
+		kimage_free_page_list(&image->control_pages);
 
 	/*
 	 * Free up any temporary buffers allocated. This might hit if
@@ -653,7 +656,7 @@ void kimage_free(struct kimage *image)
 	if (image->file_mode)
 		kimage_file_post_load_cleanup(image);
 
-	kfree(image);
+	free_pages_exact(image, sizeof(*image));
 }
 
 static kimage_entry_t *kimage_dst_used(struct kimage *image,

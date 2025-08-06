@@ -864,6 +864,12 @@ static void jump_label_update(struct static_key *key)
 		__jump_label_update(key, entry, stop, init);
 }
 
+void jump_label_get_patch(const struct jump_entry *entry,
+			  const void **code, const void **nop)
+{
+	arch_jump_label_get_patch(entry, code, nop);
+}
+
 #ifdef CONFIG_STATIC_KEYS_SELFTEST
 static DEFINE_STATIC_KEY_TRUE(sk_true);
 static DEFINE_STATIC_KEY_FALSE(sk_false);

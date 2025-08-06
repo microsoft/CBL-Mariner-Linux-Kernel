@@ -2,6 +2,7 @@
 #include <linux/static_call.h>
 #include <linux/memory.h>
 #include <linux/bug.h>
+#include <linux/heki.h>
 #include <asm/text-patching.h>
 
 enum insn_type {
@@ -195,6 +196,9 @@ noinstr void __static_call_update_early(void *tramp, void *func)
 bool __static_call_fixup(void *tramp, u8 op, void *dest)
 {
 	unsigned long addr = (unsigned long)tramp;
+	struct heki_kinfo *kinfo = current->kinfo;
+	void *__x86_return_thunk_addr;
+
 	/*
 	 * Not all .return_sites are a static_call trampoline (most are not).
 	 * Check if the 3 bytes after the return are still kernel text, if not,
@@ -212,8 +216,13 @@ bool __static_call_fixup(void *tramp, u8 op, void *dest)
 		return false;
 	}
 
+	if (kinfo)
+		__x86_return_thunk_addr = (void *)kinfo->arch.return_thunk_init_addr;
+	else
+		__x86_return_thunk_addr = &__x86_return_thunk;
+
 	mutex_lock(&text_mutex);
-	if (op == RET_INSN_OPCODE || dest == &__x86_return_thunk)
+	if (op == RET_INSN_OPCODE || dest == __x86_return_thunk_addr)
 		__static_call_transform(tramp, RET, NULL, true);
 	mutex_unlock(&text_mutex);
 

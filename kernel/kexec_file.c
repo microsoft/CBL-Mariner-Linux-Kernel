@@ -27,6 +27,7 @@
 #include <linux/kernel_read_file.h>
 #include <linux/syscalls.h>
 #include <linux/vmalloc.h>
+#include <linux/heki.h>
 #include "kexec_internal.h"
 
 #ifdef CONFIG_KEXEC_SIG
@@ -314,11 +315,12 @@ kimage_file_alloc_init(struct kimage **rimage, int kernel_fd,
 	*rimage = image;
 	return 0;
 out_free_control_pages:
-	kimage_free_page_list(&image->control_pages);
+	if (image->type != KEXEC_TYPE_CRASH)
+		kimage_free_page_list(&image->control_pages);
 out_free_post_load_bufs:
 	kimage_file_post_load_cleanup(image);
 out_free_image:
-	kfree(image);
+	free_pages_exact(image, sizeof(*image));
 	return ret;
 }
 
@@ -351,6 +353,8 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 	} else {
 		dest_image = &kexec_image;
 	}
+
+	heki_kexec_invalidate(image_type);
 
 	if (flags & KEXEC_FILE_UNLOAD)
 		goto exchange;
@@ -408,6 +412,9 @@ SYSCALL_DEFINE5(kexec_file_load, int, kernel_fd, int, initrd_fd,
 	 * after image has been loaded
 	 */
 	kimage_file_post_load_cleanup(image);
+	ret = heki_kexec_validate(image);
+	if (ret)
+		goto out;
 exchange:
 	image = xchg(dest_image, image);
 out:
