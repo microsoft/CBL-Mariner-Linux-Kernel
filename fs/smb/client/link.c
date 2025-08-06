@@ -40,13 +40,13 @@ symlink_hash(unsigned int link_len, const char *link_str, u8 *md5_hash)
 	int rc;
 	struct shash_desc *md5 = NULL;
 
-	rc = cifs_alloc_hash("md5", &md5);
+	rc = cifs_alloc_hash("smb3md5", &md5);
 	if (rc)
 		return rc;
 
 	rc = crypto_shash_digest(md5, link_str, link_len, md5_hash);
 	if (rc)
-		cifs_dbg(VFS, "%s: Could not generate md5 hash\n", __func__);
+		cifs_dbg(VFS, "%s: Could not generate smb3md5 hash\n", __func__);
 	cifs_free_hash(&md5);
 	return rc;
 }
