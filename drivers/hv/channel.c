@@ -1172,10 +1172,9 @@ int vmbus_sendpacket_pagebuffer(struct vmbus_channel *channel,
 EXPORT_SYMBOL_GPL(vmbus_sendpacket_pagebuffer);
 
 /*
- * vmbus_sendpacket_mpb_desc - Send one or more multi-page buffer packets
+ * vmbus_sendpacket_multipagebuffer - Send a multi-page buffer packet
  * using a GPADL Direct packet type.
- * The desc argument must include space for the VMBus descriptor. The
- * rangecount field must already be set.
+ * The buffer includes the vmbus descriptor.
  */
 int vmbus_sendpacket_mpb_desc(struct vmbus_channel *channel,
 			      struct vmbus_packet_mpb_array *desc,
@@ -1197,6 +1196,7 @@ int vmbus_sendpacket_mpb_desc(struct vmbus_channel *channel,
 	desc->length8 = (u16)(packetlen_aligned >> 3);
 	desc->transactionid = VMBUS_RQST_ERROR; /* will be updated in hv_ringbuffer_write() */
 	desc->reserved = 0;
+	desc->rangecount = 1;
 
 	bufferlist[0].iov_base = desc;
 	bufferlist[0].iov_len = desc_size;
