@@ -41,7 +41,7 @@ EXPORT_SYMBOL_GPL(hv_do_hypercall);
  * Avoids the overhead of virt_to_phys for simple hypercalls.
  */
 
-u64 hv_do_fast_hypercall8(u16 code, u64 input)
+u64 hv_do_fast_hypercall8(u64 code, u64 input)
 {
 	struct arm_smccc_res	res;
 	u64			control;
@@ -58,7 +58,7 @@ EXPORT_SYMBOL_GPL(hv_do_fast_hypercall8);
  * with arguments in registers instead of physical memory.
  * Avoids the overhead of virt_to_phys for simple hypercalls.
  */
-u64 hv_do_fast_hypercall16(u16 code, u64 input1, u64 input2)
+u64 hv_do_fast_hypercall16(u64 code, u64 input1, u64 input2)
 {
 	struct arm_smccc_res	res;
 	u64			control;

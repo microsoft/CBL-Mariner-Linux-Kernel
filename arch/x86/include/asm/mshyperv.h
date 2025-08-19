@@ -118,9 +118,9 @@ static inline u64 _hv_do_fast_hypercall8(u64 control, u64 input1)
 #endif
 }
 
-static inline u64 hv_do_fast_hypercall8(u16 code, u64 input1)
+static inline u64 hv_do_fast_hypercall8(u64 code, u64 input1)
 {
-	u64 control = (u64)code | HV_HYPERCALL_FAST_BIT;
+	u64 control = code | HV_HYPERCALL_FAST_BIT;
 
 	return _hv_do_fast_hypercall8(control, input1);
 }
@@ -148,7 +148,7 @@ static inline u64 _hv_do_fast_hypercall16(u64 control, u64 input1, u64 input2)
 #endif
 }
 
-static inline u64 hv_do_fast_hypercall16(u16 code, u64 input1, u64 input2)
+static inline u64 hv_do_fast_hypercall16(u64 code, u64 input1, u64 input2)
 {
 	u64 control = (u64)code | HV_HYPERCALL_FAST_BIT;
 

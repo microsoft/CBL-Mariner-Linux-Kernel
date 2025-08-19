@@ -72,8 +72,8 @@ extern void * __percpu *hyperv_pcpu_input_arg;
 extern void * __percpu *hyperv_pcpu_output_arg;
 
 u64 hv_do_hypercall(u64 control, void *inputaddr, void *outputaddr);
-u64 hv_do_fast_hypercall8(u16 control, u64 input8);
-u64 hv_do_fast_hypercall16(u16 control, u64 input1, u64 input2);
+u64 hv_do_fast_hypercall8(u64 control, u64 input8);
+u64 hv_do_fast_hypercall16(u64 control, u64 input1, u64 input2);
 
 bool hv_isolation_type_snp(void);
 bool hv_isolation_type_tdx(void);
