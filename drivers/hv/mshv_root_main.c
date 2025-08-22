@@ -537,6 +537,7 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 		vp->run.flags.intercept_suspend = 0;
 
 		if (output.dispatch_state == HV_VP_DISPATCH_STATE_BLOCKED) {
+			vp->run.flags.root_sched_blocked = 1;
 			if (output.dispatch_event ==
 						HV_VP_DISPATCH_EVENT_SUSPEND) {
 				/*
@@ -556,15 +557,6 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 				 * simply clear it here.
 				 */
 				ret = mshv_vp_clear_explicit_suspend(vp);
-				if (ret)
-					break;
-
-				ret = mshv_vp_wait_for_hv_kick(vp);
-				if (ret)
-					break;
-			} else {
-				vp->run.flags.root_sched_blocked = 1;
-				ret = mshv_vp_wait_for_hv_kick(vp);
 				if (ret)
 					break;
 			}
