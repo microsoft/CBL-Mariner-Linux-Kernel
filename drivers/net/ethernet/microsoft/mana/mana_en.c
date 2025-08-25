@@ -2113,10 +2113,8 @@ static void mana_destroy_txq(struct mana_port_context *apc)
 		napi = &apc->tx_qp[i].tx_cq.napi;
 		if (apc->tx_qp[i].txq.napi_initialized) {
 			napi_synchronize(napi);
-			netdev_lock_ops_to_full(napi->dev);
-			napi_disable_locked(napi);
-			netif_napi_del_locked(napi);
-			netdev_unlock_full_to_ops(napi->dev);
+			napi_disable(napi);
+			netif_napi_del(napi);
 			apc->tx_qp[i].txq.napi_initialized = false;
 		}
 		mana_destroy_wq_obj(apc, GDMA_SQ, apc->tx_qp[i].tx_object);
@@ -2269,10 +2267,8 @@ static int mana_create_txq(struct mana_port_context *apc,
 		mana_create_txq_debugfs(apc, i);
 
 		set_bit(NAPI_STATE_NO_BUSY_POLL, &cq->napi.state);
-		netdev_lock_ops_to_full(net);
-		netif_napi_add_locked(net, &cq->napi, mana_poll);
-		napi_enable_locked(&cq->napi);
-		netdev_unlock_full_to_ops(net);
+		netif_napi_add(net, &cq->napi, mana_poll);
+		napi_enable(&cq->napi);
 		txq->napi_initialized = true;
 
 		mana_gd_ring_cq(cq->gdma_cq, SET_ARM_BIT);
@@ -2308,10 +2304,8 @@ static void mana_destroy_rxq(struct mana_port_context *apc,
 	if (napi_initialized) {
 		napi_synchronize(napi);
 
-		netdev_lock_ops_to_full(napi->dev);
-		napi_disable_locked(napi);
-		netif_napi_del_locked(napi);
-		netdev_unlock_full_to_ops(napi->dev);
+		napi_disable(napi);
+		netif_napi_del(napi);
 	}
 	xdp_rxq_info_unreg(&rxq->xdp_rxq);
 
@@ -2562,18 +2556,14 @@ static struct mana_rxq *mana_create_rxq(struct mana_port_context *apc,
 
 	gc->cq_table[cq->gdma_id] = cq->gdma_cq;
 
-	netdev_lock_ops_to_full(ndev);
-	netif_napi_add_weight_locked(ndev, &cq->napi, mana_poll, 1);
-	netdev_unlock_full_to_ops(ndev);
+	netif_napi_add_weight(ndev, &cq->napi, mana_poll, 1);
 
 	WARN_ON(xdp_rxq_info_reg(&rxq->xdp_rxq, ndev, rxq_idx,
 				 cq->napi.napi_id));
 	WARN_ON(xdp_rxq_info_reg_mem_model(&rxq->xdp_rxq, MEM_TYPE_PAGE_POOL,
 					   rxq->page_pool));
 
-	netdev_lock_ops_to_full(ndev);
-	napi_enable_locked(&cq->napi);
-	netdev_unlock_full_to_ops(ndev);
+	napi_enable(&cq->napi);
 
 	mana_gd_ring_cq(cq->gdma_cq, SET_ARM_BIT);
 out:
