@@ -1110,15 +1110,12 @@ struct hv_tf_test_info {
 	struct hv_tf_input_kd_trigger_exception trigger_exception;
 } __packed;
 
-static int mshv_debugfs_do_hvcore(void)
+static int mshv_debugfs_do_hvcore_legacy(void)
 {
 	unsigned long flags;
 	u64 status;
 	struct hv_input_invoke_tf *input;
 	struct hv_tf_test_info *tinfo, test_info = { 0 };
-
-	if (is_kdump_kernel())
-		return -EPERM;
 
 	/* See: DbgHvCrashTests::CrashHypervisor */
 	tinfo = &test_info;
@@ -1141,6 +1138,33 @@ static int mshv_debugfs_do_hvcore(void)
 	pr_err("hvcore: hypercall returned status: %llx\n", status);
 
 	return hv_result_to_errno(status);
+}
+
+static int mshv_debugfs_do_hvcore(void)
+{
+	unsigned long flags;
+	struct hv_input_set_system_property *input;
+	u64 status;
+
+	if (is_kdump_kernel())
+		return -EPERM;
+
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	memset(input, 0, sizeof(*input));
+	input->property_id = HV_SYSTEM_INITIATE_HYPERVISOR_CRASH;
+
+	status = hv_do_hypercall(HVCALL_SET_SYSTEM_PROPERTY, input, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n",
+			__func__, hv_result_to_string(status));
+		return mshv_debugfs_do_hvcore_legacy();
+	}
+
+	return 0;
 }
 
 static int hv_hvdbg_write(void *data, u64 val)
