@@ -9,6 +9,8 @@
 
 #define HVHVK_MINI_VERSION		(25294)
 
+#define HV_MAX_CONTIGUOUS_ALLOCATION_PAGES	8
+
 /*
  * Doorbell connection_info flags.
  */

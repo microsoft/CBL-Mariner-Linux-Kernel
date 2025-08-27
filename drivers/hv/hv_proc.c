@@ -118,6 +118,9 @@ int hv_call_deposit_memory(int node, u64 partition_id, u64 hv_status)
 	switch (hv_result(hv_status)) {
 	case HV_STATUS_INSUFFICIENT_MEMORY:
 		break;
+	case HV_STATUS_INSUFFICIENT_CONTIGUOUS_MEMORY:
+		num_pages = HV_MAX_CONTIGUOUS_ALLOCATION_PAGES;
+		break;
 	default:
 		hv_status_err(hv_status, "Unexpected!\n");
 		return -ENOMEM;
