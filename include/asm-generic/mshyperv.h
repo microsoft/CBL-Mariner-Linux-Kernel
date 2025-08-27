@@ -109,6 +109,7 @@ static inline bool hv_result_oom(u64 status)
 {
 	switch (hv_result(status)) {
 	case HV_STATUS_INSUFFICIENT_MEMORY:
+	case HV_STATUS_INSUFFICIENT_CONTIGUOUS_MEMORY:
 		return true;
 	}
 	return false;
