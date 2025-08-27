@@ -111,6 +111,21 @@ free_buf:
 }
 EXPORT_SYMBOL_GPL(hv_call_deposit_pages);
 
+int hv_call_deposit_memory(int node, u64 partition_id, u64 hv_status)
+{
+	u32 num_pages = 1;
+
+	switch (hv_result(hv_status)) {
+	case HV_STATUS_INSUFFICIENT_MEMORY:
+		break;
+	default:
+		hv_status_err(hv_status, "Unexpected!\n");
+		return -ENOMEM;
+	}
+	return hv_call_deposit_pages(node, partition_id, num_pages);
+}
+EXPORT_SYMBOL_GPL(hv_call_deposit_memory);
+
 int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
 {
 	struct hv_input_add_logical_processor *input;
@@ -146,7 +161,8 @@ int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
 			}
 			break;
 		}
-		ret = hv_call_deposit_pages(node, hv_current_partition_id, 1);
+		ret = hv_call_deposit_memory(node, hv_current_partition_id,
+					     status);
 	} while (!ret);
 
 	return ret;
@@ -189,7 +205,7 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 			}
 			break;
 		}
-		ret = hv_call_deposit_pages(node, partition_id, 1);
+		ret = hv_call_deposit_memory(node, partition_id, status);
 
 	} while (!ret);
 

@@ -408,11 +408,10 @@ static int __init map_diag_buffers(uint tot_pages, struct page ***pppages)
 			}
 
 			local_irq_restore(flags);
-			ret = hv_call_deposit_pages(NUMA_NO_NODE,
-						    hv_current_partition_id, 1);
+			ret = hv_call_deposit_memory(NUMA_NO_NODE,
+						     hv_current_partition_id,
+						     status);
 			if (ret) {
-				pr_err("%s: hv_call_deposit_pages failed: %d\n",
-				       __func__, ret);
 				unmap_diaglog_pages(i);
 				goto out;
 			}
@@ -523,11 +522,10 @@ static int __init alloc_and_map_diag_buffers(uint tot_pages,
 				goto cleanup;
 			}
 			local_irq_restore(flags);
-			ret = hv_call_deposit_pages(NUMA_NO_NODE,
-						hv_current_partition_id, 1);
+			ret = hv_call_deposit_memory(NUMA_NO_NODE,
+						     hv_current_partition_id,
+						     status);
 			if (ret) {
-				pr_err("%s: hv_call_deposit_pages failed: %d\n",
-				       __func__, ret);
 				unmap_diaglog_pages(i);
 				goto cleanup;
 			}
