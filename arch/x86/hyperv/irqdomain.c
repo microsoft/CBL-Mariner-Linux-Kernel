@@ -94,7 +94,8 @@ static int hv_map_interrupt(u64 ptid, union hv_device_id device_id, bool level,
 						vector, ret_entry);
 
 		if (hv_result_oom(status)) {
-			status = hv_call_deposit_pages(NUMA_NO_NODE, ptid, 1);
+			status = hv_call_deposit_memory(NUMA_NO_NODE,
+							ptid, status);
 			if (!hv_result_success(status)) {
 				pr_err("%s deposit pages failed:%llx\n",
 				       __func__, status);
