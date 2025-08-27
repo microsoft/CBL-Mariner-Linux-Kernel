@@ -134,8 +134,9 @@ int hv_call_create_partition(
 			break;
 		}
 		local_irq_restore(irq_flags);
-		ret = hv_call_deposit_pages(NUMA_NO_NODE,
-					    hv_current_partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE,
+					     hv_current_partition_id,
+					     status);
 	} while (!ret);
 
 	trace_mshv_hvcall_create_partition(status, (ret ? 0 : (*partition_id)), flags);
@@ -167,7 +168,8 @@ int hv_call_initialize_partition(u64 partition_id)
 			ret = hv_result_to_errno(status);
 			break;
 		}
-		ret = hv_call_deposit_pages(NUMA_NO_NODE, partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE, partition_id,
+					     status);
 	} while (!ret);
 
 	trace_mshv_hvcall_initialize_partition(status, partition_id);
@@ -465,7 +467,8 @@ int hv_call_install_intercept(
 			break;
 		}
 
-		ret = hv_call_deposit_pages(NUMA_NO_NODE, partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE, partition_id,
+					     status);
 	} while (!ret);
 
 	return ret;
@@ -581,8 +584,8 @@ int hv_call_get_vp_state(
 		}
 		local_irq_restore(flags);
 
-		ret = hv_call_deposit_pages(NUMA_NO_NODE,
-					    partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE, partition_id,
+					     status);
 	} while (!ret);
 
 	return ret;
@@ -645,8 +648,8 @@ int hv_call_set_vp_state(u32 vp_index, u64 partition_id,
 		}
 		local_irq_restore(flags);
 
-		ret = hv_call_deposit_pages(NUMA_NO_NODE,
-					    partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE, partition_id,
+					     status);
 	} while (!ret);
 
 	return ret;
@@ -705,7 +708,8 @@ static int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 
 		local_irq_restore(flags);
 
-		ret = hv_call_deposit_pages(NUMA_NO_NODE, partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE, partition_id,
+					     status);
 	} while (!ret);
 
 	trace_mshv_hvcall_map_vp_state_page(status, partition_id, vp_index,
@@ -940,7 +944,8 @@ hv_call_create_port(u64 port_partition_id, union hv_port_id port_id,
 			ret = hv_result_to_errno(status);
 			break;
 		}
-		ret = hv_call_deposit_pages(NUMA_NO_NODE, port_partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE,
+					     port_partition_id, status);
 
 	} while (!ret);
 
@@ -1002,8 +1007,9 @@ hv_call_connect_port(u64 port_partition_id, union hv_port_id port_id,
 			ret = hv_result_to_errno(status);
 			break;
 		}
-		ret = hv_call_deposit_pages(NUMA_NO_NODE,
-					    connection_partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE,
+					     connection_partition_id,
+					     status);
 	} while (!ret);
 
 	return ret;
@@ -1084,8 +1090,8 @@ int hv_call_register_intercept_result(u32 vp_index,
 			break;
 		}
 
-		ret = hv_call_deposit_pages(NUMA_NO_NODE,
-				partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE, partition_id,
+					     status);
 	} while (!ret);
 
 	return ret;
@@ -1227,8 +1233,9 @@ hv_call_map_stats_page2(enum hv_stats_object_type type,
 			return hv_result_to_errno(status);
 		}
 
-		ret = hv_call_deposit_pages(NUMA_NO_NODE,
-					    hv_current_partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE,
+					     hv_current_partition_id,
+					     status);
 		if (ret) {
 			pr_err("%s: Failed to deposit pages, error: %d\n",
 			       __func__, ret);
@@ -1312,8 +1319,9 @@ hv_call_map_stats_page(enum hv_stats_object_type type,
 			return hv_result_to_errno(status);
 		}
 
-		ret = hv_call_deposit_pages(NUMA_NO_NODE,
-					    hv_current_partition_id, 1);
+		ret = hv_call_deposit_memory(NUMA_NO_NODE,
+					     hv_current_partition_id,
+					     status);
 		if (ret) {
 			pr_err("%s: Failed to deposit pages, error: %d\n",
 			       __func__, ret);

@@ -700,7 +700,8 @@ int hv_iommu_direct_attach_device(struct pci_dev *pdev)
 		local_irq_restore(flags);
 
 		if (hv_result_oom(status)) {
-			rc = hv_call_deposit_pages(NUMA_NO_NODE, ptid, 1);
+			rc = hv_call_deposit_memory(NUMA_NO_NODE, ptid,
+						    status);
 			if (rc)
 				break;
 		}
