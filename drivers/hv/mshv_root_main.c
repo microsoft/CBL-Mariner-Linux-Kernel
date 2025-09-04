@@ -2091,7 +2091,7 @@ static int mshv_handle_pinned_region(struct mshv_mem_region *region)
 		goto err_out;
 	}
 
-	return 0;
+	return ret;
 
 evict_region:
 	mshv_region_evict(region);
