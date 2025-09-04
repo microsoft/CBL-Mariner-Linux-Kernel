@@ -1298,7 +1298,7 @@ static int mshv_prepare_pinned_region(struct mshv_mem_region *region)
 	if (ret) {
 		pt_err(partition, "Failed to pin memory region: %d\n",
 		       ret);
-		goto err_out;
+		return ret;
 	}
 
 	/*
@@ -1333,14 +1333,13 @@ static int mshv_prepare_pinned_region(struct mshv_mem_region *region)
 		 * Don't unpin if marking shared failed because pages are no
 		 * longer mapped in the host, ie root, anymore.
 		 */
-		goto err_out;
 	}
 
-	return 0;
+	return ret;
 
 invalidate_region:
 	mshv_region_invalidate(region);
-err_out:
+
 	return ret;
 }
 
