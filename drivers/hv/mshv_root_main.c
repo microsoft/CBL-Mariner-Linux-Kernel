@@ -1961,6 +1961,17 @@ static bool mshv_region_movable_init(struct mshv_mem_region *region)
 {
 	int ret;
 
+	/*
+	 * FIXME:
+	 *
+	 * Disable movable pages since it causes crashes sometimes. Need to
+	 * investigate further.
+	 *
+	 * Returning false here causes the region to be always pinned. This is
+	 * the old behavior before movable pages support was implemented.
+	 */
+	return false;
+
 	ret = mmu_interval_notifier_insert(&region->memreg_mni, current->mm,
 					   region->start_uaddr,
 					   region->nr_pages << HV_HYP_PAGE_SHIFT,
