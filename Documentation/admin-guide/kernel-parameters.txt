@@ -1854,6 +1854,15 @@
 				      which allow the hypervisor to 'idle' the
 				      guest on lock contention.
 
+	hv_minroot_nodes
+			[KNL] A comma separated list of numa nodes. If specified,
+			root VPs are evenly distributed on these nodes. BSP's
+			node (node 0) is required. "all" can be used as a
+			shorthand for all nodes.
+
+			If not specified, the default behavior is to fill up
+			node 0, followed by node 1, followed by node 2 and so on.
+
 	i2c_bus=	[HW]	Override the default board specific I2C bus speed
 				or register an additional I2C bus that is not
 				registered from board initialization code.

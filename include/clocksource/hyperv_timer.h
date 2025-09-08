@@ -15,7 +15,8 @@
 
 #include <linux/clocksource.h>
 #include <linux/math64.h>
-#include <asm/hyperv-tlfs.h>
+#include <asm/mshyperv.h>
+#include <hyperv/hvhdk.h>
 
 #define HV_MAX_MAX_DELTA_TICKS 0xffffffff
 #define HV_MIN_DELTA_TICKS 1

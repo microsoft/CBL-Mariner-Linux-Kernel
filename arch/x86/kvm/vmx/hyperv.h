@@ -4,7 +4,6 @@
 
 #include <linux/jump_label.h>
 
-#include <asm/hyperv-tlfs.h>
 #include <asm/mshyperv.h>
 #include <asm/vmx.h>
 
