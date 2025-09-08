@@ -851,7 +851,12 @@ mshv_vp_dispatch(struct mshv_vp *vp, u32 flags,
 	trace_mshv_hvcall_dispatch_vp(status, vp->vp_partition->pt_id,
 				      vp->vp_index, flags,
 				      output->dispatch_state,
-				      output->dispatch_event);
+				      output->dispatch_event,
+#if defined(CONFIG_X86_64)
+				      vp->vp_register_page->interrupt_vectors.as_uint64);
+#else
+				      0);
+#endif
 
 	*res = *output;
 	preempt_enable();
