@@ -409,35 +409,38 @@ TRACE_EVENT(mshv_root_sched_handle_work,
 );
 
 TRACE_EVENT(mshv_hvcall_dispatch_vp,
-		TP_PROTO(u64 status, u64 partition_id, u32 vp_index, u32 flag,
-				u32 dispatch_state, u32 dispatch_event),
-		TP_ARGS(status, partition_id, vp_index, flag, dispatch_state, dispatch_event),
+		TP_PROTO(u64 status, u64 partition_id, u32 vp_index, u32 flags,
+			 u32 dispatch_state, u32 dispatch_event, u64 irq_vectors),
+		TP_ARGS(status, partition_id, vp_index, flags, dispatch_state, dispatch_event, irq_vectors),
 
 	TP_STRUCT__entry(
 		__field(u64, status)
 		__field(u64, partition_id)
 		__field(u32, vp_index)
-		__field(u32, flag)
+		__field(u32, flags)
 		__field(u32, dispatch_state)
 		__field(u32, dispatch_event)
+		__field(u64, irq_vectors)
 	),
 
 	TP_fast_assign(
 		__entry->status = status;
 		__entry->partition_id = partition_id;
 		__entry->vp_index = vp_index;
-		__entry->flag = flag;
+		__entry->flags = flags;
 		__entry->dispatch_state = dispatch_state;
 		__entry->dispatch_event = dispatch_event;
+		__entry->irq_vectors = irq_vectors;
 	),
 
-	TP_printk("status=0x%llx partition_id=%llu vp_index=%u flag=0x%x dispatch_state=0x%x dispatch_event=0x%x",
+	TP_printk("status=0x%llx partition_id=%llu vp_index=%u flags=0x%x dispatch_state=0x%x dispatch_event=0x%x irq_vectors=0x%016llx",
 		__entry->status,
 		__entry->partition_id,
 		__entry->vp_index,
-		__entry->flag,
+		__entry->flags,
 		__entry->dispatch_state,
-		__entry->dispatch_event
+		__entry->dispatch_event,
+		__entry->irq_vectors
 	)
 );
 
