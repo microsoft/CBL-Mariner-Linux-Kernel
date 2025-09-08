@@ -908,6 +908,9 @@ static void mshv_debugfs_parent_partition_remove(void)
 	partition_debugfs_remove(hv_current_partition_id,
 				 parent_partition_stats);
 	kfree(parent_vp_stats);
+	parent_vp_stats = NULL;
+	parent_partition_stats = NULL;
+
 }
 
 static int __init mshv_debugfs_parent_partition_create(void)
@@ -957,9 +960,11 @@ remove_debugfs_partition_vp:
 
 	kfree(parent_vp_stats);
 	parent_vp_stats = NULL;
+	parent_partition_stats = NULL;
 
 remove_debugfs_partition:
 	debugfs_remove_recursive(mshv_debugfs_partition);
+	mshv_debugfs_partition = NULL;
 	return err;
 }
 
@@ -1198,13 +1203,16 @@ int __init mshv_debugfs_init(void)
 	return 0;
 
 unmap_lp_stats:
-	if (hv_root_partition())
+	if (hv_root_partition()) {
 		mshv_debugfs_lp_remove();
+		mshv_debugfs_lp = NULL;
+	}
 unmap_hv_stats:
 	if (hv_root_partition())
 		mshv_hv_stats_unmap();
 remove_mshv_dir:
 	debugfs_remove_recursive(mshv_debugfs);
+	mshv_debugfs = NULL;
 	return err;
 }
 
@@ -1214,8 +1222,11 @@ void mshv_debugfs_exit(void)
 
 	if (hv_root_partition()) {
 		mshv_debugfs_lp_remove();
+		mshv_debugfs_lp = NULL;
 		mshv_hv_stats_unmap();
 	}
 
 	debugfs_remove_recursive(mshv_debugfs);
+	mshv_debugfs = NULL;
+	mshv_debugfs_partition = NULL;
 }
