@@ -18,13 +18,6 @@
 #include <linux/mmu_notifier.h>
 #include <uapi/linux/mshv.h>
 
-/*
- * Hypervisor must be between these version numbers (inclusive)
- * to guarantee compatibility
- */
-#define MSHV_HV_MIN_VERSION		(27744)
-#define MSHV_HV_MAX_VERSION		(27751)
-
 static_assert(HV_HYP_PAGE_SIZE == MSHV_HV_PAGE_SIZE);
 
 #define MSHV_MAX_VPS			256

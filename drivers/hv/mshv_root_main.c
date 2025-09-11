@@ -2368,14 +2368,6 @@ static int __init mshv_parent_partition_init(void)
 
 	dev = mshv_dev.this_device;
 
-	if (version_info.build_number < MSHV_HV_MIN_VERSION ||
-	    version_info.build_number > MSHV_HV_MAX_VERSION) {
-		dev_err(dev, "Running on unvalidated Hyper-V version\n");
-		dev_err(dev, "Versions: current: %u  min: %u  max: %u\n",
-			version_info.build_number, MSHV_HV_MIN_VERSION,
-			MSHV_HV_MAX_VERSION);
-	}
-
 	ret = mshv_synic_init(dev);
 	if (ret)
 		goto device_deregister;
