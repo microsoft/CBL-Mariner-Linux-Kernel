@@ -1646,17 +1646,20 @@ unmap_stats_pages:
 unmap_ghcb_page:
 	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available())
 		hv_unmap_vp_state_page(partition->pt_id, args.vp_index,
-				       HV_VP_STATE_PAGE_GHCB, vp->vp_ghcb_page,
+				       HV_VP_STATE_PAGE_GHCB,
+				       page_address(ghcb_page),
 				       input_vtl_normal);
 unmap_register_page:
 	if (!mshv_partition_encrypted(partition))
 		hv_unmap_vp_state_page(partition->pt_id, args.vp_index,
 				       HV_VP_STATE_PAGE_REGISTERS,
-				       vp->vp_register_page, input_vtl_zero);
+				       page_address(register_page),
+				       input_vtl_zero);
 unmap_intercept_message_page:
 	hv_unmap_vp_state_page(partition->pt_id, args.vp_index,
 			       HV_VP_STATE_PAGE_INTERCEPT_MESSAGE,
-			       vp->vp_intercept_msg_page, input_vtl_zero);
+			       page_address(intercept_message_page),
+			       input_vtl_zero);
 destroy_vp:
 	hv_call_delete_vp(partition->pt_id, args.vp_index);
 	trace_mshv_create_vp(ret, partition->pt_id, args.vp_index, -1);
