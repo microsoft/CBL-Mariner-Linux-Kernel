@@ -1603,12 +1603,12 @@ mshv_partition_ioctl_create_vp(struct mshv_partition *partition,
 	atomic64_set(&vp->run.vp_signaled_count, 0);
 
 	vp->vp_index = args.vp_index;
-	vp->vp_intercept_msg_page = page_to_virt(intercept_message_page);
+	vp->vp_intercept_msg_page = page_address(intercept_message_page);
 	if (!mshv_partition_encrypted(partition))
-		vp->vp_register_page = page_to_virt(register_page);
+		vp->vp_register_page = page_address(register_page);
 
 	if (mshv_partition_encrypted(partition) && is_ghcb_mapping_available())
-		vp->vp_ghcb_page = page_to_virt(ghcb_page);
+		vp->vp_ghcb_page = page_address(ghcb_page);
 
 	if (hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT)
 		memcpy(vp->vp_stats_pages, stats_pages, sizeof(stats_pages));
