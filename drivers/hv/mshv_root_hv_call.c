@@ -775,12 +775,13 @@ static int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
 }
 
 int hv_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
-			   void *page_addr, union hv_input_vtl input_vtl)
+			   struct page *state_page,
+			   union hv_input_vtl input_vtl)
 {
 	int ret = hv_call_unmap_vp_state_page(partition_id, vp_index, type, input_vtl);
 
-	if (mshv_use_overlay_gpfn() && page_addr)
-		__free_page(virt_to_page(page_addr));
+	if (mshv_use_overlay_gpfn() && state_page)
+		__free_page(state_page);
 
 	return ret;
 }
