@@ -808,7 +808,7 @@ enum hv_message_type {
 	/* Root scheduler messages */
 	HVMSG_SCHEDULER_VP_SIGNAL_BITSET	= 0x80000100,
 	HVMSG_SCHEDULER_VP_SIGNAL_PAIR		= 0x80000101,
-
+#if defined(CONFIG_X86_64)
 	/* Platform-specific processor intercept messages. */
 	HVMSG_X64_IO_PORT_INTERCEPT		= 0x80010000,
 	HVMSG_X64_MSR_INTERCEPT			= 0x80010001,
@@ -829,8 +829,11 @@ enum hv_message_type {
 	HVMSG_X64_SNP_GUEST_REQUEST_INTERCEPT	= 0x80010011,
 	HVMSG_X64_EXCEPTION_TRAP_INTERCEPT	= 0x80010012,
 	HVMSG_X64_SEV_VMGEXIT_INTERCEPT		= 0x80010013,
-
+#endif /* CONFIG_X86_64 */
+#if defined(CONFIG_ARM64)
+	/* Platform-specific processor intercept messages. */
 	HVMSG_ARM64_RESET_INTERCEPT = 0x8001000C,
+#endif /* CONFIG_ARM64 */
 };
 
 /* Define the format of the SIMP register */
