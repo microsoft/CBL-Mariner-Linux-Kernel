@@ -343,6 +343,7 @@ mshv_intercept_isr(struct hv_message *msg)
 		goto unlock_out;
 	}
 
+#if defined(__x86_64__)
 	if (msg->header.message_type == HVMSG_X64_APIC_EOI) {
 		/*
 		 * Check if this gsi is registered in the
@@ -363,6 +364,7 @@ mshv_intercept_isr(struct hv_message *msg)
 			goto unlock_out;
 		}
 	}
+#endif
 
 	/*
 	 * We should get an opaque intercept message here for all intercept
