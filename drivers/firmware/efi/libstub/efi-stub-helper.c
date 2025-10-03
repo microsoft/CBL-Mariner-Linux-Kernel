@@ -24,6 +24,7 @@ bool efi_novamap;
 static bool efi_noinitrd;
 static bool efi_nosoftreserve;
 static bool efi_disable_pci_dma = IS_ENABLED(CONFIG_EFI_DISABLE_PCI_DMA);
+unsigned long efi_mmap_nr_slack_slots = EFI_MMAP_NR_SLACK_SLOTS;
 
 int efi_mem_encrypt;
 
@@ -76,6 +77,14 @@ efi_status_t efi_parse_options(char const *cmdline)
 			efi_loglevel = CONSOLE_LOGLEVEL_QUIET;
 		} else if (!strcmp(param, "noinitrd")) {
 			efi_noinitrd = true;
+		} else if (!strcmp(param, "efi_mmap_nr_slack_slots")) {
+				char *end;
+				unsigned long n = simple_strtol(val, &end, 10);
+				efi_info("Provided value of efi_slack_slots %ld.\n", n);
+				if (*end == '\0' && n > 32 && n <= 512 && powerof2(n)) {
+					efi_info("Updated the efi_slack_slots to %ld.\n", n);
+					efi_mmap_nr_slack_slots = n;
+				}
 		} else if (IS_ENABLED(CONFIG_X86_64) && !strcmp(param, "no5lvl")) {
 			efi_no5lvl = true;
 		} else if (IS_ENABLED(CONFIG_ARCH_HAS_MEM_ENCRYPT) &&
