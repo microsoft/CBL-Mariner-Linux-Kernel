@@ -296,10 +296,13 @@ static void dump_df_cfg(void)
 
 int get_df_system_info(void)
 {
-	if (determine_df_rev()) {
+	int ret;
+
+	ret = determine_df_rev();
+	if (ret) {
 		pr_warn("Failed to determine DF Revision");
 		df_cfg.rev = UNKNOWN;
-		return -EINVAL;
+		return ret;
 	}
 
 	if (df_cfg.flags.prm_only)
