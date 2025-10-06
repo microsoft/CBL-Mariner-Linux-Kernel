@@ -104,6 +104,7 @@ unregister_misc:
 
 static void __exit mshv_diag_exit(void)
 {
+	mshv_trace_disable();
 	mshv_diaglog_exit();
 	unregister_reboot_notifier(&mshv_diag_reboot_notifier);
 	misc_deregister(&mshv_diag_dev);
