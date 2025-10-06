@@ -1913,15 +1913,10 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 	unsigned long mstart, mend;
 	int ret;
 
-	if (!mmget_not_zero(mni->mm))
-		return true;
-
-	if (mmu_notifier_range_blockable(range)) {
+	if (mmu_notifier_range_blockable(range))
 		mutex_lock(&region->memreg_mutex);
-	} else if (!mutex_trylock(&region->memreg_mutex)) {
-		mmput(mni->mm);
+	else if (!mutex_trylock(&region->memreg_mutex))
 		return false;
-	}
 
 	mmu_interval_set_seq(mni, cur_seq);
 
@@ -1946,7 +1941,6 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 	       page_count * sizeof(struct page *));
 
 	mutex_unlock(&region->memreg_mutex);
-	mmput(mni->mm);
 
 	return true;
 }
