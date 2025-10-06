@@ -43,6 +43,8 @@
 
 #define MSHV_MAP_FAULT_IN_PAGES			HPAGE_PMD_NR
 
+#define VALUE_PMD_ALIGNED(c)			(!((c) & (PTRS_PER_PMD - 1)))
+
 MODULE_AUTHOR("Microsoft");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Microsoft Hyper-V root partition VMM interface /dev/mshv");
@@ -1763,7 +1765,9 @@ mshv_region_remap_pages(struct mshv_mem_region *region, u32 map_flags,
 	if (page_offset + page_count > region->nr_pages)
 		return -EINVAL;
 
-	if (region->flags.large_pages)
+	if (region->flags.large_pages &&
+	    VALUE_PMD_ALIGNED(page_offset) &&
+	    VALUE_PMD_ALIGNED(page_count))
 		map_flags |= HV_MAP_GPA_LARGE_PAGE;
 
 	/* ask the hypervisor to map guest ram */
