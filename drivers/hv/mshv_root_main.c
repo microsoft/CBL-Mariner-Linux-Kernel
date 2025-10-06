@@ -1904,6 +1904,10 @@ static void mshv_region_movable_fini(struct mshv_mem_region *region)
  * is blockable, it uses a blocking lock; otherwise, it attempts a non-blocking
  * lock and returns false if unsuccessful.
  *
+ * NOTE: Failure to invalidate a region is a serious error, as the pages will
+ * be considered freed while they are still mapped by the hypervisor.
+ * Any attempt to access such pages will likely crash the system.
+ *
  * Return: true if the region was successfully invalidated, false otherwise.
  */
 static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
@@ -1920,7 +1924,7 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 	if (mmu_notifier_range_blockable(range))
 		mutex_lock(&region->memreg_mutex);
 	else if (!mutex_trylock(&region->memreg_mutex))
-		return false;
+		goto out_fail;
 
 	mmu_interval_set_seq(mni, cur_seq);
 
@@ -1933,13 +1937,10 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 
 	ret = mshv_region_remap_pages(region, HV_MAP_GPA_NO_ACCESS,
 				      page_offset, page_count);
-
-	WARN_ONCE(ret,
-		  "Failed to invalidate region %#llx-%#llx (range %#lx-%#lx, event: %u, pages %#llx-%#llx, mm: %#llx): %d\n",
-		  region->start_uaddr,
-		  region->start_uaddr + (region->nr_pages << HV_HYP_PAGE_SHIFT),
-		  range->start, range->end, range->event,
-		  page_offset, page_offset + page_count - 1, (u64)range->mm, ret);
+	if (ret) {
+		mutex_unlock(&region->memreg_mutex);
+		goto out_fail;
+	}
 
 	memset(region->pages + page_offset, 0,
 	       page_count * sizeof(struct page *));
@@ -1947,6 +1948,15 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 	mutex_unlock(&region->memreg_mutex);
 
 	return true;
+
+out_fail:
+	WARN_ONCE(ret,
+		  "Failed to invalidate region %#llx-%#llx (range %#lx-%#lx, event: %u, pages %#llx-%#llx, mm: %#llx): %d\n",
+		  region->start_uaddr,
+		  region->start_uaddr + (region->nr_pages << HV_HYP_PAGE_SHIFT),
+		  range->start, range->end, range->event,
+		  page_offset, page_offset + page_count - 1, (u64)range->mm, ret);
+	return false;
 }
 
 static const struct mmu_interval_notifier_ops mshv_region_mni_ops = {
