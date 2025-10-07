@@ -911,6 +911,11 @@ static int mshv_vp_wait_for_event(struct mshv_vp *vp)
 	if (ret)
 		return -EINTR;
 
+	trace_mshv_vp_event(vp->vp_partition->pt_id, vp->vp_index,
+			    vp->run.kicked_by_hv,
+			    mshv_vp_dispatch_thread_blocked(vp),
+			    mshv_vp_interrupt_pending(vp));
+
 	vp->run.flags.root_sched_blocked = 0;
 	vp->run.kicked_by_hv = 0;
 

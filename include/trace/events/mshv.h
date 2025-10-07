@@ -572,6 +572,35 @@ TRACE_EVENT(mshv_deassign_ioeventfd,
 		 )
 );
 
+TRACE_EVENT(mshv_vp_event,
+		TP_PROTO(u64 partition_id, u32 vp_index, bool kicked_by_hv, bool blocked, bool irq_pending),
+		TP_ARGS(partition_id, vp_index, kicked_by_hv, blocked, irq_pending),
+
+	TP_STRUCT__entry(
+		__field(u64, partition_id)
+		__field(u32, vp_index)
+		__field(bool, kicked_by_hv)
+		__field(bool, blocked)
+		__field(bool, irq_pending)
+	),
+
+	TP_fast_assign(
+		__entry->partition_id = partition_id;
+		__entry->vp_index = vp_index;
+		__entry->kicked_by_hv = kicked_by_hv;
+		__entry->blocked = blocked;
+		__entry->irq_pending = irq_pending;
+	),
+
+	TP_printk("partition_id=%llu vp_index=%u kicked_by_hv=%d blocked=%d irq_pending=%d",
+		  __entry->partition_id,
+		  __entry->vp_index,
+		  __entry->kicked_by_hv,
+		  __entry->blocked,
+		  __entry->irq_pending
+		 )
+);
+
 #endif /* _TRACE_MSHV_MAIN_H */
 
 /* This part must be outside protection */
