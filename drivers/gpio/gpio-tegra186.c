@@ -1026,13 +1026,16 @@ static int tegra186_gpio_probe(struct platform_device *pdev)
 	return devm_gpiochip_add_data(&pdev->dev, &gpio->gpio, gpio);
 }
 
-#define TEGRA186_MAIN_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA186_MAIN_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
+#define TEGRA_GPIO_PORT(_prefix, _name, _bank, _port, _pins) \
+	[_prefix##_GPIO_PORT_##_name] = { \
+		.name = #_name, \
+		.bank = _bank, \
+		.port = _port, \
+		.pins = _pins, \
 	}
+
+#define TEGRA186_MAIN_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA186_MAIN, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra186_main_ports[] = {
 	TEGRA186_MAIN_GPIO_PORT( A, 2, 0, 7),
@@ -1069,13 +1072,8 @@ static const struct tegra_gpio_soc tegra186_main_soc = {
 	.has_vm_support = false,
 };
 
-#define TEGRA186_AON_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA186_AON_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA186_AON_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA186_AON, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra186_aon_ports[] = {
 	TEGRA186_AON_GPIO_PORT( S, 0, 1, 5),
@@ -1097,13 +1095,8 @@ static const struct tegra_gpio_soc tegra186_aon_soc = {
 	.has_vm_support = false,
 };
 
-#define TEGRA194_MAIN_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA194_MAIN_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA194_MAIN_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA194_MAIN, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra194_main_ports[] = {
 	TEGRA194_MAIN_GPIO_PORT( A, 1, 2, 8),
@@ -1153,13 +1146,8 @@ static const struct tegra_gpio_soc tegra194_main_soc = {
 	.has_vm_support = true,
 };
 
-#define TEGRA194_AON_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA194_AON_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA194_AON_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA194_AON, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra194_aon_ports[] = {
 	TEGRA194_AON_GPIO_PORT(AA, 0, 3, 8),
@@ -1179,13 +1167,8 @@ static const struct tegra_gpio_soc tegra194_aon_soc = {
 	.has_vm_support = false,
 };
 
-#define TEGRA234_MAIN_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA234_MAIN_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA234_MAIN_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA234_MAIN, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra234_main_ports[] = {
 	TEGRA234_MAIN_GPIO_PORT( A, 0, 0, 8),
@@ -1224,13 +1207,8 @@ static const struct tegra_gpio_soc tegra234_main_soc = {
 	.has_vm_support = true,
 };
 
-#define TEGRA234_AON_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA234_AON_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA234_AON_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA234_AON, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra234_aon_ports[] = {
 	TEGRA234_AON_GPIO_PORT(AA, 0, 4, 8),
@@ -1251,13 +1229,8 @@ static const struct tegra_gpio_soc tegra234_aon_soc = {
 	.has_vm_support = false,
 };
 
-#define TEGRA241_MAIN_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA241_MAIN_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA241_MAIN_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA241_MAIN, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra241_main_ports[] = {
 	TEGRA241_MAIN_GPIO_PORT(A, 0, 0, 8),
@@ -1282,13 +1255,8 @@ static const struct tegra_gpio_soc tegra241_main_soc = {
 	.has_vm_support = false,
 };
 
-#define TEGRA241_AON_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA241_AON_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA241_AON_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA241_AON, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra241_aon_ports[] = {
 	TEGRA241_AON_GPIO_PORT(AA, 0, 0, 8),
@@ -1304,13 +1272,8 @@ static const struct tegra_gpio_soc tegra241_aon_soc = {
 	.has_vm_support = false,
 };
 
-#define TEGRA256_MAIN_GPIO_PORT(_name, _bank, _port, _pins)	\
-	[TEGRA256_MAIN_GPIO_PORT_##_name] = {			\
-		.name = #_name,					\
-		.bank = _bank,					\
-		.port = _port,					\
-		.pins = _pins,					\
-	}
+#define TEGRA256_MAIN_GPIO_PORT(_name, _bank, _port, _pins) \
+	TEGRA_GPIO_PORT(TEGRA256_MAIN, _name, _bank, _port, _pins)
 
 static const struct tegra_gpio_port tegra256_main_ports[] = {
 	TEGRA256_MAIN_GPIO_PORT(A, 0, 0, 8),
