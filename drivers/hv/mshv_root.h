@@ -106,6 +106,7 @@ struct mshv_partition {
 	struct hlist_node pt_hnode;
 	u64 pt_id;
 	refcount_t pt_ref_count;
+	struct rcu_head pt_rcu;
 	struct mutex pt_mutex;
 
 	spinlock_t pt_mem_regions_lock;

@@ -1790,8 +1790,6 @@ remove_partition(struct mshv_partition *partition)
 	spin_lock(&mshv_root.pt_ht_lock);
 	hlist_del_rcu(&partition->pt_hnode);
 	spin_unlock(&mshv_root.pt_ht_lock);
-
-	synchronize_rcu();
 }
 
 /*
@@ -1880,7 +1878,7 @@ static void destroy_partition(struct mshv_partition *partition)
 	hv_call_delete_partition(partition->pt_id);
 
 	mshv_free_routing_table(partition);
-	kfree(partition);
+	kfree_rcu(partition, pt_rcu);
 }
 
 struct
