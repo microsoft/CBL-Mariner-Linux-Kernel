@@ -62,6 +62,7 @@ struct mshv_ioeventfd {
 	u64		     iovntfd_datamatch;
 	int		     iovntfd_doorbell_id;
 	bool		     iovntfd_wildcard;
+	struct rcu_head      iovntfd_rcu;
 };
 
 int mshv_set_unset_ioeventfd(struct mshv_partition *pt,
