@@ -398,7 +398,7 @@ static int __init map_diag_buffers(uint tot_pages, struct page ***pppages)
 			if (hv_result(status) == HV_STATUS_SUCCESS)
 				break;
 
-			if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
+			if (!hv_result_oom(status)) {
 				local_irq_restore(flags);
 				pr_err("%s: hypercall: status %s\n", __func__,
 					hv_result_to_string(status));
@@ -514,7 +514,7 @@ static int __init alloc_and_map_diag_buffers(uint tot_pages,
 			if (hv_result(status) == HV_STATUS_SUCCESS)
 				break;
 
-			if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
+			if (!hv_result_oom(status)) {
 				local_irq_restore(flags);
 				pr_err("%s: hypercall: status %s\n", __func__,
 					hv_result_to_string(status));
