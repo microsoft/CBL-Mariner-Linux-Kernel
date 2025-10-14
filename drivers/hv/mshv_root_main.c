@@ -4023,14 +4023,6 @@ static int __init mshv_parent_partition_init(void)
 	if (ret)
 		return ret;
 
-	if (version_info.build_number < MSHV_HV_MIN_VERSION ||
-	    version_info.build_number > MSHV_HV_MAX_VERSION) {
-		dev_err(dev, "Running on unvalidated Hyper-V version\n");
-		dev_err(dev, "Versions: current: %u  min: %u  max: %u\n",
-			version_info.build_number, MSHV_HV_MIN_VERSION,
-			MSHV_HV_MAX_VERSION);
-	}
-
 	mshv_root.synic_pages = alloc_percpu(struct hv_synic_pages);
 	if (!mshv_root.synic_pages) {
 		dev_err(dev, "Failed to allocate percpu synic page\n");
