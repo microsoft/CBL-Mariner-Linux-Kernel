@@ -2159,21 +2159,20 @@ mshv_map_user_memory(struct mshv_partition *partition,
 					       0, region->nr_pages);
 	}
 
-	if (ret) {
-		vfree(region);
-		goto out;
-	}
-
-	/* Install the new region */
-	hlist_add_head(&region->hnode, &partition->pt_mem_regions);
-
-out:
 	trace_mshv_map_user_memory(partition->pt_id, region->start_uaddr,
 				   region->start_gfn, region->nr_pages,
 				   region->hv_map_flags,
 				   region->flags.memreg_isram, ret);
 
-	return ret;
+	if (ret) {
+		vfree(region);
+		return ret;
+	}
+
+	/* Install the new region */
+	hlist_add_head(&region->hnode, &partition->pt_mem_regions);
+
+	return 0;
 }
 
 static void mshv_partition_unmap_region(struct mshv_mem_region *region)
