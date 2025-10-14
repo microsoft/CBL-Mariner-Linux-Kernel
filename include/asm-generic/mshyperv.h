@@ -105,6 +105,15 @@ static inline bool hv_result_success(u64 status)
 	return hv_result(status) == HV_STATUS_SUCCESS;
 }
 
+static inline bool hv_result_oom(u64 status)
+{
+	switch (hv_result(status)) {
+	case HV_STATUS_INSUFFICIENT_MEMORY:
+		return true;
+	}
+	return false;
+}
+
 static inline unsigned int hv_repcomp(u64 status)
 {
 	/* Bits [43:32] of status have 'Reps completed' data. */
