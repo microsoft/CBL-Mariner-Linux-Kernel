@@ -93,7 +93,7 @@ static int hv_map_interrupt(u64 ptid, union hv_device_id device_id, bool level,
 		status = hv_map_interrupt_hcall(ptid, device_id, level, cpu,
 						vector, ret_entry);
 
-		if (hv_result(status) == HV_STATUS_INSUFFICIENT_MEMORY) {
+		if (hv_result_oom(status)) {
 			status = hv_call_deposit_pages(NUMA_NO_NODE, ptid, 1);
 			if (!hv_result_success(status)) {
 				pr_err("%s deposit pages failed:%llx\n",

@@ -138,7 +138,7 @@ int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
 					 input, output);
 		local_irq_restore(flags);
 
-		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
+		if (!hv_result_oom(status)) {
 			if (!hv_result_success(status)) {
 				hv_status_err(status, "cpu %u apic ID: %u\n",
 					      lp_index, apic_id);
@@ -181,7 +181,7 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 		status = hv_do_hypercall(HVCALL_CREATE_VP, input, NULL);
 		local_irq_restore(irq_flags);
 
-		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY) {
+		if (!hv_result_oom(status)) {
 			if (!hv_result_success(status)) {
 				hv_status_err(status, "vcpu: %u, lp: %u\n",
 					      vp_index, flags);
