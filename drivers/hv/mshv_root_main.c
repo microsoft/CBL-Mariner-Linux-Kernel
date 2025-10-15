@@ -3017,8 +3017,6 @@ remove_partition(struct mshv_partition *partition)
 	spin_lock(&mshv_root.pt_ht_lock);
 	hlist_del_rcu(&partition->pt_hnode);
 	spin_unlock(&mshv_root.pt_ht_lock);
-
-	synchronize_rcu();
 }
 
 #ifdef HV_SUPPORTS_SEV_SNP_GUESTS
@@ -3212,7 +3210,7 @@ static void destroy_partition(struct mshv_partition *partition)
 
 	mshv_destroy_devices(partition);
 	mshv_free_routing_table(partition);
-	kfree(partition);
+	kfree_rcu(partition, pt_rcu);
 }
 
 struct
