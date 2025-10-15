@@ -877,7 +877,7 @@ static void ioeventfd_release(struct mshv_ioeventfd *p, u64 partition_id)
 	if (p->iovntfd_doorbell_id > 0)
 		mshv_unregister_doorbell(partition_id, p->iovntfd_doorbell_id);
 	eventfd_ctx_put(p->iovntfd_eventfd);
-	kfree(p);
+	kfree_rcu(p, iovntfd_rcu);
 }
 
 /* MMIO writes trigger an event if the addr/val match */
@@ -1092,8 +1092,9 @@ void mshv_eventfd_release(struct mshv_partition *pt)
 	struct hlist_node *n;
 	struct mshv_ioeventfd *p;
 
+	mutex_lock(&pt->pt_mutex);
 	hlist_move_list(&pt->ioeventfds_list, &items);
-	synchronize_rcu();
+	mutex_unlock(&pt->pt_mutex);
 
 	hlist_for_each_entry_safe(p, n, &items, iovntfd_hnode) {
 		hlist_del(&p->iovntfd_hnode);
