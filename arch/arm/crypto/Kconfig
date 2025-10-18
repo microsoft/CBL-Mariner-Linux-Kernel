@@ -67,22 +67,6 @@ config CRYPTO_BLAKE2S_ARM
 	  There is no NEON implementation of BLAKE2s, since NEON doesn't
 	  really help with it.
 
-config CRYPTO_BLAKE2B_NEON
-	tristate "Hash functions: BLAKE2b (NEON)"
-	depends on KERNEL_MODE_NEON
-	select CRYPTO_BLAKE2B
-	help
-	  BLAKE2b cryptographic hash function (RFC 7693)
-
-	  Architecture: arm using
-	  - NEON (Advanced SIMD) extensions
-
-	  BLAKE2b digest algorithm optimized with ARM NEON instructions.
-	  On ARM processors that have NEON support but not the ARMv8
-	  Crypto Extensions, typically this BLAKE2b implementation is
-	  much faster than the SHA-2 family and slightly faster than
-	  SHA-1.
-
 config CRYPTO_SHA1_ARM
 	tristate "Hash functions: SHA-1"
 	select CRYPTO_SHA1
