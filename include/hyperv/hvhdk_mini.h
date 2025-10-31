@@ -173,7 +173,8 @@ struct hv_partition_property_vmm_capabilities {
 #else
 			u64 reservedbit3 : 1;
 #endif
-			u64 assignable_synthetic_proc_features : 1;
+			u64 assignable_synthetic_proc_features: 1;
+			u64 tag_hv_message_from_child: 1;
 			u64 vmm_enable_integrated_scheduler : 1;
 			u64 reserved0 : HV_PARTITION_VMM_CAPABILITIES_RESERVED_BITFIELD_COUNT;
 		} __packed;
