@@ -703,6 +703,13 @@ static bool acpi_dev_irq_override(u32 gsi, u8 triggering, u8 polarity,
 
 #ifdef CONFIG_X86
 	/*
+	 * Skip legacy ISA IRQ override for IRQ4 (COM1) on AMD Zen systems.
+	 * Other IRQs follow existing rules.
+	*/
+	if (gsi == 4 && boot_cpu_has(X86_FEATURE_ZEN))
+		return false;
+
+	/*
 	 * Always use the MADT override info, except for the i8042 PS/2 ctrl
 	 * IRQs (1 and 12). For these the DSDT IRQ settings should sometimes
 	 * be used otherwise PS/2 keyboards / mice will not work.
