@@ -3993,9 +3993,11 @@ static int mshv_arch_parent_partition_init(struct device *dev)
 
 free_percpu_buf:
 	free_percpu(mshv_evt);
+	mshv_evt = NULL;
 free_irq:
 	acpi_unregister_gsi(mshv_interrupt);
 	free_irq(mshv_irq, NULL);
+	mshv_irq = -1;
 	return ret;
 }
 #else
@@ -4004,6 +4006,21 @@ static int mshv_arch_parent_partition_init(struct device *dev)
 	return 0;
 }
 #endif
+
+static void mshv_arch_parent_partition_fini(void)
+{
+	if (mshv_irq < 0)
+		return;
+
+	if (mshv_evt) {
+		free_percpu_irq(mshv_irq, mshv_evt);
+		free_percpu(mshv_evt);
+		mshv_evt = NULL;
+	}
+	acpi_unregister_gsi(mshv_interrupt);
+	free_irq(mshv_irq, NULL);
+	mshv_irq = -1;
+}
 
 static int __init mshv_parent_partition_init(void)
 {
@@ -4025,13 +4042,13 @@ static int __init mshv_parent_partition_init(void)
 
 	ret = mshv_arch_parent_partition_init(dev);
 	if (ret)
-		return ret;
+		goto device_deregister;
 
 	mshv_root.synic_pages = alloc_percpu(struct hv_synic_pages);
 	if (!mshv_root.synic_pages) {
 		dev_err(dev, "Failed to allocate percpu synic page\n");
 		ret = -ENOMEM;
-		goto device_deregister;
+		goto arch_fini;
 	}
 
 	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "mshv_synic",
@@ -4085,8 +4102,7 @@ destroy_irqds_wq:
 exit_debugfs:
 	mshv_debugfs_exit();
 deinit_root_sched:
-	if (hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT)
-		root_scheduler_deinit();
+	root_scheduler_deinit();
 exit_partition:
 	if (hv_root_partition())
 		mshv_root_partition_exit();
@@ -4094,6 +4110,8 @@ remove_cpu_state:
 	cpuhp_remove_state(mshv_cpuhp_online);
 free_synic_pages:
 	free_percpu(mshv_root.synic_pages);
+arch_fini:
+	mshv_arch_parent_partition_fini();
 device_deregister:
 	misc_deregister(&mshv_dev);
 	return ret;
@@ -4101,27 +4119,20 @@ device_deregister:
 
 static void __exit mshv_parent_partition_exit(void)
 {
+	/* Match the order of cleanup above in mshv_parent_partition_init() */
 	hv_setup_mshv_handler(NULL);
-	mshv_port_table_fini();
-	misc_deregister(&mshv_dev);
 	mshv_vfio_ops_exit();
+	mshv_irqfd_wq_cleanup();
 	mshv_debugfs_exit();
 	root_scheduler_deinit();
-	mshv_irqfd_wq_cleanup();
 	if (hv_root_partition())
 		mshv_root_partition_exit();
-	if (mshv_irq >= 0) {
-		if (mshv_evt) {
-			free_percpu_irq(mshv_irq, mshv_evt);
-			free_percpu(mshv_evt);
-			mshv_evt = NULL;
-		}
-		acpi_unregister_gsi(mshv_interrupt);
-		free_irq(mshv_irq, NULL);
-		mshv_irq = -1;
-	}
 	cpuhp_remove_state(mshv_cpuhp_online);
 	free_percpu(mshv_root.synic_pages);
+	mshv_arch_parent_partition_fini();
+	misc_deregister(&mshv_dev);
+	/* Initted implicitly by mshv_register_doorbell(), clean up here */
+	mshv_port_table_fini();
 }
 
 module_init(mshv_parent_partition_init);
