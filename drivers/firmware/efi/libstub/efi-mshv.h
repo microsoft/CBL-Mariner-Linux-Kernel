@@ -3,27 +3,11 @@
 #ifndef _DRIVERS_FIRMWARE_EFI_MSHV_H
 #define _DRIVERS_FIRMWARE_EFI_MSHV_H
 
-#if !IS_ENABLED(CONFIG_MSHV_ROOT)
-#ifdef CONFIG_X86_64
-static inline efi_status_t mshv_efi_setup(struct boot_params *boot_params)
-{
-	return EFI_SUCCESS;
-}
-
-static inline efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
-{
-	return EFI_SUCCESS;
-}
-
-static inline efi_status_t mshv_launch(void) {}
-#endif /* CONFIG_X86_64 */
-#else /* !CONFIG_MSHV_ROOT */
-
+#if IS_ENABLED(CONFIG_MSHV_ROOT)
 #ifdef CONFIG_X86_64
 efi_status_t mshv_efi_setup(struct boot_params *boot_params);
 efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map);
 efi_status_t mshv_launch(void);
-#endif /* CONFIG_X86_64 */
 
 struct hvl_dbg_data {
 	u8 unused[552];
@@ -76,6 +60,19 @@ struct efi_hvloader_protocol {
 	efi_char16_t *(__efiapi * get_next_log_msg)(size_t *);
 };
 
-#endif /* CONFIG_MSHV_ROOT */
+#endif /* CONFIG_X86_64 */
+#else /* CONFIG_MSHV_ROOT */
+static inline efi_status_t mshv_efi_setup(struct boot_params *boot_params)
+{
+	return EFI_SUCCESS;
+}
+
+static inline efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
+{
+	return EFI_SUCCESS;
+}
+
+static inline efi_status_t mshv_launch(void) {}
+#endif /* !CONFIG_MSHV_ROOT */
 
 #endif /* _DRIVERS_FIRMWARE_EFI_MSHV_H */
