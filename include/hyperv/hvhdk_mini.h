@@ -157,7 +157,7 @@ enum hv_partition_property_code {
 };
 
 #define HV_PARTITION_VMM_CAPABILITIES_BANK_COUNT	1
-#define HV_PARTITION_VMM_CAPABILITIES_RESERVED_BITFIELD_COUNT	59
+#define HV_PARTITION_VMM_CAPABILITIES_RESERVED_BITFIELD_COUNT	58
 
 struct hv_partition_property_vmm_capabilities {
 	u16 bank_count;
@@ -174,6 +174,7 @@ struct hv_partition_property_vmm_capabilities {
 			u64 reservedbit3 : 1;
 #endif
 			u64 assignable_synthetic_proc_features : 1;
+			u64 tag_hv_message_from_child : 1;
 			u64 reserved0 : HV_PARTITION_VMM_CAPABILITIES_RESERVED_BITFIELD_COUNT;
 		} __packed;
 	};
