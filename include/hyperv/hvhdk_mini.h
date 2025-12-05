@@ -97,9 +97,6 @@ enum hv_partition_property_code {
 	HV_PARTITION_PROPERTY_CPU_WEIGHT			= 0x00020003,
 	HV_PARTITION_PROPERTY_CPU_GROUP_ID			= 0x00020004,
 
-	/* Hierarchical scheduling properties */
-	HV_PARTITION_PROPERTY_HIERARCHICAL_INTEGRATED_SCHEDULER_ENABLED	= 0x00020005,
-
 	/* Time properties */
 	HV_PARTITION_PROPERTY_TIME_FREEZE			= 0x00030003,
 	HV_PARTITION_PROPERTY_REFERENCE_TIME			= 0x00030005,
@@ -160,7 +157,7 @@ enum hv_partition_property_code {
 };
 
 #define HV_PARTITION_VMM_CAPABILITIES_BANK_COUNT	1
-#define HV_PARTITION_VMM_CAPABILITIES_RESERVED_BITFIELD_COUNT	58
+#define HV_PARTITION_VMM_CAPABILITIES_RESERVED_BITFIELD_COUNT	59
 
 struct hv_partition_property_vmm_capabilities {
 	u16 bank_count;
@@ -177,7 +174,6 @@ struct hv_partition_property_vmm_capabilities {
 			u64 reservedbit3 : 1;
 #endif
 			u64 assignable_synthetic_proc_features : 1;
-			u64 vmm_enable_integrated_scheduler : 1;
 			u64 reserved0 : HV_PARTITION_VMM_CAPABILITIES_RESERVED_BITFIELD_COUNT;
 		} __packed;
 	};
