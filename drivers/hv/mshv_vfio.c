@@ -214,6 +214,7 @@ static void mshv_vfio_destroy(struct mshv_device *hvdev)
 
 	list_for_each_entry_safe(mvf, tmp, &mv->file_list, node) {
 		list_del(&mvf->node);
+		__fput_sync(mvf->file);
 		kfree(mvf);
 	}
 
