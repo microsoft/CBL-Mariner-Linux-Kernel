@@ -2460,6 +2460,11 @@ static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 				break;
 		}
 
+		if (region->flags.large_pages &&
+		    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
+		    VALUE_PMD_ALIGNED(page_count))
+			unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
+
 		/* ignore unmap failures and continue as process may be exiting */
 		mshv_partition_unmap_range(region, 0,
 					   pfn_offset, pfn_count);
