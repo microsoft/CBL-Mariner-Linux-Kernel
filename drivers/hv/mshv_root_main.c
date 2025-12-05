@@ -1914,7 +1914,7 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 						memreg_mni);
 	u64 page_offset, page_count;
 	unsigned long mstart, mend;
-	int ret;
+	int ret = -EPERM;
 
 	if (mmu_notifier_range_blockable(range))
 		mutex_lock(&region->memreg_mutex);
