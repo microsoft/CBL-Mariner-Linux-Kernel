@@ -2168,16 +2168,14 @@ static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 {
 	struct mshv_partition *partition = region->partition;
 	u64 page_offset, page_count;
-	u32 unmap_flags = 0;
-
-	if (region->flags.large_pages)
-		unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
 
 	/*
 	 * Unmap only the mapped pages to optimize performance,
 	 * especially for large memory regions.
 	 */
 	for (page_offset = 0; page_offset < region->nr_pages; page_offset += page_count) {
+		u32 unmap_flags = 0;
+
 		page_count = 1;
 		if (!region->pages[page_offset])
 			continue;
@@ -2186,6 +2184,11 @@ static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 			if (!region->pages[page_offset + page_count])
 				break;
 		}
+
+		if (region->flags.large_pages &&
+		    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
+		    VALUE_PMD_ALIGNED(page_count))
+			unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
 
 		/* ignore unmap failures and continue as process may be exiting */
 		hv_call_unmap_gpa_pages(partition->pt_id,
