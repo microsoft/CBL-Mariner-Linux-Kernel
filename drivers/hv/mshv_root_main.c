@@ -4157,32 +4157,9 @@ static void mshv_crashdump_deinit(void) {}
 
 static int __init mshv_l1vh_partition_init(struct device *dev)
 {
-	int ret;
-	bool root_sched_enabled = false;
-
-	/* default scheduler type for L1VH */
 	hv_scheduler_type = HV_SCHEDULER_TYPE_CORE_SMT;
-
-	/* Only read the follow-up property if the capability bit is set */
-	if (mshv_root.vmm_caps.vmm_enable_integrated_scheduler) {
-		ret = hv_call_get_partition_property_ex(HV_PARTITION_ID_SELF,
-				HV_PARTITION_PROPERTY_HIERARCHICAL_INTEGRATED_SCHEDULER_ENABLED,
-				0,
-				&root_sched_enabled,
-				sizeof(root_sched_enabled));
-
-		if (ret)
-			return ret;
-
-		if (root_sched_enabled)
-			hv_scheduler_type = HV_SCHEDULER_TYPE_ROOT;
-
-		dev_dbg(dev, "integrated scheduler property read: ret=%d value=%d\n",
-				ret, root_sched_enabled);
-	}
-
 	dev_info(dev, "Hypervisor using %s\n",
-			scheduler_type_to_string(hv_scheduler_type));
+		 scheduler_type_to_string(hv_scheduler_type));
 
 	return 0;
 }
@@ -4191,6 +4168,7 @@ static void mshv_root_partition_exit(void)
 {
 	mshv_crashdump_deinit();
 	unregister_reboot_notifier(&mshv_reboot_nb);
+	root_scheduler_deinit();
 }
 
 static int __init mshv_root_partition_init(struct device *dev)
@@ -4203,13 +4181,21 @@ static int __init mshv_root_partition_init(struct device *dev)
 	if (mshv_check_sev_snp_support(dev))
 		return -ENODEV;
 
-	err = register_reboot_notifier(&mshv_reboot_nb);
+	err = root_scheduler_init(dev);
 	if (err)
 		return err;
+
+	err = register_reboot_notifier(&mshv_reboot_nb);
+	if (err)
+		goto root_sched_deinit;
 
 	mshv_crashdump_init();
 
 	return 0;
+
+root_sched_deinit:
+	root_scheduler_deinit();
+	return err;
 }
 
 static int mshv_init_vmm_caps(struct device *dev)
@@ -4337,12 +4323,6 @@ static int __init mshv_parent_partition_init(void)
 
 	mshv_cpuhp_online = ret;
 
-	ret = mshv_init_vmm_caps(dev);
-	if (ret) {
-		dev_err(dev, "Failed to get VMM capabilities: %d\n", ret);
-		goto remove_cpu_state;
-	}
-
 	if (hv_root_partition())
 		ret = mshv_root_partition_init(dev);
 	else
@@ -4350,13 +4330,15 @@ static int __init mshv_parent_partition_init(void)
 	if (ret)
 		goto remove_cpu_state;
 
-	ret = root_scheduler_init(dev);
-	if (ret)
+	ret = mshv_init_vmm_caps(dev);
+	if (ret) {
+		dev_err(dev, "Failed to get VMM capabilities: %d\n", ret);
 		goto exit_partition;
+	}
 
 	ret = mshv_debugfs_init();
 	if (ret)
-		goto deinit_root_sched;
+		goto exit_partition;
 
 	ret = mshv_irqfd_wq_init();
 	if (ret)
