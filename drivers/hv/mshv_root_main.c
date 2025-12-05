@@ -4076,6 +4076,10 @@ static int __init mshv_l1vh_partition_init(struct device *dev)
 	bool root_sched_enabled = false;
 
 	/* default scheduler type for L1VH */
+	int ret;
+	bool root_sched_enabled = false;
+
+	/* default scheduler type for L1VH */
 	hv_scheduler_type = HV_SCHEDULER_TYPE_CORE_SMT;
 
 	/* Only read the follow-up property if the capability bit is set */
