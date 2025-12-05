@@ -1776,7 +1776,7 @@ mshv_region_remap_pages(struct mshv_mem_region *region, u32 map_flags,
 		return -EINVAL;
 
 	if (region->flags.large_pages &&
-	    VALUE_PMD_ALIGNED(page_offset) &&
+	    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
 	    VALUE_PMD_ALIGNED(page_count))
 		map_flags |= HV_MAP_GPA_LARGE_PAGE;
 
