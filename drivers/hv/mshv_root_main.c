@@ -2000,6 +2000,24 @@ mshv_region_chunk_remap(struct mshv_mem_region *region, u32 flags,
 }
 
 static int
+mshv_region_remap_pages(struct mshv_mem_region *region, u32 map_flags,
+			u64 page_offset, u64 page_count)
+{
+	if (page_offset + page_count > region->nr_pages)
+		return -EINVAL;
+
+	if (region->flags.large_pages &&
+	    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
+	    VALUE_PMD_ALIGNED(page_count))
+		map_flags |= HV_MAP_GPA_LARGE_PAGE;
+
+	return hv_call_map_gpa_pages(region->partition->pt_id,
+				     region->start_gfn + pfn_offset,
+				     pfn_count, flags,
+				     region->pfns + pfn_offset);
+}
+
+static int
 mshv_region_remap_pfns(struct mshv_mem_region *region, u32 map_flags,
 		       u64 pfn_offset, u64 pfn_count)
 {
