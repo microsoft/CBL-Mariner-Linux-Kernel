@@ -3888,6 +3888,8 @@ int nft_chain_validate(const struct nft_ctx *ctx, struct nft_chain *chain)
 			if (err < 0)
 				return err;
 		}
+
+		cond_resched();
 	}
 
 	nft_chain_vstate_update(ctx, chain);
@@ -3912,8 +3914,6 @@ static int nft_table_validate(struct net *net, const struct nft_table *table)
 		err = nft_chain_validate(&ctx, chain);
 		if (err < 0)
 			goto err;
-
-		cond_resched();
 	}
 
 err:
@@ -11016,6 +11016,8 @@ static int nft_validate_register_store(const struct nft_ctx *ctx,
 
 		return 0;
 	}
+
+	return 0;
 }
 
 int nft_parse_register_store(const struct nft_ctx *ctx,
