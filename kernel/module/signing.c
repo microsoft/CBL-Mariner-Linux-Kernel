@@ -70,6 +70,8 @@ int mod_verify_sig(const void *mod, struct load_info *info)
 				VERIFY_USE_PLATFORM_KEYRING,
 				VERIFYING_MODULE_SIGNATURE,
 				NULL, NULL);
+		if (!ret)
+			pr_warn("OOT module '%s' signed by key in platform keyring verified.\n", info->name);
 	}
 	return ret;
 }
