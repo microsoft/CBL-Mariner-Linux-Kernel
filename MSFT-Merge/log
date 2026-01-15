@@ -1,0 +1,7 @@
+Name                                               SHA1
+----                                               ----
+config/hwe-6.18                                    6f164ac21dae57ae3bb2770fcb3ce57e49c3cbe6
+feature/efi-slack-slots/6.18                       fa451229e919a6019425def9af40e7ea893670d6
+feature/reverts/6.18                               ed0c8c1a85c7952cc7d9554b2383a852c2b7db2b
+feature/vera-rubin/6.18                            7d3ce9d4a50fc9e7d5994015bfb965e7cf5e5a9f
+feature/platform-key-signing/6.18                  4fb2c6f391b287f82fa29d046774ef5a4cfcb594
