@@ -154,6 +154,12 @@ enum securityEnum {
 	IAKerb,			/* Kerberos proxy */
 };
 
+enum upcall_target_enum {
+	UPTARGET_UNSPECIFIED, /* not specified, defaults to app */
+	UPTARGET_MOUNT, /* upcall to the mount namespace */
+	UPTARGET_APP, /* upcall to the application namespace which did the mount */
+};
+
 enum cifs_reparse_type {
 	CIFS_REPARSE_TYPE_NFS,
 	CIFS_REPARSE_TYPE_WSL,
@@ -785,7 +791,7 @@ struct TCP_Server_Info {
 	} compression;
 	__u16	signing_algorithm;
 	__le16	cipher_type;
-	 /* save initital negprot hash */
+	 /* save initial negprot hash */
 	__u8	preauth_sha_hash[SMB2_PREAUTH_HASH_SIZE];
 	bool	signing_negotiated; /* true if valid signing context rcvd from server */
 	bool	posix_ext_supported;
@@ -1091,6 +1097,7 @@ struct cifs_ses {
 	struct session_key auth_key;
 	struct ntlmssp_auth *ntlmssp; /* ciphertext, flags, server challenge */
 	enum securityEnum sectype; /* what security flavor was specified? */
+	enum upcall_target_enum upcall_target; /* what upcall target was specified? */
 	bool sign;		/* is signing required? */
 	bool domainAuto:1;
 	bool expired_pwd;  /* track if access denied or expired pwd so can know if need to update */

@@ -161,7 +161,7 @@ __u32 cifs_lock_secret;
 
 /*
  * Bumps refcount for cifs super block.
- * Note that it should be only called if a referece to VFS super block is
+ * Note that it should be only called if a reference to VFS super block is
  * already held, e.g. in open-type syscalls context. Otherwise it can race with
  * atomic_dec_and_test in deactivate_locked_super.
  */
@@ -289,7 +289,7 @@ static void cifs_kill_sb(struct super_block *sb)
 	struct cifs_sb_info *cifs_sb = CIFS_SB(sb);
 
 	/*
-	 * We ned to release all dentries for the cached directories
+	 * We need to release all dentries for the cached directories
 	 * before we kill the sb.
 	 */
 	if (cifs_sb->root) {
@@ -541,6 +541,30 @@ static int cifs_show_devname(struct seq_file *m, struct dentry *root)
 	return 0;
 }
 
+static void
+cifs_show_upcall_target(struct seq_file *s, struct cifs_sb_info *cifs_sb)
+{
+	if (cifs_sb->ctx->upcall_target == UPTARGET_UNSPECIFIED) {
+		seq_puts(s, ",upcall_target=app");
+		return;
+	}
+
+	seq_puts(s, ",upcall_target=");
+
+	switch (cifs_sb->ctx->upcall_target) {
+	case UPTARGET_APP:
+		seq_puts(s, "app");
+		break;
+	case UPTARGET_MOUNT:
+		seq_puts(s, "mount");
+		break;
+	default:
+		/* shouldn't ever happen */
+		seq_puts(s, "unknown");
+		break;
+	}
+}
+
 /*
  * cifs_show_options() is for displaying mount options in /proc/mounts.
  * Not all settable options are displayed but most of the important
@@ -557,6 +581,7 @@ cifs_show_options(struct seq_file *s, struct dentry *root)
 	seq_show_option(s, "vers", tcon->ses->server->vals->version_string);
 	cifs_show_security(s, tcon->ses);
 	cifs_show_cache_flavor(s, cifs_sb);
+	cifs_show_upcall_target(s, cifs_sb);
 
 	if (tcon->no_lease)
 		seq_puts(s, ",nolease");
@@ -1371,6 +1396,20 @@ static loff_t cifs_remap_file_range(struct file *src_file, loff_t off,
 			netfs_resize_file(&target_cifsi->netfs, new_size);
 			fscache_resize_cookie(cifs_inode_cookie(target_inode),
 					      new_size);
+		} else if (rc == -EOPNOTSUPP) {
+			/*
+			 * copy_file_range syscall man page indicates EINVAL
+			 * is returned e.g when "fd_in and fd_out refer to the
+			 * same file and the source and target ranges overlap."
+			 * Test generic/157 was what showed these cases where
+			 * we need to remap EOPNOTSUPP to EINVAL
+			 */
+			if (off >= src_inode->i_size) {
+				rc = -EINVAL;
+			} else if (src_inode == target_inode) {
+				if (off + len > destoff)
+					rc = -EINVAL;
+			}
 		}
 	}
 
@@ -1949,6 +1988,7 @@ init_cifs(void)
 		goto out_init_cifs_idmap;
 	}
 
+	smb3_crypto_register();
 	return 0;
 
 out_init_cifs_idmap:
@@ -2017,6 +2057,7 @@ exit_cifs(void)
 	destroy_workqueue(serverclose_wq);
 	destroy_workqueue(cfid_put_wq);
 	destroy_workqueue(cifsiod_wq);
+	smb3_crypto_unregister();
 	cifs_proc_clean();
 }
 
