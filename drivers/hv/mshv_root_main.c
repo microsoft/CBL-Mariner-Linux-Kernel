@@ -42,8 +42,6 @@
 
 #define MSHV_MAP_FAULT_IN_PAGES			HPAGE_PMD_NR
 
-#define VALUE_PMD_ALIGNED(c)			(!((c) & (PTRS_PER_PMD - 1)))
-
 MODULE_AUTHOR("Microsoft");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Microsoft Hyper-V root partition VMM interface /dev/mshv");
@@ -525,9 +523,6 @@ static int mshv_region_range_fault(struct mshv_mem_region *region,
 
 	for (i = 0; i < page_count; i++)
 		region->pages[page_offset + i] = hmm_pfn_to_page(pfns[i]);
-
-	if (PageHuge(region->pages[page_offset]))
-		region->flags.large_pages = true;
 
 	ret = mshv_region_remap_pages(region, region->hv_map_flags,
 				      page_offset, page_count);
@@ -1756,18 +1751,161 @@ mshv_partition_ioctl_set_property(struct mshv_partition *partition,
 					      (void *)partition);
 }
 
+/**
+ * mshv_region_process_chunk - Processes a contiguous chunk of memory pages
+ *                             in a region.
+ * @region     : Pointer to the memory region structure.
+ * @flags      : Flags to pass to the handler.
+ * @page_offset: Offset into the region's pages array to start processing.
+ * @page_count : Number of pages to process.
+ * @handler    : Callback function to handle the chunk.
+ *
+ * This function scans the region's pages starting from @page_offset,
+ * checking for contiguous present pages of the same size (normal or huge).
+ * It invokes @handler for the chunk of contiguous pages found. Returns the
+ * number of pages handled, or a negative error code if the first page is
+ * not present or the handler fails.
+ *
+ * Note: The @handler callback must be able to handle both normal and huge
+ * pages.
+ *
+ * Return: Number of pages handled, or negative error code.
+ */
+static long
+mshv_region_process_chunk(struct mshv_mem_region *region, u32 flags,
+			  u64 page_offset, u64 page_count,
+			  int (*handler)(struct mshv_mem_region *region,
+					 u32 flags, u64 page_offset,
+					 u64 page_count))
+{
+	u64 count, stride;
+	unsigned int page_order;
+	struct page *page;
+	int ret;
+
+	page = region->pages[page_offset];
+	if (!page)
+		return -EINVAL;
+
+	page_order = folio_order(page_folio(page));
+	/* The hypervisor only supports 4K and 2M page sizes */
+	if (page_order && page_order != HPAGE_PMD_ORDER)
+		return -EINVAL;
+
+	stride = 1 << page_order;
+
+	/* Start at stride since the first page is validated */
+	for (count = stride; count < page_count; count += stride) {
+		page = region->pages[page_offset + count];
+
+		/* Break if current page is not present */
+		if (!page)
+			break;
+
+		/* Break if page size changes */
+		if (page_order != folio_order(page_folio(page)))
+			break;
+	}
+
+	ret = handler(region, flags, page_offset, count);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+/**
+ * mshv_region_process_range - Processes a range of memory pages in a
+ *                             region.
+ * @region     : Pointer to the memory region structure.
+ * @flags      : Flags to pass to the handler.
+ * @page_offset: Offset into the region's pages array to start processing.
+ * @page_count : Number of pages to process.
+ * @handler    : Callback function to handle each chunk of contiguous
+ *               pages.
+ *
+ * Iterates over the specified range of pages in @region, skipping
+ * non-present pages. For each contiguous chunk of present pages, invokes
+ * @handler via mshv_region_process_chunk.
+ *
+ * Note: The @handler callback must be able to handle both normal and huge
+ * pages.
+ *
+ * Returns 0 on success, or a negative error code on failure.
+ */
+static int
+mshv_region_process_range(struct mshv_mem_region *region, u32 flags,
+			  u64 page_offset, u64 page_count,
+			  int (*handler)(struct mshv_mem_region *region,
+					 u32 flags, u64 page_offset,
+					 u64 page_count))
+{
+	long ret;
+
+	if (page_offset + page_count > region->nr_pages)
+		return -EINVAL;
+
+	while (page_count) {
+		/* Skip non-present pages */
+		if (!region->pages[page_offset]) {
+			page_offset++;
+			page_count--;
+			continue;
+		}
+
+		ret = mshv_region_process_chunk(region, flags,
+						page_offset,
+						page_count,
+						handler);
+		if (ret < 0)
+			return ret;
+
+		page_offset += ret;
+		page_count -= ret;
+	}
+
+	return 0;
+}
+
+static int
+mshv_region_chunk_share(struct mshv_mem_region *region,
+			u32 flags, u64 page_offset, u64 page_count)
+{
+	struct page *page = region->pages[page_offset];
+
+	if (PageHuge(page) || PageTransCompound(page))
+		flags |= HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE;
+
+	return hv_call_modify_spa_host_access(region->partition->pt_id,
+					      region->pages + page_offset,
+					      page_count,
+					      HV_MAP_GPA_READABLE |
+					      HV_MAP_GPA_WRITABLE,
+					      flags, true);
+}
+
 static int
 mshv_partition_region_share(struct mshv_mem_region *region)
 {
 	u32 flags = HV_MODIFY_SPA_PAGE_HOST_ACCESS_MAKE_SHARED;
 
-	if (region->flags.large_pages)
+	return mshv_region_process_range(region, flags,
+					 0, region->nr_pages,
+					 mshv_region_chunk_share);
+}
+
+static int
+mshv_region_chunk_unshare(struct mshv_mem_region *region,
+			  u32 flags, u64 page_offset, u64 page_count)
+{
+	struct page *page = region->pages[page_offset];
+
+	if (PageHuge(page) || PageTransCompound(page))
 		flags |= HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE;
 
 	return hv_call_modify_spa_host_access(region->partition->pt_id,
-			region->pages, region->nr_pages,
-			HV_MAP_GPA_READABLE | HV_MAP_GPA_WRITABLE,
-			flags, true);
+					      region->pages + page_offset,
+					      page_count, 0, flags, false);
 }
 
 static int
@@ -1775,41 +1913,33 @@ mshv_partition_region_unshare(struct mshv_mem_region *region)
 {
 	u32 flags = HV_MODIFY_SPA_PAGE_HOST_ACCESS_MAKE_EXCLUSIVE;
 
-	if (region->flags.large_pages)
-		flags |= HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE;
+	return mshv_region_process_range(region, flags,
+					 0, region->nr_pages,
+					 mshv_region_chunk_unshare);
+}
 
-	return hv_call_modify_spa_host_access(region->partition->pt_id,
-			region->pages, region->nr_pages,
-			0,
-			flags, false);
+static int
+mshv_region_chunk_remap(struct mshv_mem_region *region, u32 flags,
+			u64 page_offset, u64 page_count)
+{
+	struct page *page = region->pages[page_offset];
+
+	if (PageHuge(page) || PageTransCompound(page))
+		flags |= HV_MAP_GPA_LARGE_PAGE;
+
+	return hv_call_map_gpa_pages(region->partition->pt_id,
+				     region->start_gfn + page_offset,
+				     page_count, flags,
+				     region->pages + page_offset);
 }
 
 static int
 mshv_region_remap_pages(struct mshv_mem_region *region, u32 map_flags,
 			u64 page_offset, u64 page_count)
 {
-	if (page_offset + page_count > region->nr_pages)
-		return -EINVAL;
-
-	if (region->flags.large_pages &&
-	    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
-	    VALUE_PMD_ALIGNED(page_count))
-		map_flags |= HV_MAP_GPA_LARGE_PAGE;
-
-	/* ask the hypervisor to map guest ram */
-	return hv_call_map_gpa_pages(region->partition->pt_id,
-				     region->start_gfn + page_offset,
-				     page_count, map_flags,
-				     region->pages + page_offset);
-}
-
-static int
-mshv_region_map(struct mshv_mem_region *region)
-{
-	u32 map_flags = region->hv_map_flags;
-
-	return mshv_region_remap_pages(region, map_flags,
-				       0, region->nr_pages);
+	return mshv_region_process_range(region, map_flags,
+					 page_offset, page_count,
+					 mshv_region_chunk_remap);
 }
 
 static void
@@ -1863,9 +1993,6 @@ mshv_region_populate_pages(struct mshv_mem_region *region,
 		if (ret < 0)
 			goto release_pages;
 	}
-
-	if (PageHuge(region->pages[page_offset]))
-		region->flags.large_pages = true;
 
 	return 0;
 
@@ -2030,7 +2157,6 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 	if (mem->flags & BIT(MSHV_SET_MEM_BIT_EXECUTABLE))
 		region->hv_map_flags |= HV_MAP_GPA_EXECUTABLE;
 
-	/* Note: large_pages flag populated when pages are allocated. */
 	if (!is_mmio) {
 		region->flags.memreg_isram = true;
 
@@ -2088,7 +2214,8 @@ static int mshv_handle_pinned_region(struct mshv_mem_region *region)
 		}
 	}
 
-	ret = mshv_region_map(region);
+	ret = mshv_region_remap_pages(region, region->hv_map_flags,
+				      0, region->nr_pages);
 	if (ret && mshv_partition_encrypted(partition)) {
 		int shrc;
 
@@ -2160,8 +2287,10 @@ mshv_map_user_memory(struct mshv_partition *partition,
 		 * hypervisor track dirty pages, enabling precopy live
 		 * migration.
 		 */
-		ret = mshv_region_remap_pages(region, HV_MAP_GPA_NO_ACCESS,
-					       0, region->nr_pages);
+		ret = hv_call_map_gpa_pages(partition->pt_id,
+					    region->start_gfn,
+					    region->nr_pages,
+					    HV_MAP_GPA_NO_ACCESS, NULL);
 	}
 
 	trace_mshv_map_user_memory(partition->pt_id, region->start_uaddr,
@@ -2180,9 +2309,31 @@ mshv_map_user_memory(struct mshv_partition *partition,
 	return 0;
 }
 
+static int
+mshv_region_chunk_unmap(struct mshv_mem_region *region, u32 flags,
+			u64 page_offset, u64 page_count)
+{
+	struct page *page = region->pages[page_offset];
+
+	if (PageHuge(page) || PageTransCompound(page))
+		flags |= HV_UNMAP_GPA_LARGE_PAGE;
+
+	return hv_call_unmap_gpa_pages(region->partition->pt_id,
+				       region->start_gfn + page_offset,
+				       page_count, 0);
+}
+
+static int mshv_partition_unmap_range(struct mshv_mem_region *region,
+				      u32 map_flags,
+				      u64 page_offset, u64 page_count)
+{
+	return mshv_region_process_range(region, map_flags,
+					 page_offset, page_count,
+					 mshv_region_chunk_unmap);
+}
+
 static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 {
-	struct mshv_partition *partition = region->partition;
 	u64 page_offset, page_count;
 
 	/*
@@ -2190,8 +2341,6 @@ static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 	 * especially for large memory regions.
 	 */
 	for (page_offset = 0; page_offset < region->nr_pages; page_offset += page_count) {
-		u32 unmap_flags = 0;
-
 		page_count = 1;
 		if (!region->pages[page_offset])
 			continue;
@@ -2201,15 +2350,9 @@ static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 				break;
 		}
 
-		if (region->flags.large_pages &&
-		    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
-		    VALUE_PMD_ALIGNED(page_count))
-			unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
-
 		/* ignore unmap failures and continue as process may be exiting */
-		hv_call_unmap_gpa_pages(partition->pt_id,
-					region->start_gfn + page_offset,
-					page_count, unmap_flags);
+		mshv_partition_unmap_range(region, 0,
+					   page_offset, page_count);
 	}
 }
 
@@ -3832,8 +3975,7 @@ static void mshv_panic_unlock_snp(struct mshv_partition *vm)
 
 	hlist_for_each_entry(memreg, &vm->pt_mem_regions, hnode) {
 		numpgs = memreg->nr_pages;
-		hv_call_unmap_gpa_pages(vm->pt_id, memreg->start_gfn,
-					numpgs, 0);
+		mshv_partition_unmap_range(memreg, 0, 0, numpgs);
 		ret = mshv_partition_region_share(memreg);
 		if (ret)
 			pt_err(vm, "Unlock snp failed. ret:0x%x gfn:%llx numpgs:%lld\n",

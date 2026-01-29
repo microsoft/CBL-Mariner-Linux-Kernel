@@ -77,7 +77,6 @@ struct mshv_mem_region {
 	u64 start_uaddr;
 	u32 hv_map_flags;
 	struct {
-		u64 large_pages:  1; /* 2MiB */
 		u64 memreg_isram: 1; /* mem region can be ram or mmio */
 		u64 memreg_pinned:1; /* true if region pages are pinned */
 		u64 reserved:	 62;
