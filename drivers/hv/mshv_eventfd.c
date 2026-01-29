@@ -19,7 +19,6 @@
 #if defined(__x86_64__)
 #include <asm/apic.h>
 #endif
-#include <asm/mshyperv.h>
 #include <trace/events/mshv.h>
 
 #include "mshv_eventfd.h"
