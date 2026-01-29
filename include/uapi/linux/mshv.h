@@ -210,6 +210,8 @@ struct mshv_create_partition_v2 {
 	__u64 pt_rsvd1[2];      /* MBZ */
 #ifdef __x86_64__
 	__u64 pt_disabled_xsave;
+#else
+	__u64 pt_rsvd2;			/* MBZ */
 #endif
 } __packed;
 
