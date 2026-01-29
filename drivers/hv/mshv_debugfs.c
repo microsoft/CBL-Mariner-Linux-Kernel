@@ -534,55 +534,17 @@ do {								 \
 }
 DEFINE_SHOW_ATTRIBUTE(vp_stats);
 
-static int vp_debugfs_stats_create(u64 partition_id, u32 vp_index,
-				   struct dentry **vp_stats_ptr,
-				   struct dentry *parent)
+static void vp_debugfs_remove(struct dentry *vp_stats)
 {
-	struct dentry *dentry;
-	struct hv_stats_page **pstats;
-	int err;
-
-	pstats = kcalloc(2, sizeof(struct hv_stats_page *), GFP_KERNEL_ACCOUNT);
-	if (!pstats)
-		return -ENOMEM;
-
-	err = mshv_vp_stats_map(partition_id, vp_index, pstats);
-	if (err)
-		goto cleanup;
-
-	dentry = debugfs_create_file("stats", 0400, parent,
-				     pstats, &vp_stats_fops);
-	if (IS_ERR(dentry)) {
-		err = PTR_ERR(dentry);
-		goto unmap_vp_stats;
-	}
-
-	*vp_stats_ptr = dentry;
-	return 0;
-
-unmap_vp_stats:
-	mshv_vp_stats_unmap(partition_id, vp_index, pstats);
-cleanup:
-	kfree(pstats);
-	return err;
-}
-
-static void vp_debugfs_remove(u64 partition_id, u32 vp_index,
-			      struct dentry *vp_stats)
-{
-	struct hv_stats_page **pstats;
-
-	pstats = vp_stats->d_inode->i_private;
 	debugfs_remove_recursive(vp_stats->d_parent);
-	mshv_vp_stats_unmap(partition_id, vp_index, pstats);
-	kfree(pstats);
 }
 
 static int vp_debugfs_create(u64 partition_id, u32 vp_index,
+			     struct hv_stats_page **pstats,
 			     struct dentry **vp_stats_ptr,
 			     struct dentry *parent)
 {
-	struct dentry *vp_idx_dir;
+	struct dentry *vp_idx_dir, *d;
 	char vp_idx_str[11]; /* sizeof(u32) + 1 */
 	int err;
 
@@ -592,10 +554,14 @@ static int vp_debugfs_create(u64 partition_id, u32 vp_index,
 	if (IS_ERR(vp_idx_dir))
 		return PTR_ERR(vp_idx_dir);
 
-	err = vp_debugfs_stats_create(partition_id, vp_index, vp_stats_ptr,
-				      vp_idx_dir);
-	if (err)
+	d = debugfs_create_file("stats", 0400, vp_idx_dir,
+				     pstats, &vp_stats_fops);
+	if (IS_ERR(d)) {
+		err = PTR_ERR(d);
 		goto remove_debugfs_vp_idx;
+	}
+
+	*vp_stats_ptr = d;
 
 	return 0;
 
@@ -818,13 +784,24 @@ remove_debugfs_partition_id:
 	return err;
 }
 
+static void parent_vp_debugfs_remove(u32 vp_index,
+				     struct dentry *vp_stats_ptr)
+{
+	struct hv_stats_page **pstats;
+
+	pstats = vp_stats_ptr->d_inode->i_private;
+	vp_debugfs_remove(vp_stats_ptr);
+	mshv_vp_stats_unmap(hv_current_partition_id, vp_index, pstats);
+	kfree(pstats);
+}
+
 static void mshv_debugfs_parent_partition_remove(void)
 {
 	int idx;
 
 	for_each_online_cpu(idx)
-		vp_debugfs_remove(hv_current_partition_id, idx,
-				  parent_vp_stats[idx]);
+		parent_vp_debugfs_remove(idx,
+					 parent_vp_stats[idx]);
 
 	partition_debugfs_remove(hv_current_partition_id,
 				 parent_partition_stats);
@@ -832,6 +809,35 @@ static void mshv_debugfs_parent_partition_remove(void)
 	parent_vp_stats = NULL;
 	parent_partition_stats = NULL;
 
+}
+
+static int __init parent_vp_debugfs_create(u32 vp_index,
+					   struct dentry **vp_stats_ptr,
+					   struct dentry *parent)
+{
+	struct hv_stats_page **pstats;
+	int err;
+
+	pstats = kcalloc(2, sizeof(struct hv_stats_page *), GFP_KERNEL_ACCOUNT);
+	if (!pstats)
+		return -ENOMEM;
+
+	err = mshv_vp_stats_map(hv_current_partition_id, vp_index, pstats);
+	if (err)
+		goto cleanup;
+
+	err = vp_debugfs_create(hv_current_partition_id, vp_index, pstats,
+				vp_stats_ptr, parent);
+	if (err)
+		goto unmap_vp_stats;
+
+	return 0;
+
+unmap_vp_stats:
+	mshv_vp_stats_unmap(hv_current_partition_id, vp_index, pstats);
+cleanup:
+	kfree(pstats);
+	return err;
 }
 
 static int __init mshv_debugfs_parent_partition_create(void)
@@ -858,11 +864,9 @@ static int __init mshv_debugfs_parent_partition_create(void)
 	}
 
 	for_each_online_cpu(idx) {
-
-		err = vp_debugfs_create(hv_current_partition_id,
-					hv_vp_index[idx],
-					&parent_vp_stats[idx],
-					vp_dir);
+		err = parent_vp_debugfs_create(hv_vp_index[idx],
+					       &parent_vp_stats[idx],
+					       vp_dir);
 		if (err)
 			goto remove_debugfs_partition_vp;
 	}
@@ -873,8 +877,7 @@ remove_debugfs_partition_vp:
 	for_each_online_cpu(i) {
 		if (i >= idx)
 			break;
-		vp_debugfs_remove(hv_current_partition_id, i,
-				  parent_vp_stats[i]);
+		parent_vp_debugfs_remove(i, parent_vp_stats[i]);
 	}
 	partition_debugfs_remove(hv_current_partition_id,
 				 parent_partition_stats);
@@ -982,6 +985,7 @@ int mshv_debugfs_vp_create(struct mshv_vp *vp)
 		return 0;
 
 	err = vp_debugfs_create(p->pt_id, vp->vp_index,
+				vp->vp_stats_pages,
 				&vp->vp_debugfs_stats_dentry,
 				p->pt_debugfs_vp_dentry);
 	if (err)
@@ -995,8 +999,7 @@ void mshv_debugfs_vp_remove(struct mshv_vp *vp)
 	if (!mshv_debugfs)
 		return;
 
-	vp_debugfs_remove(vp->vp_partition->pt_id, vp->vp_index,
-			  vp->vp_debugfs_stats_dentry);
+	vp_debugfs_remove(vp->vp_debugfs_stats_dentry);
 }
 
 int mshv_debugfs_partition_create(struct mshv_partition *partition)
