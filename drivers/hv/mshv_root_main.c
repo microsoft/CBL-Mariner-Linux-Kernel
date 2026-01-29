@@ -3199,6 +3199,8 @@ static void destroy_partition(struct mshv_partition *partition)
 
 		mshv_debugfs_partition_remove(partition);
 
+		mshv_destroy_devices(partition);
+
 		/* Deallocates and unmaps everything including vcpus, GPA mappings etc */
 		hv_call_finalize_partition(partition->pt_id);
 
@@ -3211,7 +3213,6 @@ static void destroy_partition(struct mshv_partition *partition)
 	hv_call_withdraw_memory(U64_MAX, NUMA_NO_NODE, partition->pt_id);
 	hv_call_delete_partition(partition->pt_id);
 
-	mshv_destroy_devices(partition);
 	mshv_free_routing_table(partition);
 	kfree_rcu(partition, pt_rcu);
 }
