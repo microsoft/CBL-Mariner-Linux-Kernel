@@ -4,7 +4,6 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/idr.h>
-#include <asm/mshyperv.h>
 
 #include "mshv.h"
 #include "mshv_root.h"

@@ -13,7 +13,6 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/random.h>
-#include <asm/mshyperv.h>
 
 #include "mshv_eventfd.h"
 #include "mshv_root.h"
