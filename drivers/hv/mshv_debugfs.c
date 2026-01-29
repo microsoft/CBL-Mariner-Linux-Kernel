@@ -953,7 +953,7 @@ remove_debugfs_partition_vp:
 		if (i >= idx)
 			break;
 		vp_debugfs_remove(hv_current_partition_id, i,
-				  parent_vp_stats[idx]);
+				  parent_vp_stats[i]);
 	}
 	partition_debugfs_remove(hv_current_partition_id,
 				 parent_partition_stats);
