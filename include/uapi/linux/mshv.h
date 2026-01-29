@@ -56,10 +56,6 @@ struct mshv_assert_interrupt {
 	__u32 rsvd;
 };
 
-struct mshv_partition_property {
-	enum hv_partition_property_code property_code;
-	__u64 property_value;
-};
 
 struct mshv_translate_gva {
 	__u64 gva;
@@ -159,6 +155,8 @@ enum {
 	MSHV_PT_BIT_X2APIC,
 	MSHV_PT_BIT_GPA_SUPER_PAGES,
 	MSHV_PT_BIT_CPU_AND_XSAVE_FEATURES,
+	MSHV_PT_BIT_NESTED_VIRTUALIZATION,
+	MSHV_PT_BIT_SMT_ENABLED_GUEST,
 	MSHV_PT_BIT_COUNT,
 };
 
@@ -218,9 +216,21 @@ struct mshv_create_partition_v2 {
 #endif
 } __packed;
 
+/**
+ * struct mshv_partition_property: arg for get/set_partition_property
+ * @property_code: code of the property
+ * @property_value: value of the property
+ * 
+ * Returns: same as the struct
+ */
+struct mshv_partition_property {
+	__u64 property_code;
+	__u64 property_value;
+};
+
 /* /dev/mshv */
 #define MSHV_CREATE_PARTITION	_IOW(MSHV_IOCTL, 0x00, struct mshv_create_partition)
-#define MSHV_GET_HOST_PARTITION_PROPERTY _IOR(MSHV_IOCTL, 0x01, u64)
+#define MSHV_GET_HOST_PARTITION_PROPERTY _IOWR(MSHV_IOCTL, 0x01, struct mshv_partition_property)
 /* Start nr again from 0x00 - mshv_vtl ioctls won't collide with mshv_root */
 #define MSHV_CREATE_VTL		_IO(MSHV_IOCTL, 0x00)
 #define MSHV_GET_VTL_CAPS	_IOR(MSHV_IOCTL, 0x01, struct mshv_vtl_capabilities)
@@ -259,7 +269,7 @@ enum {
  * @rsvd: MBZ
  *
  * Map or unmap a region of userspace memory to Guest Physical Addresses (GPA).
- * Mappings can't overlap in GPA space or userspace.
+ * Mappings can't overlap in GPA space.
  * To unmap, these fields must match an existing mapping.
  */
 struct mshv_user_mem_region {
