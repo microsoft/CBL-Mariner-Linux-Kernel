@@ -8,7 +8,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <asm/mshyperv.h>
 #include <trace/events/mshv.h>
 
 #include "mshv_eventfd.h"
