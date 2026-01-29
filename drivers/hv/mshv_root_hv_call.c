@@ -1283,7 +1283,7 @@ ignore_parent_counter_map_result(enum hv_stats_object_type type,
 static int
 hv_call_map_stats_page(enum hv_stats_object_type type,
 		       const union hv_stats_object_identity *identity,
-		       void **addr)
+		       struct hv_stats_page **addr)
 {
 	unsigned long flags;
 	struct hv_input_map_stats_page *input;
@@ -1338,7 +1338,7 @@ hv_call_map_stats_page(enum hv_stats_object_type type,
 
 int hv_map_stats_page(enum hv_stats_object_type type,
 		      const union hv_stats_object_identity *identity,
-		      void **addr)
+		      struct hv_stats_page **addr)
 {
 	int ret;
 	struct page *allocated_page = NULL;
@@ -1392,7 +1392,8 @@ hv_call_unmap_stats_page(enum hv_stats_object_type type,
 	return 0;
 }
 
-int hv_unmap_stats_page(enum hv_stats_object_type type, void *page_addr,
+int hv_unmap_stats_page(enum hv_stats_object_type type,
+			struct hv_stats_page *page_addr,
 			const union hv_stats_object_identity *identity)
 {
 	int ret;

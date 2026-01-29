@@ -138,7 +138,7 @@ static void __init *mshv_lp_stats_map(u32 lp_index)
 		.lp.lp_index = lp_index,
 		.lp.stats_area_type = HV_STATS_AREA_SELF,
 	};
-	void *stats;
+	struct hv_stats_page *stats;
 	int err;
 
 	err = hv_map_stats_page(HV_STATS_OBJECT_LOGICAL_PROCESSOR, &identity,
@@ -540,7 +540,8 @@ do {								 \
 }
 DEFINE_SHOW_ATTRIBUTE(vp_stats);
 
-static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index, void *stats_page_addr,
+static void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index,
+				struct hv_stats_page *stats_page_addr,
 				enum hv_stats_area_type stats_area_type)
 {
 	union hv_stats_object_identity identity = {
@@ -566,7 +567,7 @@ static void *mshv_vp_stats_map(u64 partition_id, u32 vp_index,
 		.vp.vp_index = vp_index,
 		.vp.stats_area_type = stats_area_type,
 	};
-	void *stats;
+	struct hv_stats_page *stats;
 	int err;
 
 	err = hv_map_stats_page(HV_STATS_OBJECT_VP, &identity, &stats);
@@ -767,7 +768,7 @@ static void *mshv_partition_stats_map(u64 partition_id,
 		.partition.partition_id = partition_id,
 		.partition.stats_area_type = stats_area_type,
 	};
-	void *stats;
+	struct hv_stats_page *stats;
 	int err;
 
 	err = hv_map_stats_page(HV_STATS_OBJECT_PARTITION, &identity, &stats);
@@ -1012,7 +1013,7 @@ static void * __init mshv_hv_stats_map(void)
 	union hv_stats_object_identity identity = {
 		.hv.stats_area_type = HV_STATS_AREA_SELF,
 	};
-	void *stats;
+	struct hv_stats_page *stats;
 	int err;
 
 	err = hv_map_stats_page(HV_STATS_OBJECT_HYPERVISOR, &identity, &stats);
