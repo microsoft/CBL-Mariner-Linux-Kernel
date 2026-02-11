@@ -289,6 +289,7 @@ int hv_map_msi_interrupt(struct irq_data *data,
 	union hv_device_id hv_devid;
 	struct hv_interrupt_entry dummy;
 	struct irq_cfg *cfg = irqd_cfg(data);
+	const struct cpumask *affinity;
 	int cpu;
 	u64 res, ptid;
 
