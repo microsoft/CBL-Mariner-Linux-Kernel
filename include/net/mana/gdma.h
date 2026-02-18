@@ -9,6 +9,8 @@
 
 #include "shm_channel.h"
 
+#define GDMA_STATUS_MORE_ENTRIES	0x00000105
+
 /* Structures labeled with "HW DATA" are exchanged with the hardware. All of
  * them are naturally aligned and hence don't need __packed.
  */
@@ -22,10 +24,19 @@ enum gdma_request_type {
 	GDMA_GENERATE_TEST_EQE		= 10,
 	GDMA_CREATE_QUEUE		= 12,
 	GDMA_DISABLE_QUEUE		= 13,
+	GDMA_ALLOCATE_RESOURCE_RANGE	= 22,
+	GDMA_DESTROY_RESOURCE_RANGE	= 24,
 	GDMA_CREATE_DMA_REGION		= 25,
 	GDMA_DMA_REGION_ADD_PAGES	= 26,
 	GDMA_DESTROY_DMA_REGION		= 27,
+	GDMA_CREATE_PD			= 29,
+	GDMA_DESTROY_PD			= 30,
+	GDMA_CREATE_MR			= 31,
+	GDMA_DESTROY_MR			= 32,
+	GDMA_QUERY_HWC_TIMEOUT		= 84, /* 0x54 */
 };
+
+#define GDMA_RESOURCE_DOORBELL_PAGE	27
 
 enum gdma_queue_type {
 	GDMA_INVALID_QUEUE,
@@ -47,6 +58,8 @@ enum gdma_eqe_type {
 	GDMA_EQE_HWC_INIT_EQ_ID_DB	= 129,
 	GDMA_EQE_HWC_INIT_DATA		= 130,
 	GDMA_EQE_HWC_INIT_DONE		= 131,
+	GDMA_EQE_HWC_SOC_RECONFIG	= 132,
+	GDMA_EQE_HWC_SOC_RECONFIG_DATA	= 133,
 };
 
 enum {
@@ -135,6 +148,7 @@ struct gdma_general_req {
 }; /* HW DATA */
 
 #define GDMA_MESSAGE_V1 1
+#define GDMA_MESSAGE_V2 2
 
 struct gdma_general_resp {
 	struct gdma_resp_hdr hdr;
@@ -188,7 +202,7 @@ struct gdma_mem_info {
 	u64 length;
 
 	/* Allocated by the PF driver */
-	u64 gdma_region;
+	u64 dma_region_handle;
 };
 
 #define REGISTER_ATB_MST_MKEY_LOWER_SIZE 8
@@ -204,6 +218,8 @@ struct gdma_dev {
 
 	/* GDMA driver specific pointer */
 	void *driver_data;
+
+	struct auxiliary_device *adev;
 };
 
 #define MINIMUM_SUPPORTED_PAGE_SIZE PAGE_SIZE
@@ -342,6 +358,9 @@ struct gdma_context {
 	struct gdma_resource	msix_resource;
 	struct gdma_irq_context	*irq_contexts;
 
+	/* L2 MTU */
+	u16 adapter_mtu;
+
 	/* This maps a CQ index to the queue structure. */
 	unsigned int		max_num_cqs;
 	struct gdma_queue	**cq_table;
@@ -351,10 +370,14 @@ struct gdma_context {
 	struct completion	eq_test_event;
 	u32			test_event_eq_id;
 
+	bool			is_pf;
+	phys_addr_t		bar0_pa;
 	void __iomem		*bar0_va;
 	void __iomem		*shm_base;
 	void __iomem		*db_page_base;
+	phys_addr_t		phys_db_page_base;
 	u32 db_page_size;
+	int                     numa_node;
 
 	/* Shared memory chanenl (used to bootstrap HWC) */
 	struct shm_channel	shm_channel;
@@ -425,6 +448,13 @@ struct gdma_wqe {
 #define MAX_TX_WQE_SIZE 512
 #define MAX_RX_WQE_SIZE 256
 
+#define MAX_TX_WQE_SGL_ENTRIES	((GDMA_MAX_SQE_SIZE -			   \
+			sizeof(struct gdma_sge) - INLINE_OOB_SMALL_SIZE) / \
+			sizeof(struct gdma_sge))
+
+#define MAX_RX_WQE_SGL_ENTRIES	((GDMA_MAX_RQE_SIZE -			   \
+			sizeof(struct gdma_sge)) / sizeof(struct gdma_sge))
+
 struct gdma_cqe {
 	u32 cqe_data[GDMA_COMP_DATA_SIZE / 4];
 
@@ -472,6 +502,15 @@ struct gdma_eqe {
 #define GDMA_REG_DB_PAGE_SIZE	0x10
 #define GDMA_REG_SHM_OFFSET	0x18
 
+#define GDMA_PF_REG_DB_PAGE_SIZE	0xD0
+#define GDMA_PF_REG_DB_PAGE_OFF		0xC8
+#define GDMA_PF_REG_SHM_OFF		0x70
+
+#define GDMA_SRIOV_REG_CFG_BASE_OFF	0x108
+
+#define MANA_PF_DEVICE_ID 0x00B9
+#define MANA_VF_DEVICE_ID 0x00BA
+
 struct gdma_posted_wqe_info {
 	u32 wqe_size_in_bu;
 };
@@ -495,10 +534,12 @@ enum {
  * so the driver is able to reliably support features like busy_poll.
  */
 #define GDMA_DRV_CAP_FLAG_1_NAPI_WKDONE_FIX BIT(2)
+#define GDMA_DRV_CAP_FLAG_1_HWC_TIMEOUT_RECONFIG BIT(3)
 
 #define GDMA_DRV_CAP_FLAGS1 \
 	(GDMA_DRV_CAP_FLAG_1_EQ_SHARING_MULTI_VPORT | \
-	 GDMA_DRV_CAP_FLAG_1_NAPI_WKDONE_FIX)
+	 GDMA_DRV_CAP_FLAG_1_NAPI_WKDONE_FIX | \
+	 GDMA_DRV_CAP_FLAG_1_HWC_TIMEOUT_RECONFIG)
 
 #define GDMA_DRV_CAP_FLAGS2 0
 
@@ -574,6 +615,26 @@ struct gdma_register_device_resp {
 	u32 db_id;
 }; /* HW DATA */
 
+struct gdma_allocate_resource_range_req {
+	struct gdma_req_hdr hdr;
+	u32 resource_type;
+	u32 num_resources;
+	u32 alignment;
+	u32 allocated_resources;
+};
+
+struct gdma_allocate_resource_range_resp {
+	struct gdma_resp_hdr hdr;
+	u32 allocated_resources;
+};
+
+struct gdma_destroy_resource_range_req {
+	struct gdma_req_hdr hdr;
+	u32 resource_type;
+	u32 num_resources;
+	u32 allocated_resources;
+};
+
 /* GDMA_CREATE_QUEUE */
 struct gdma_create_queue_req {
 	struct gdma_req_hdr hdr;
@@ -608,6 +669,41 @@ struct gdma_disable_queue_req {
 	u32 alloc_res_id_on_creation;
 }; /* HW DATA */
 
+/* GDMA_QUERY_HWC_TIMEOUT */
+struct gdma_query_hwc_timeout_req {
+	struct gdma_req_hdr hdr;
+	u32 timeout_ms;
+	u32 reserved;
+};
+
+struct gdma_query_hwc_timeout_resp {
+	struct gdma_resp_hdr hdr;
+	u32 timeout_ms;
+	u32 reserved;
+};
+
+enum atb_page_size {
+	ATB_PAGE_SIZE_4K,
+	ATB_PAGE_SIZE_8K,
+	ATB_PAGE_SIZE_16K,
+	ATB_PAGE_SIZE_32K,
+	ATB_PAGE_SIZE_64K,
+	ATB_PAGE_SIZE_128K,
+	ATB_PAGE_SIZE_256K,
+	ATB_PAGE_SIZE_512K,
+	ATB_PAGE_SIZE_1M,
+	ATB_PAGE_SIZE_2M,
+	ATB_PAGE_SIZE_MAX,
+};
+
+enum gdma_mr_access_flags {
+	GDMA_ACCESS_FLAG_LOCAL_READ = BIT_ULL(0),
+	GDMA_ACCESS_FLAG_LOCAL_WRITE = BIT_ULL(1),
+	GDMA_ACCESS_FLAG_REMOTE_READ = BIT_ULL(2),
+	GDMA_ACCESS_FLAG_REMOTE_WRITE = BIT_ULL(3),
+	GDMA_ACCESS_FLAG_REMOTE_ATOMIC = BIT_ULL(4),
+};
+
 /* GDMA_CREATE_DMA_REGION */
 struct gdma_create_dma_region_req {
 	struct gdma_req_hdr hdr;
@@ -634,14 +730,14 @@ struct gdma_create_dma_region_req {
 
 struct gdma_create_dma_region_resp {
 	struct gdma_resp_hdr hdr;
-	u64 gdma_region;
+	u64 dma_region_handle;
 }; /* HW DATA */
 
 /* GDMA_DMA_REGION_ADD_PAGES */
 struct gdma_dma_region_add_pages_req {
 	struct gdma_req_hdr hdr;
 
-	u64 gdma_region;
+	u64 dma_region_handle;
 
 	u32 page_addr_list_len;
 	u32 reserved3;
@@ -653,8 +749,87 @@ struct gdma_dma_region_add_pages_req {
 struct gdma_destroy_dma_region_req {
 	struct gdma_req_hdr hdr;
 
-	u64 gdma_region;
+	u64 dma_region_handle;
 }; /* HW DATA */
+
+enum gdma_pd_flags {
+	GDMA_PD_FLAG_INVALID = 0,
+};
+
+struct gdma_create_pd_req {
+	struct gdma_req_hdr hdr;
+	enum gdma_pd_flags flags;
+	u32 reserved;
+};/* HW DATA */
+
+struct gdma_create_pd_resp {
+	struct gdma_resp_hdr hdr;
+	u64 pd_handle;
+	u32 pd_id;
+	u32 reserved;
+};/* HW DATA */
+
+struct gdma_destroy_pd_req {
+	struct gdma_req_hdr hdr;
+	u64 pd_handle;
+};/* HW DATA */
+
+struct gdma_destory_pd_resp {
+	struct gdma_resp_hdr hdr;
+};/* HW DATA */
+
+enum gdma_mr_type {
+	/* Guest Virtual Address - MRs of this type allow access
+	 * to memory mapped by PTEs associated with this MR using a virtual
+	 * address that is set up in the MST
+	 */
+	GDMA_MR_TYPE_GVA = 2,
+};
+
+struct gdma_create_mr_params {
+	u64 pd_handle;
+	enum gdma_mr_type mr_type;
+	union {
+		struct {
+			u64 dma_region_handle;
+			u64 virtual_address;
+			enum gdma_mr_access_flags access_flags;
+		} gva;
+	};
+};
+
+struct gdma_create_mr_request {
+	struct gdma_req_hdr hdr;
+	u64 pd_handle;
+	enum gdma_mr_type mr_type;
+	u32 reserved_1;
+
+	union {
+		struct {
+			u64 dma_region_handle;
+			u64 virtual_address;
+			enum gdma_mr_access_flags access_flags;
+		} gva;
+
+	};
+	u32 reserved_2;
+};/* HW DATA */
+
+struct gdma_create_mr_response {
+	struct gdma_resp_hdr hdr;
+	u64 mr_handle;
+	u32 lkey;
+	u32 rkey;
+};/* HW DATA */
+
+struct gdma_destroy_mr_request {
+	struct gdma_req_hdr hdr;
+	u64 mr_handle;
+};/* HW DATA */
+
+struct gdma_destroy_mr_response {
+	struct gdma_resp_hdr hdr;
+};/* HW DATA */
 
 int mana_gd_verify_vf_version(struct pci_dev *pdev);
 
@@ -682,4 +857,7 @@ void mana_gd_free_memory(struct gdma_mem_info *gmi);
 
 int mana_gd_send_request(struct gdma_context *gc, u32 req_len, const void *req,
 			 u32 resp_len, void *resp);
+
+int mana_gd_destroy_dma_region(struct gdma_context *gc, u64 dma_region_handle);
+
 #endif /* _GDMA_H */
