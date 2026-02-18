@@ -13,6 +13,7 @@
 #include <asm/efi.h>
 
 #include "efistub.h"
+#include "efi-mshv.h"
 
 /*
  * This is the base address at which to start allocating virtual memory ranges
@@ -164,6 +165,10 @@ efi_status_t efi_stub_common(efi_handle_t handle,
 	status = check_platform_features();
 	if (status != EFI_SUCCESS)
 		return status;
+
+#if defined(CONFIG_ARM64)
+	mshv_efi_setup(&cmdline_ptr);
+#endif
 
 	si = setup_graphics();
 

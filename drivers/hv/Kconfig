@@ -55,4 +55,33 @@ config HYPERV_BALLOON
 	help
 	  Select this option to enable Hyper-V Balloon driver.
 
+config MSHV_ROOT
+	tristate "Microsoft Hyper-V root partition APIs driver"
+	depends on HYPERV && (X86_64 || ARM64)
+	depends on !HYPERV_VTL_MODE
+	select EVENTFD
+	select IRQ_BYPASS_MANAGER
+	select HMM_MIRROR
+	help
+	  Select this option when running as the root partition on Microsoft
+	  Hypervisor, to enable interfaces for managing guest virtual
+	  machines.
+
+	  The interfaces are provided via a device named /dev/mshv.
+
+	  To compile this as a module, choose M here.
+
+	  If unsure, say N.
+
+source "drivers/hv/diag/Kconfig"
+
+config HYPERV_VSM
+        tristate "Microsoft Hyper-V VSM driver"
+        depends on HYPERV
+        help
+          Select this option to enable Hyper-V Virtual Secure Mode.
+          Enabling this option will load a secure kernel in VTL1 and
+          establish an interface between VTL0 and VTL1 to request for
+          VSM services.
+
 endmenu

@@ -103,7 +103,7 @@ static inline bool dmar_rcu_check(void)
 	for_each_dev_scope((devs), (cnt), (i), (tmp))			\
 		if (!(tmp)) { continue; } else
 
-extern int dmar_table_init(void);
+extern int dmar_table_init(bool alloc, bool force_parse);
 extern int dmar_dev_scope_init(void);
 extern void dmar_register_bus_notifier(void);
 extern void *dmar_alloc_dev_scope(void *start, void *end, int *cnt);
