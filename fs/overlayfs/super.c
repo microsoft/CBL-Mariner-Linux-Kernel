@@ -767,7 +767,7 @@ static struct dentry *ovl_workdir_create(struct ovl_fs *ofs,
 
 	inode_lock_nested(dir, I_MUTEX_PARENT);
 retry:
-	work = lookup_one_len(name, ofs->workbasedir, strlen(name));
+	work = ovl_lookup_upper(ofs, name, ofs->workbasedir, strlen(name));
 
 	if (!IS_ERR(work)) {
 		struct iattr attr = {
@@ -827,7 +827,7 @@ retry:
 
 		/* Clear any inherited mode bits */
 		inode_lock(work->d_inode);
-		err = notify_change(&init_user_ns, work, &attr, NULL);
+		err = ovl_do_notify_change(ofs, work, &attr);
 		inode_unlock(work->d_inode);
 		if (err)
 			goto out_dput;
@@ -877,10 +877,6 @@ static int ovl_mount_dir_noesc(const char *name, struct path *path)
 	err = -EINVAL;
 	if (ovl_dentry_weird(path->dentry)) {
 		pr_err("filesystem on '%s' not supported\n", name);
-		goto out_put;
-	}
-	if (is_idmapped_mnt(path->mnt)) {
-		pr_err("idmapped layers are currently not supported\n");
 		goto out_put;
 	}
 	if (!d_is_dir(path->dentry)) {
@@ -1012,6 +1008,9 @@ ovl_posix_acl_xattr_get(const struct xattr_handler *handler,
 			struct dentry *dentry, struct inode *inode,
 			const char *name, void *buffer, size_t size)
 {
+	if (!IS_POSIXACL(inode))
+		return -EOPNOTSUPP;
+
 	return ovl_xattr_get(dentry, inode, handler->name, buffer, size);
 }
 
@@ -1026,6 +1025,9 @@ ovl_posix_acl_xattr_set(const struct xattr_handler *handler,
 	struct inode *realinode = ovl_inode_real(inode);
 	struct posix_acl *acl = NULL;
 	int err;
+
+	if (!IS_POSIXACL(inode))
+		return -EOPNOTSUPP;
 
 	/* Check that everything is OK before copy-up */
 	if (value) {
@@ -1295,7 +1297,7 @@ static int ovl_check_rename_whiteout(struct ovl_fs *ofs)
 		goto cleanup_temp;
 	}
 
-	whiteout = lookup_one_len(name.name.name, workdir, name.name.len);
+	whiteout = ovl_lookup_upper(ofs, name.name.name, workdir, name.name.len);
 	err = PTR_ERR(whiteout);
 	if (IS_ERR(whiteout))
 		goto cleanup_temp;
@@ -1327,7 +1329,7 @@ static struct dentry *ovl_lookup_or_create(struct ovl_fs *ofs,
 	struct dentry *child;
 
 	inode_lock_nested(parent->d_inode, I_MUTEX_PARENT);
-	child = lookup_one_len(name, parent, len);
+	child = ovl_lookup_upper(ofs, name, parent, len);
 	if (!IS_ERR(child) && !child->d_inode)
 		child = ovl_create_real(ofs, parent->d_inode, child,
 					OVL_CATTR(mode));
@@ -1972,6 +1974,20 @@ static struct dentry *ovl_get_root(struct super_block *sb,
 	return root;
 }
 
+static bool ovl_has_idmapped_layers(struct ovl_fs *ofs)
+{
+
+	unsigned int i;
+	const struct vfsmount *mnt;
+
+	for (i = 0; i < ofs->numlayer; i++) {
+		mnt = ofs->layers[i].mnt;
+		if (mnt && is_idmapped_mnt(mnt))
+			return true;
+	}
+	return false;
+}
+
 static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct path upperpath = { };
@@ -2141,8 +2157,11 @@ static int ovl_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_xattr = ofs->config.userxattr ? ovl_user_xattr_handlers :
 		ovl_trusted_xattr_handlers;
 	sb->s_fs_info = ofs;
-	sb->s_flags |= SB_POSIXACL;
-	sb->s_iflags |= SB_I_SKIP_SYNC;
+	if (ovl_has_idmapped_layers(ofs))
+		pr_warn("POSIX ACLs are not yet supported with idmapped layers, mounting without ACL support.\n");
+	else
+		sb->s_flags |= SB_POSIXACL;
+	sb->s_iflags |= SB_I_SKIP_SYNC | SB_I_IMA_UNVERIFIABLE_SIGNATURE;
 
 	err = -ENOMEM;
 	root_dentry = ovl_get_root(sb, upperpath.dentry, oe);
