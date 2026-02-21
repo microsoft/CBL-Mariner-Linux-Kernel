@@ -92,7 +92,7 @@ static int viortc_ptp_do_xtstamp(struct viortc_ptp_clock *vio_ptp,
 	u64 max_ns, ns;
 	int ret;
 
-	ctx->system_counterval.cs_id = cs_id;
+	ctx->system_counterval.cs = NULL;
 
 	ret = viortc_read_cross(vio_ptp->viortc, vio_ptp->vio_clk_id,
 				hw_counter, &ns,
