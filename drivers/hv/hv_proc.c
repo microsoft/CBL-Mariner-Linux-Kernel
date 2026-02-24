@@ -16,7 +16,7 @@
 #define HV_DEPOSIT_MAX (HV_HYP_PAGE_SIZE / sizeof(u64) - 1)
 
 /* Deposits exact number of pages. Must be called with interrupts enabled.  */
-int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages)
+static int __hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages)
 {
 	struct page **pages, *page;
 	int *counts;
@@ -106,6 +106,35 @@ err_free_allocations:
 free_buf:
 	free_page((unsigned long)pages);
 	kfree(counts);
+	return ret;
+}
+
+/**
+ * hv_call_deposit_pages - Deposit memory pages to a partition
+ * @node        : NUMA node from which to allocate pages
+ * @partition_id: Target partition ID to deposit pages to
+ * @num_pages   : Number of pages to deposit
+ *
+ * Deposits memory pages to the specified partition. The deposit is
+ * performed in chunks of HV_DEPOSIT_MAX pages to handle large requests
+ * efficiently.
+ *
+ * Return: 0 on success, negative error code on failure
+ */
+int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
+{
+	u64 done;
+	int ret = 0;
+
+	for (done = 0; done < num_pages; done += HV_DEPOSIT_MAX) {
+		u32 to_deposit = min(num_pages - done, HV_DEPOSIT_MAX);
+
+		ret = __hv_call_deposit_pages(node, partition_id,
+					      to_deposit);
+		if (ret)
+			break;
+	}
+
 	return ret;
 }
 EXPORT_SYMBOL_GPL(hv_call_deposit_pages);
