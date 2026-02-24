@@ -575,7 +575,7 @@ static int viortc_msg_xfer(struct viortc_vq *vq, struct viortc_msg *msg,
  */
 
 /** timeout for clock readings, where timeouts are considered non-fatal */
-#define VIORTC_MSG_READ_TIMEOUT secs_to_jiffies(60)
+#define VIORTC_MSG_READ_TIMEOUT msecs_to_jiffies(60 * 1000)
 
 /**
  * viortc_read() - VIRTIO_RTC_REQ_READ wrapper
@@ -961,7 +961,7 @@ static int viortc_init_rtc_class_clock(struct viortc_dev *viortc,
 	viortc->viortc_class = viortc_class;
 
 	if (have_alarm)
-		devm_device_init_wakeup(dev);
+		device_init_wakeup(dev, true);
 
 	return viortc_class_register(viortc_class) ?: 1;
 }
@@ -1212,10 +1212,11 @@ static int viortc_alloc_vq_bufs(struct viortc_dev *viortc,
 static int viortc_init_vqs(struct viortc_dev *viortc)
 {
 	struct virtqueue *vqs[VIORTC_MAX_NR_QUEUES];
-	struct virtqueue_info vqs_info[] = {
-		{ "requestq", viortc_cb_requestq },
-		{ "alarmq", viortc_cb_alarmq },
+	vq_callback_t *callbacks[] = {
+		viortc_cb_requestq,
+		viortc_cb_alarmq,
 	};
+	const char * const names[] = { "requestq", "alarmq" };
 	struct virtio_device *vdev = viortc->vdev;
 	unsigned int num_elems;
 	int nr_queues, ret;
@@ -1228,7 +1229,7 @@ static int viortc_init_vqs(struct viortc_dev *viortc)
 	else
 		nr_queues = VIORTC_REQUESTQ + 1;
 
-	ret = virtio_find_vqs(vdev, nr_queues, vqs, vqs_info, NULL);
+	ret = virtio_find_vqs(vdev, nr_queues, vqs, callbacks, names, NULL);
 	if (ret)
 		return ret;
 

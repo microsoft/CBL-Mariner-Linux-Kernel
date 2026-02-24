@@ -92,7 +92,15 @@ static int viortc_ptp_do_xtstamp(struct viortc_ptp_clock *vio_ptp,
 	u64 max_ns, ns;
 	int ret;
 
-	ctx->system_counterval.cs_id = cs_id;
+	/*
+	 * Compat: 6.6 system_counterval_t has .cs (struct clocksource *)
+	 * rather than .cs_id (enum clocksource_ids). Cross-timestamping is
+	 * only reachable when viortc_hw_xtstamp_params() succeeds, which
+	 * requires an arch-specific implementation (e.g. ARM). On x86, the
+	 * weak stub returns -EOPNOTSUPP and have_cross stays false.
+	 */
+	ctx->system_counterval.cs = NULL;
+	(void)cs_id;
 
 	ret = viortc_read_cross(vio_ptp->viortc, vio_ptp->vio_clk_id,
 				hw_counter, &ns,
