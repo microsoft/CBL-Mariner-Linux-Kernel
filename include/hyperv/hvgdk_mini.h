@@ -1075,6 +1075,9 @@ enum hv_register_name {
 
 	/* Intercept Registers */
 	HV_X64_REGISTER_DELIVERABILITY_NOTIFICATIONS		= 0x00010006,
+#if defined(CONFIG_ARM64)
+	HV_ARM64_REGISTER_SINT_RESERVED_INTERRUPT_ID		= 0x00070001,
+#endif
 };
 
 /*
