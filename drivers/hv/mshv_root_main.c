@@ -686,6 +686,32 @@ static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp)
 
 #endif	/* CONFIG_X86_64 */
 
+static void mshv_region_put(struct mshv_mem_region *region)
+{
+	kref_put(&region->mreg_refcount, mshv_partition_destroy_region);
+}
+
+static int mshv_region_get(struct mshv_mem_region *region)
+{
+	return kref_get_unless_zero(&region->mreg_refcount);
+}
+
+static struct mshv_mem_region *
+mshv_partition_region_by_gfn_get(struct mshv_partition *p, u64 gfn)
+{
+	struct mshv_mem_region *region;
+
+	spin_lock(&p->pt_mem_regions_lock);
+	region = mshv_partition_region_by_gfn(p, gfn);
+	if (!region || !mshv_region_get(region)) {
+		spin_unlock(&p->pt_mem_regions_lock);
+		return NULL;
+	}
+	spin_unlock(&p->pt_mem_regions_lock);
+
+	return region;
+}
+
 /**
  * mshv_handle_gpa_intercept - Handle GPA (Guest Physical Address) intercepts.
  * @vp: Pointer to the virtual processor structure.
@@ -702,20 +728,25 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 	struct mshv_partition *p = vp->vp_partition;
 	struct mshv_mem_region *region;
 	u64 gfn;
+	bool handled = false;
 
 	gfn = mshv_get_gpa_intercept_gfn(vp);
 
-	region = mshv_partition_region_by_gfn(p, gfn);
+	region = mshv_partition_region_by_gfn_get(p, gfn);
 	if (!region)
 		return false;
 
 	if (WARN_ON_ONCE(!region->flags.memreg_isram))
-		return false;
+		goto out;
 
 	if (WARN_ON_ONCE(region->flags.memreg_pinned))
-		return false;
+		goto out;
 
-	return mshv_region_handle_gfn_fault(region, gfn);
+	handled = mshv_region_handle_gfn_fault(region, gfn);
+
+out:
+	mshv_region_put(region);
+	return handled;
 }
 
 /*
@@ -2200,10 +2231,13 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 	u64 i, nr_pfns = HVPFN_DOWN(mem->size);
 
 	/* Reject overlapping regions */
+	spin_lock(&partition->pt_mem_regions_lock);
 	if (mshv_partition_region_by_gfn(partition, mem->guest_pfn) ||
 	    mshv_partition_region_by_gfn(partition, mem->guest_pfn + nr_pfns - 1)) {
 		spin_unlock(&partition->pt_mem_regions_lock);
 		return -EEXIST;
+	}
+	spin_unlock(&partition->pt_mem_regions_lock);
 
 	region = vzalloc(sizeof(*region) + sizeof(unsigned long) * nr_pfns);
 	if (!region)
@@ -2231,6 +2265,8 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 		region->pfns[i] = MSHV_INVALID_PFN;
 
 	region->partition = partition;
+
+	kref_init(&region->mreg_refcount);
 
 	*regionpp = region;
 
@@ -2369,7 +2405,9 @@ mshv_map_user_memory(struct mshv_partition *partition,
 	}
 
 	/* Install the new region */
+	spin_lock(&partition->pt_mem_regions_lock);
 	hlist_add_head(&region->hnode, &partition->pt_mem_regions);
+	spin_unlock(&partition->pt_mem_regions_lock);
 
 	return 0;
 }
@@ -2420,12 +2458,12 @@ static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 	}
 }
 
-static void mshv_partition_destroy_region(struct mshv_mem_region *region)
+static void mshv_partition_destroy_region(struct kref *ref)
 {
+	struct mshv_mem_region *region =
+		container_of(ref, struct mshv_mem_region, mreg_refcount);
 	struct mshv_partition *partition = region->partition;
 	int ret;
-
-	hlist_del(&region->hnode);
 
 	if (region->flags.memreg_isram)
 		mshv_region_movable_fini(region);
@@ -2455,9 +2493,13 @@ mshv_unmap_user_memory(struct mshv_partition *partition,
 	if (!(mem.flags & BIT(MSHV_SET_MEM_BIT_UNMAP)))
 		return -EINVAL;
 
+	spin_lock(&partition->pt_mem_regions_lock);
+
 	region = mshv_partition_region_by_gfn(partition, mem.guest_pfn);
-	if (!region)
+	if (!region) {
+		spin_unlock(&partition->pt_mem_regions_lock);
 		return -EINVAL;
+	}
 
 	/* Paranoia check */
 	if (region->start_uaddr != mem.userspace_addr ||
@@ -2465,9 +2507,16 @@ mshv_unmap_user_memory(struct mshv_partition *partition,
 	    region->nr_pfns != HVPFN_DOWN(mem.size)) {
 		spin_unlock(&partition->pt_mem_regions_lock);
 		return -EINVAL;
+	}
+
+	hlist_del(&region->hnode);
+
+	spin_unlock(&partition->pt_mem_regions_lock);
 
 	mshv_partition_unmap_region(region);
-	mshv_partition_destroy_region(region);
+
+	mshv_region_put(region);
+
 	return 0;
 }
 
@@ -3417,8 +3466,10 @@ static void destroy_partition(struct mshv_partition *partition)
 		}
 
 		hlist_for_each_entry_safe(region, n, &partition->pt_mem_regions,
-					  hnode)
-			mshv_partition_destroy_region(region);
+					  hnode) {
+			hlist_del(&region->hnode);
+			mshv_region_put(region);
+		}
 
 		mshv_debugfs_partition_remove(partition);
 
@@ -3729,6 +3780,7 @@ mshv_ioctl_create_partition(void __user *user_arg, struct device *module_dev)
 
 	INIT_HLIST_HEAD(&partition->pt_devices);
 
+	spin_lock_init(&partition->pt_mem_regions_lock);
 	INIT_HLIST_HEAD(&partition->pt_mem_regions);
 
 	mshv_eventfd_init(partition);

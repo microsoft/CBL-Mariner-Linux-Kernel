@@ -110,6 +110,7 @@ struct mshv_partition {
 	refcount_t pt_ref_count;
 	struct rcu_head pt_rcu;
 	struct mutex pt_mutex;
+	spinlock_t pt_mem_regions_lock;
 	struct hlist_head pt_mem_regions; // not ordered
 
 	u32 pt_vp_count;
