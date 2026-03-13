@@ -2415,7 +2415,7 @@ mshv_map_user_memory(struct mshv_partition *partition,
 				   region->flags.memreg_isram, ret);
 
 	if (ret) {
-		vfree(region);
+		mshv_region_put(region);
 		return ret;
 	}
 
