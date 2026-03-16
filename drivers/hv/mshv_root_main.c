@@ -29,6 +29,7 @@
 #include <linux/crash_dump.h>
 #include <linux/panic_notifier.h>
 #include <linux/vmalloc.h>
+#include <linux/vtime.h>
 
 #include "mshv_eventfd.h"
 #include "mshv.h"
@@ -424,9 +425,13 @@ mshv_vp_dispatch(struct mshv_vp *vp, u32 flags,
 	input->spec_ctrl = 0; /* TODO: set sensible flags */
 	input->flags = flags;
 
+	vtime_account_guest_enter();
+
 	vp->run.flags.root_sched_dispatched = 1;
 	status = hv_do_hypercall(HVCALL_DISPATCH_VP, input, output);
 	vp->run.flags.root_sched_dispatched = 0;
+
+	vtime_account_guest_exit();
 
 	*res = *output;
 	preempt_enable();
