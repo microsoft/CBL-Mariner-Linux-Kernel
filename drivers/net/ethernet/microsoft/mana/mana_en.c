@@ -2190,14 +2190,8 @@ static void mana_process_rx_cqe(struct mana_rxq *rxq, struct mana_cq *cq,
 	for (i = 0; i < MANA_RXCOMP_OOB_NUM_PPI; i++) {
 		old_buf = NULL;
 		pktlen = oob->ppi[i].pkt_len;
-		if (pktlen == 0) {
-			if (i == 0)
-				netdev_err_once(
-					ndev,
-					"RX pkt len=0, rq=%u, cq=%u, rxobj=0x%llx\n",
-					rxq->gdma_id, cq->gdma_id, rxq->rxobj);
+		if (pktlen == 0)
 			break;
-		}
 
 		curr = rxq->buf_index;
 		rxbuf_oob = &rxq->rx_oobs[curr];
@@ -2232,35 +2226,21 @@ static void mana_process_rx_cqe(struct mana_rxq *rxq, struct mana_cq *cq,
 			break;
 	}
 
-	curr = rxq->buf_index;
-	rxbuf_oob = &rxq->rx_oobs[curr];
-	WARN_ON_ONCE(rxbuf_oob->wqe_inf.wqe_size_in_bu != 1);
-
-	if (unlikely(pktlen > rxq->datasize)) {
-		/* Increase it even if mana_rx_skb() isn't called. */
-		rxq->rx_cq.work_done++;
-
-		++ndev->stats.rx_dropped;
-		netdev_warn_once(ndev,
-				 "Dropped oversized RX packet: len=%u, datasize=%u\n",
-				 pktlen, rxq->datasize);
-
-		/* Reuse the RX buffer since rxbuf_oob is unchanged. */
-		goto drop;
-	}
-
-	mana_refill_rx_oob(dev, rxq, rxbuf_oob, pktlen,
-			   &old_buf, &old_fp);
-
-	/* Unsuccessful refill will have old_buf == NULL.
-	 * In this case, mana_rx_skb() will drop the packet.
+	/* Collect coalesced CQE count based on packets processed.
+	 * Coalesced CQEs have at least 2 packets, so index is i - 2.
 	 */
-	mana_rx_skb(old_buf, old_fp, oob, rxq);
-
-drop:
-	mana_move_wq_tail(rxq->gdma_rq, rxbuf_oob->wqe_inf.wqe_size_in_bu);
-
-	mana_post_pkt_rxq(rxq);
+	if (i > 1) {
+		u64_stats_update_begin(&rxq->stats.syncp);
+		rxq->stats.coalesced_cqe[i - 2]++;
+		u64_stats_update_end(&rxq->stats.syncp);
+	} else if (!i && !pktlen) {
+		u64_stats_update_begin(&rxq->stats.syncp);
+		rxq->stats.pkt_len0_err++;
+		u64_stats_update_end(&rxq->stats.syncp);
+		netdev_err_once(ndev,
+				"RX pkt len=0, rq=%u, cq=%u, rxobj=0x%llx\n",
+				rxq->gdma_id, cq->gdma_id, rxq->rxobj);
+	}
 }
 
 static void mana_poll_rx_cq(struct mana_cq *cq)
