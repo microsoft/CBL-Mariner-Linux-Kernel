@@ -610,7 +610,7 @@ static bool mshv_region_handle_gfn_fault(struct mshv_mem_region *region, u64 gfn
 
 #ifdef CONFIG_X86_64
 
-static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp)
+static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp, u8 *access_type)
 {
 	struct hv_x64_memory_intercept_message *msg;
 	u64 gfn;
@@ -619,6 +619,8 @@ static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp)
 		vp->vp_intercept_msg_page->u.payload;
 
 	gfn = HVPFN_DOWN(msg->guest_physical_address);
+
+	*access_type = msg->header.intercept_access_type;
 
 	return gfn;
 }
@@ -670,7 +672,7 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 	return false;
 }
 
-static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp)
+static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp, u8 *access_type)
 {
 	struct hv_arm64_memory_intercept_message *msg;
 	u64 gfn;
@@ -679,6 +681,8 @@ static u64 mshv_get_gpa_intercept_gfn(struct mshv_vp *vp)
 		vp->vp_intercept_msg_page->u.payload;
 
 	gfn = HVPFN_DOWN(msg->guest_physical_address);
+
+	*access_type = msg->header.intercept_access_type;
 
 	return gfn;
 }
@@ -726,10 +730,11 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 {
 	struct mshv_partition *p = vp->vp_partition;
 	struct mshv_mem_region *region;
+	u8 access_type;
 	u64 gfn;
 	bool handled = false;
 
-	gfn = mshv_get_gpa_intercept_gfn(vp);
+	gfn = mshv_get_gpa_intercept_gfn(vp, &access_type);
 
 	region = mshv_partition_region_by_gfn_get(p, gfn);
 	if (!region)
@@ -739,6 +744,14 @@ static bool mshv_handle_gpa_intercept(struct mshv_vp *vp)
 		goto out;
 
 	if (WARN_ON_ONCE(region->flags.memreg_pinned))
+		goto out;
+
+	if (access_type == HV_INTERCEPT_ACCESS_WRITE &&
+	    !(region->hv_map_flags & HV_MAP_GPA_WRITABLE))
+		goto out;
+
+	if (access_type == HV_INTERCEPT_ACCESS_EXECUTE &&
+	    !(region->hv_map_flags & HV_MAP_GPA_EXECUTABLE))
 		goto out;
 
 	handled = mshv_region_handle_gfn_fault(region, gfn);
