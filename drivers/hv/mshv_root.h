@@ -93,7 +93,7 @@ struct mshv_mem_region {
 	struct mmu_interval_notifier memreg_mni;
 	struct mutex memreg_mutex;	/* protects region pfns remapping */
 #endif
-	struct page *pages[];
+	unsigned long pfns[];
 };
 
 struct mshv_irq_ack_notifier {
@@ -317,7 +317,7 @@ int hv_call_finalize_partition(u64 partition_id);
 int hv_call_delete_partition(u64 partition_id);
 int hv_call_map_mmio_pages(u64 partition_id, u64 gfn, u64 mmio_spa, u64 numpgs);
 int hv_call_map_gpa_pages(u64 partition_id, u64 gpa_target, u64 page_count,
-			  u32 flags, struct page **pages);
+			  u32 flags, unsigned long *pfns);
 int hv_call_unmap_gpa_pages(u64 partition_id, u64 gpa_target, u64 page_count,
 			    u32 flags);
 int hv_call_delete_vp(u64 partition_id, u32 vp_index);
@@ -398,7 +398,7 @@ int hv_map_stats_page(enum hv_stats_object_type type,
 int hv_unmap_stats_page(enum hv_stats_object_type type,
 			struct hv_stats_page *page_addr,
 			const union hv_stats_object_identity *identity);
-int hv_call_modify_spa_host_access(u64 partition_id, struct page **page_list,
+int hv_call_modify_spa_host_access(u64 partition_id, unsigned long *pfns,
 				   u64 spa_list_size, u32 host_access,
 				   u32 flags, u8 acquire);
 int hv_call_import_isolated_pages(u64 partition_id, u64 *pages, u64 num_pages,

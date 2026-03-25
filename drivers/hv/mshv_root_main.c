@@ -41,6 +41,7 @@
 #include "mshv_root.h"
 
 #define MSHV_MAP_FAULT_IN_PAGES			HPAGE_PMD_NR
+#define MSHV_INVALID_PFN			ULONG_MAX
 
 MODULE_AUTHOR("Microsoft");
 MODULE_LICENSE("GPL");
@@ -1788,61 +1789,59 @@ mshv_partition_ioctl_set_property(struct mshv_partition *partition,
 }
 
 /**
- * mshv_region_process_chunk - Processes a contiguous chunk of memory pages
- *                             in a region.
- * @region     : Pointer to the memory region structure.
- * @flags      : Flags to pass to the handler.
- * @page_offset: Offset into the region's pages array to start processing.
- * @page_count : Number of pages to process.
- * @handler    : Callback function to handle the chunk.
+ * mshv_region_process_pfns - Process a contiguous chunk of non-zero PFNs
+ *                            in a region.
+ * @region    : Pointer to the memory region structure.
+ * @flags     : Flags to pass to the handler.
+ * @pfn_offset: Offset into the region's PFNs array to start processing.
+ * @pfn_count : Number of PFNs to process.
+ * @handler   : Callback function to handle the chunk.
  *
- * This function scans the region's pages starting from @page_offset,
- * checking for contiguous present pages of the same size (normal or huge).
- * It invokes @handler for the chunk of contiguous pages found. Returns the
- * number of pages handled, or a negative error code if the first page is
- * not present or the handler fails.
+ * This function scans the region's PFNs starting from @pfn_offset,
+ * checking for contiguous non-zero PFNs backed by pages of the same size
+ * (normal or huge).
+ * It invokes @handler for the chunk of contiguous PFNs found. Returns the
+ * number of PFNs handled, or a negative error code if the first PFN is
+ * invalid or the handler fails.
  *
- * Note: The @handler callback must be able to handle both normal and huge
- * pages.
- *
- * Return: Number of pages handled, or negative error code.
+ * Return: Number of PFNs handled, or negative error code.
  */
 static long
-mshv_region_process_chunk(struct mshv_mem_region *region, u32 flags,
-			  u64 page_offset, u64 page_count,
-			  int (*handler)(struct mshv_mem_region *region,
-					 u32 flags, u64 page_offset,
-					 u64 page_count,
-					 bool huge_page))
+mshv_region_process_pfns(struct mshv_mem_region *region, u32 flags,
+			 u64 pfn_offset, u64 pfn_count,
+			 int (*handler)(struct mshv_mem_region *region,
+					u32 flags, u64 pfn_offset,
+					u64 pfn_count, bool huge_page))
 {
-	u64 gfn = region->start_gfn + page_offset;
+	u64 gfn = region->start_gfn + pfn_offset;
 	u64 count;
-	struct page *page;
+	unsigned long pfn;
 	int stride, ret;
 
-	page = region->pages[page_offset];
-	if (!page)
+	pfn = region->pfns[pfn_offset];
+	if (!pfn_valid(pfn))
 		return -EINVAL;
 
-	stride = mshv_chunk_stride(page, gfn, page_count);
+	stride = mshv_chunk_stride(pfn_to_page(pfn), gfn, pfn_count);
 	if (stride < 0)
 		return stride;
 
 	/* Start at stride since the first stride is validated */
-	for (count = stride; count < page_count; count += stride) {
-		page = region->pages[page_offset + count];
+	for (count = stride; count < pfn_count; count += stride) {
+		pfn = region->pfns[pfn_offset + count];
 
-		/* Break if current page is not present */
-		if (!page)
+		/* Break if current pfn is invalid */
+		if (!pfn_valid(pfn))
 			break;
 
 		/* Break if stride size changes */
-		if (stride != mshv_chunk_stride(page, gfn + count,
-						page_count - count))
+		if (stride != mshv_chunk_stride(pfn_to_page(pfn),
+						gfn + count,
+						pfn_count - count))
 			break;
 	}
 
-	ret = handler(region, flags, page_offset, count, stride > 1);
+	ret = handler(region, flags, pfn_offset, count, stride > 1);
 	if (ret)
 		return ret;
 
@@ -1970,6 +1969,28 @@ mshv_region_remap_pfns(struct mshv_mem_region *region, u32 map_flags,
 					 mshv_region_chunk_remap);
 }
 
+static int
+mshv_region_chunk_evict(struct mshv_mem_region *region, u32 pinned,
+			u64 pfn_offset, u64 pfn_count,
+			bool huge_page)
+{
+	unsigned long *pfns = region->pfns + pfn_offset;
+	u64 i;
+
+	if (!pfn_valid(pfns[0]))
+		return 0;
+
+	if (pinned) {
+		for (i = 0; i < pfn_count; i++)
+			unpin_user_page(pfn_to_page(pfns[i]));
+	}
+
+	for (i = 0; i < pfn_count; i++)
+		pfns[i] = MSHV_INVALID_PFN;
+
+	return 0;
+}
+
 static void
 mshv_region_evict_pages(struct mshv_mem_region *region,
 			u64 pfn_offset, u64 pfn_count)
@@ -1989,7 +2010,8 @@ static int
 mshv_region_populate_pages(struct mshv_mem_region *region,
 			   u64 pfn_offset, u64 pfn_count)
 {
-	u64 done_count, nr_pages;
+	u64 pinned, nr_pages, i;
+	unsigned long *pfns;
 	struct page **pages;
 	__u64 userspace_addr;
 	int ret;
@@ -2023,8 +2045,12 @@ mshv_region_populate_pages(struct mshv_mem_region *region,
 					  pages);
 		if (ret < 0)
 			goto release_pages;
+
+		for (i = 0; i < ret; i++)
+			pfns[i] = page_to_pfn(pages[i]);
 	}
 
+	kfree(pages);
 	return 0;
 
 release_pages:
@@ -2091,7 +2117,7 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 						memreg_mni);
 	u64 pfn_offset, pfn_count;
 	unsigned long mstart, mend;
-	int ret = -EPERM;
+	int i, ret = -EPERM;
 
 	if (mmu_notifier_range_blockable(range))
 		mutex_lock(&region->memreg_mutex);
@@ -2765,7 +2791,7 @@ out:
 
 static int convert_gpa_list_to_page_list(struct mshv_partition *partition,
 					 u64 *gpa_list, u64 gpa_list_size,
-					 struct page **page_list)
+					 unsigned long *pfns)
 {
 	int i;
 	struct mshv_mem_region *region;
@@ -2781,7 +2807,7 @@ static int convert_gpa_list_to_page_list(struct mshv_partition *partition,
 			return -ERANGE;
 		}
 
-		page_list[i] = region->pages[gfn - region->start_gfn];
+		pfns[i] = region->pfns[gfn - region->start_gfn];
 	}
 
 	return 0;
@@ -2794,7 +2820,7 @@ static long mshv_partition_ioctl_modify_gpa_host_access(
 	long ret = 0;
 	struct mshv_modify_gpa_host_access args;
 	u64 *gpfn_list;
-	struct page **page_list;
+	unsigned long *pfns;
 	u32 flags, host_access;
 	u8 acquire;
 
@@ -2810,14 +2836,14 @@ static long mshv_partition_ioctl_modify_gpa_host_access(
 	if (IS_ERR(gpfn_list))
 		return PTR_ERR(gpfn_list);
 
-	page_list = kcalloc(args.page_count, sizeof(struct page *), GFP_KERNEL);
-	if (!page_list) {
+	pfns = kcalloc(args.page_count, sizeof(unsigned long), GFP_KERNEL);
+	if (!pfns) {
 		ret = -ENOMEM;
 		goto free_gpfn_list;
 	}
 
 	ret = convert_gpa_list_to_page_list(partition, gpfn_list,
-					    args.page_count, page_list);
+					    args.page_count, pfns);
 	if (ret < 0)
 		goto free_page_list;
 
@@ -2833,12 +2859,12 @@ static long mshv_partition_ioctl_modify_gpa_host_access(
 
 	acquire = !!(args.flags & BIT(MSHV_GPA_HOST_ACCESS_BIT_ACQUIRE));
 
-	ret = hv_call_modify_spa_host_access(partition->pt_id, page_list,
+	ret = hv_call_modify_spa_host_access(partition->pt_id, pfns,
 					     args.page_count, host_access,
 					     flags, acquire);
 
 free_page_list:
-	kfree(page_list);
+	kfree(pfns);
 free_gpfn_list:
 	kvfree(gpfn_list);
 
@@ -2921,7 +2947,7 @@ mshv_partition_ioctl_issue_psp_guest_request(struct mshv_partition *partition,
 					     void __user *user_args)
 {
 	long ret;
-	struct page **page_list;
+	unsigned long *pfns;
 	struct mshv_issue_psp_guest_request req;
 	u64 gpa_list[2];
 	u64 gpa_list_size = 2;
@@ -2934,12 +2960,12 @@ mshv_partition_ioctl_issue_psp_guest_request(struct mshv_partition *partition,
 	gpa_list[0] = req.req_gpa;
 	gpa_list[1] = req.rsp_gpa;
 
-	page_list = kcalloc(gpa_list_size, sizeof(struct page *), GFP_KERNEL);
-	if (!page_list)
+	pfns = kcalloc(gpa_list_size, sizeof(unsigned long), GFP_KERNEL);
+	if (!pfns)
 		return -ENOMEM;
 
 	ret = convert_gpa_list_to_page_list(partition, gpa_list, gpa_list_size,
-					    page_list);
+					    pfns);
 	if (ret < 0)
 		goto clear_page_list;
 
@@ -2947,7 +2973,7 @@ mshv_partition_ioctl_issue_psp_guest_request(struct mshv_partition *partition,
 	 * Release host access to pages which would be used for
 	 * generating attestation report.
 	 */
-	ret = hv_call_modify_spa_host_access(partition->pt_id, page_list,
+	ret = hv_call_modify_spa_host_access(partition->pt_id, pfns,
 					     gpa_list_size, 0, 0, false);
 	if (ret)
 		goto clear_page_list;
@@ -2963,7 +2989,7 @@ mshv_partition_ioctl_issue_psp_guest_request(struct mshv_partition *partition,
 					      (void *)partition);
 
 clear_page_list:
-	kfree(page_list);
+	kfree(pfns);
 out:
 	return ret;
 }
