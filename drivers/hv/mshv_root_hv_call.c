@@ -212,7 +212,7 @@ int hv_call_delete_partition(u64 partition_id)
 
 /* Ask the hypervisor to map guest ram pages or the guest mmio space */
 static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
-			       u32 flags, struct page **pages, u64 mmio_spa)
+			       u32 flags, unsigned long *pfns, u64 mmio_spa)
 {
 	struct hv_input_map_gpa_pages *input_page;
 	u64 status, *pfnlist;
@@ -220,7 +220,7 @@ static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 	int ret = 0, done = 0;
 	u64 page_count = page_struct_count;
 
-	if (page_count == 0 || (pages && mmio_spa))
+	if (page_count == 0 || (pfns && mmio_spa))
 		return -EINVAL;
 
 	if (flags & HV_MAP_GPA_LARGE_PAGE) {
@@ -255,7 +255,7 @@ static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 		for (i = 0; i < rep_count; i++)
 			if (flags & HV_MAP_GPA_NO_ACCESS) {
 				pfnlist[i] = 0;
-			} else if (pages) {
+			} else if (pfns) {
 				u64 index = (done + i) << large_shift;
 
 				if (index >= page_struct_count) {
@@ -264,7 +264,7 @@ static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 					ret = -EINVAL;
 					break;
 				}
-				pfnlist[i] = page_to_pfn(pages[index]);
+				pfnlist[i] = pfns[index];
 			} else {
 				pfnlist[i] = mmio_spa + done + i;
 			}
@@ -310,10 +310,10 @@ static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 
 /* Ask the hypervisor to map guest ram pages */
 int hv_call_map_gpa_pages(u64 partition_id, u64 gpa_target, u64 page_count,
-			  u32 flags, struct page **pages)
+			  u32 flags, unsigned long *pfns)
 {
 	return hv_do_map_gpa_hcall(partition_id, gpa_target, page_count,
-				   flags, pages, 0);
+				   flags, pfns, 0);
 }
 
 /* Ask the hypervisor to map guest mmio space */
@@ -1404,7 +1404,7 @@ int hv_unmap_stats_page(enum hv_stats_object_type type,
 	return ret;
 }
 
-int hv_call_modify_spa_host_access(u64 partition_id, struct page **pages,
+int hv_call_modify_spa_host_access(u64 partition_id, unsigned long *pfns,
 				   u64 page_struct_count, u32 host_access,
 				   u32 flags, u8 acquire)
 {
@@ -1454,8 +1454,7 @@ int hv_call_modify_spa_host_access(u64 partition_id, struct page **pages,
 				local_irq_restore(irq_flags);
 				return -EINVAL;
 			}
-			input_page->spa_page_list[i] =
-						page_to_pfn(pages[index]);
+			input_page->spa_page_list[i] = pfns[index];
 		}
 
 		status = hv_do_rep_hypercall(code, rep_count, 0, input_page,
