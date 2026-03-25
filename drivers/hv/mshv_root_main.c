@@ -71,9 +71,10 @@ static int mshv_init_async_handler(struct mshv_partition *partition);
 static void mshv_async_hvcall_handler(void *data, u64 *status);
 static struct mshv_mem_region
 	*mshv_partition_region_by_gfn(struct mshv_partition *pt, u64 gfn);
-static int mshv_region_remap_pages(struct mshv_mem_region *region,
-				   u32 map_flags, u64 page_offset,
-				   u64 page_count);
+static int mshv_region_remap_pfns(struct mshv_mem_region *region,
+				  u32 map_flags, u64 pfn_offset,
+				  u64 pfn_count);
+static void mshv_partition_destroy_region(struct kref *ref);
 
 
 #ifdef HYPERVISOR_CALLBACK_VECTOR
@@ -485,9 +486,9 @@ static int mshv_region_hmm_fault_and_lock(struct mshv_mem_region *region,
 
 /**
  * mshv_chunk_stride - Compute stride for mapping guest memory
- * @page      : The page to check for huge page backing
- * @gfn       : Guest frame number for the mapping
- * @page_count: Total number of pages in the mapping
+ * @page     : The page to check for huge page backing
+ * @gfn      : Guest frame number for the mapping
+ * @pfn_count: Total number of PFNs in the mapping
  *
  * Determines the appropriate stride (in pages) for mapping guest memory.
  * Uses huge page stride if the backing page is huge and the guest mapping
@@ -496,18 +497,18 @@ static int mshv_region_hmm_fault_and_lock(struct mshv_mem_region *region,
  * Return: Stride in pages, or -EINVAL if page order is unsupported.
  */
 static int mshv_chunk_stride(struct page *page,
-			     u64 gfn, u64 page_count)
+			     u64 gfn, u64 pfn_count)
 {
 	unsigned int page_order;
 
 	/*
 	 * Use single page stride by default. For huge page stride, the
 	 * page must be compound and point to the head of the compound
-	 * page, and both gfn and page_count must be huge-page aligned.
+	 * page, and both gfn and pfn_count must be huge-page aligned.
 	 */
 	if (!PageCompound(page) || !PageHead(page) ||
 	    !IS_ALIGNED(gfn, PTRS_PER_PMD) ||
-	    !IS_ALIGNED(page_count, PTRS_PER_PMD))
+	    !IS_ALIGNED(pfn_count, PTRS_PER_PMD))
 		return 1;
 
 	page_order = folio_order(page_folio(page));
@@ -520,18 +521,18 @@ static int mshv_chunk_stride(struct page *page,
 
 /**
  * mshv_region_range_fault - Handle memory range faults for a given region.
- * @region: Pointer to the memory region structure.
- * @page_offset: Offset of the page within the region.
- * @page_count: Number of pages to handle.
+ * @region    : Pointer to the memory region structure.
+ * @pfn_offset: Offset of the pfns array within the region.
+ * @pfn_count : Number of PFNs to handle.
  *
- * This function resolves memory faults for a specified range of pages
+ * This function resolves memory faults for a specified range of PFNs
  * within a memory region. It uses HMM (Heterogeneous Memory Management)
- * to fault in the required pages and updates the region's page array.
+ * to fault in the required pages and updates the region's pfns array.
  *
  * Return: 0 on success, negative error code on failure.
  */
 static int mshv_region_range_fault(struct mshv_mem_region *region,
-				   u64 page_offset, u64 page_count)
+				   u64 pfn_offset, u64 pfn_count)
 {
 	struct hmm_range range = {
 		.notifier = &region->memreg_mni,
@@ -541,13 +542,13 @@ static int mshv_region_range_fault(struct mshv_mem_region *region,
 	int ret;
 	u64 i;
 
-	pfns = kmalloc_array(page_count, sizeof(unsigned long), GFP_KERNEL);
+	pfns = kmalloc_array(pfn_count, sizeof(unsigned long), GFP_KERNEL);
 	if (!pfns)
 		return -ENOMEM;
 
 	range.hmm_pfns = pfns;
-	range.start = region->start_uaddr + page_offset * HV_HYP_PAGE_SIZE;
-	range.end = range.start + page_count * HV_HYP_PAGE_SIZE;
+	range.start = region->start_uaddr + pfn_offset * HV_HYP_PAGE_SIZE;
+	range.end = range.start + pfn_count * HV_HYP_PAGE_SIZE;
 
 	do {
 		ret = mshv_region_hmm_fault_and_lock(region, &range);
@@ -556,11 +557,15 @@ static int mshv_region_range_fault(struct mshv_mem_region *region,
 	if (ret)
 		goto out;
 
-	for (i = 0; i < page_count; i++)
-		region->pages[page_offset + i] = hmm_pfn_to_page(pfns[i]);
+	for (i = 0; i < pfn_count; i++) {
+		if (!(pfns[i] & HMM_PFN_VALID))
+			continue;
+		/* Drop HMM_PFN_* flags to ensure PFNs are valid. */
+		region->pfns[pfn_offset + i] = pfns[i] & ~HMM_PFN_FLAGS;
+	}
 
-	ret = mshv_region_remap_pages(region, region->hv_map_flags,
-				      page_offset, page_count);
+	ret = mshv_region_remap_pfns(region, region->hv_map_flags,
+				     pfn_offset, pfn_count);
 
 	mutex_unlock(&region->memreg_mutex);
 out:
@@ -569,7 +574,7 @@ out:
 }
 #else /* CONFIG_MMU_NOTIFIER */
 static int mshv_region_range_fault(struct mshv_mem_region *region,
-				   u64 page_offset, u64 page_count)
+				   u64 pfn_offset, u64 pfn_count)
 {
 	return -ENODEV;
 }
@@ -577,27 +582,27 @@ static int mshv_region_range_fault(struct mshv_mem_region *region,
 
 static bool mshv_region_handle_gfn_fault(struct mshv_mem_region *region, u64 gfn)
 {
-	u64 page_offset, page_count;
+	u64 pfn_offset, pfn_count;
 	int ret;
 
 	if (WARN_ON_ONCE(region->flags.memreg_pinned))
 		return false;
 
-	/* Align the page offset to the nearest MSHV_MAP_FAULT_IN_PAGES. */
-	page_offset = ALIGN_DOWN(gfn - region->start_gfn,
-				 MSHV_MAP_FAULT_IN_PAGES);
+	/* Align the pfns offset to the nearest MSHV_MAP_FAULT_IN_PAGES. */
+	pfn_offset = ALIGN_DOWN(gfn - region->start_gfn,
+				MSHV_MAP_FAULT_IN_PAGES);
 
-	/* Map more pages than requested to reduce the number of faults. */
-	page_count = min(region->nr_pages - page_offset,
-			 MSHV_MAP_FAULT_IN_PAGES);
+	/* Map more PFNs than requested to reduce the number of faults. */
+	pfn_count = min(region->nr_pfns - pfn_offset,
+			MSHV_MAP_FAULT_IN_PAGES);
 
-	ret = mshv_region_range_fault(region, page_offset, page_count);
+	ret = mshv_region_range_fault(region, pfn_offset, pfn_count);
 
 	WARN_ONCE(ret,
-		  "p%llu: GPA intercept failed: region %#llx-%#llx, gfn %#llx, page_offset %llu, page_count %llu\n",
+		  "p%llu: GPA intercept failed: region %#llx-%#llx, gfn %#llx, pfn_offset %llu, pfn_count %llu\n",
 		  region->partition->pt_id, region->start_uaddr,
-		  region->start_uaddr + (region->nr_pages << HV_HYP_PAGE_SHIFT),
-		  gfn, page_offset, page_count);
+		  region->start_uaddr + (region->nr_pfns << HV_HYP_PAGE_SHIFT),
+		  gfn, pfn_offset, pfn_count);
 
 	return !ret;
 }
@@ -622,6 +627,7 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 {
 	struct hv_message *hvmsg = vp->vp_intercept_msg_page;
 	struct hv_x64_memory_intercept_message *msg;
+	union hv_x64_memory_access_info accinfo;
 	u64 gfn, mmio_spa, numpfns;
 	struct mshv_mem_region *reg;
 	struct mshv_partition *pt = vp->vp_partition;
@@ -640,11 +646,15 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 
 	if (!hv_nofull_mmio) {
 		gfn = reg->start_gfn;
-		numpgs = reg->nr_pages;
+		numpfns = reg->nr_pfns;
 	} else {
 		mmio_spa += gfn - reg->start_gfn; /* offset into the region */
-		numpgs = 1;
+		numpfns = 1;
 	}
+
+	/* mapping happens upfront for non attached, ie, mapped devices */
+	if (hv_no_attdev)
+		vp_err(vp, "warn: delayed mmio fault for hv_no_attdev\n");
 
 	rc = hv_call_map_mmio_pages(pt->pt_id, gfn, mmio_spa, numpfns);
 
@@ -1095,33 +1105,33 @@ static long mshv_vp_ioctl_run_vp(struct mshv_vp *vp, void __user *ret_msg)
 static int
 mshv_vp_ioctl_get_set_state_pfn(struct mshv_vp *vp,
 				struct hv_vp_state_data state_data,
-				unsigned long user_pfn, size_t page_count,
+				unsigned long user_pfn, size_t pfn_count,
 				bool is_set)
 {
 	int completed, ret = 0;
 	unsigned long check;
 	struct page **pages;
 
-	if (page_count > INT_MAX)
+	if (pfn_count > INT_MAX)
 		return -EINVAL;
 	/*
 	 * Check the arithmetic for wraparound/overflow.
 	 * The last page address in the buffer is:
-	 * (user_pfn + (page_count - 1)) * PAGE_SIZE
+	 * (user_pfn + (pfn_count - 1)) * PAGE_SIZE
 	 */
-	if (check_add_overflow(user_pfn, (page_count - 1), &check))
+	if (check_add_overflow(user_pfn, (pfn_count - 1), &check))
 		return -EOVERFLOW;
 	if (check_mul_overflow(check, PAGE_SIZE, &check))
 		return -EOVERFLOW;
 
 	/* Pin user pages so hypervisor can copy directly to them */
-	pages = kcalloc(page_count, sizeof(struct page *), GFP_KERNEL);
+	pages = kcalloc(pfn_count, sizeof(struct page *), GFP_KERNEL);
 	if (!pages)
 		return -ENOMEM;
 
-	for (completed = 0; completed < page_count; completed += ret) {
+	for (completed = 0; completed < pfn_count; completed += ret) {
 		unsigned long user_addr = (user_pfn + completed) * PAGE_SIZE;
-		int remaining = page_count - completed;
+		int remaining = pfn_count - completed;
 
 		ret = pin_user_pages_fast(user_addr, remaining, FOLL_WRITE,
 					  &pages[completed]);
@@ -1135,12 +1145,12 @@ mshv_vp_ioctl_get_set_state_pfn(struct mshv_vp *vp,
 	if (is_set)
 		ret = hv_call_set_vp_state(vp->vp_index,
 					   vp->vp_partition->pt_id,
-					   state_data, page_count, pages,
+					   state_data, pfn_count, pages,
 					   0, NULL);
 	else
 		ret = hv_call_get_vp_state(vp->vp_index,
 					   vp->vp_partition->pt_id,
-					   state_data, page_count, pages,
+					   state_data, pfn_count, pages,
 					   NULL);
 
 unpin_pages:
@@ -1225,10 +1235,10 @@ mshv_vp_ioctl_get_set_state(struct mshv_vp *vp,
 	/* If the data is transmitted via pfns, delegate to helper */
 	if (state_data.type & HV_GET_SET_VP_STATE_TYPE_PFN) {
 		unsigned long user_pfn = PFN_DOWN(args.buf_ptr);
-		size_t page_count = PFN_DOWN(args.buf_sz);
+		size_t pfn_count = PFN_DOWN(args.buf_sz);
 
 		return mshv_vp_ioctl_get_set_state_pfn(vp, state_data, user_pfn,
-						       page_count, is_set);
+						       pfn_count, is_set);
 	}
 
 	/* Paranoia check - this shouldn't happen! */
@@ -1840,54 +1850,49 @@ mshv_region_process_chunk(struct mshv_mem_region *region, u32 flags,
 }
 
 /**
- * mshv_region_process_range - Processes a range of memory pages in a
- *                             region.
- * @region     : Pointer to the memory region structure.
- * @flags      : Flags to pass to the handler.
- * @page_offset: Offset into the region's pages array to start processing.
- * @page_count : Number of pages to process.
- * @handler    : Callback function to handle each chunk of contiguous
- *               pages.
+ * mshv_region_process_range - Processes a range of PFNs in a region.
+ * @region    : Pointer to the memory region structure.
+ * @flags     : Flags to pass to the handler.
+ * @pfn_offset: Offset into the region's PFNs array to start processing.
+ * @pfn_count : Number of PFNs to process.
+ * @handler   : Callback function to handle each chunk of contiguous
+ *              PFNs.
  *
- * Iterates over the specified range of pages in @region, skipping
- * non-present pages. For each contiguous chunk of present pages, invokes
- * @handler via mshv_region_process_chunk.
- *
- * Note: The @handler callback must be able to handle both normal and huge
- * pages.
+ * Iterates over the specified range of PFNs in @region, skipping invalid
+ * PFNs. For each contiguous chunk of valid PFNs, invokes @handler via
+ * mshv_region_process_pfns.
  *
  * Returns 0 on success, or a negative error code on failure.
  */
 static int
 mshv_region_process_range(struct mshv_mem_region *region, u32 flags,
-			  u64 page_offset, u64 page_count,
+			  u64 pfn_offset, u64 pfn_count,
 			  int (*handler)(struct mshv_mem_region *region,
-					 u32 flags, u64 page_offset,
-					 u64 page_count,
+					 u32 flags, u64 pfn_offset,
+					 u64 pfn_count,
 					 bool huge_page))
 {
 	long ret;
 
-	if (page_offset + page_count > region->nr_pages)
+	if (pfn_offset + pfn_count > region->nr_pfns)
 		return -EINVAL;
 
-	while (page_count) {
+	while (pfn_count) {
 		/* Skip non-present pages */
-		if (!region->pages[page_offset]) {
-			page_offset++;
-			page_count--;
+		if (!pfn_valid(region->pfns[pfn_offset])) {
+			pfn_offset++;
+			pfn_count--;
 			continue;
 		}
 
-		ret = mshv_region_process_chunk(region, flags,
-						page_offset,
-						page_count,
-						handler);
+		ret = mshv_region_process_pfns(region, flags,
+					       pfn_offset, pfn_count,
+					       handler);
 		if (ret < 0)
 			return ret;
 
-		page_offset += ret;
-		page_count -= ret;
+		pfn_offset += ret;
+		pfn_count -= ret;
 	}
 
 	return 0;
@@ -1895,15 +1900,15 @@ mshv_region_process_range(struct mshv_mem_region *region, u32 flags,
 
 static int
 mshv_region_chunk_share(struct mshv_mem_region *region,
-			u32 flags, u64 page_offset, u64 page_count,
+			u32 flags, u64 pfn_offset, u64 pfn_count,
 			bool huge_page)
 {
 	if (huge_page)
 		flags |= HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE;
 
 	return hv_call_modify_spa_host_access(region->partition->pt_id,
-					      region->pages + page_offset,
-					      page_count,
+					      region->pfns + pfn_offset,
+					      pfn_count,
 					      HV_MAP_GPA_READABLE |
 					      HV_MAP_GPA_WRITABLE,
 					      flags, true);
@@ -1915,21 +1920,21 @@ mshv_partition_region_share(struct mshv_mem_region *region)
 	u32 flags = HV_MODIFY_SPA_PAGE_HOST_ACCESS_MAKE_SHARED;
 
 	return mshv_region_process_range(region, flags,
-					 0, region->nr_pages,
+					 0, region->nr_pfns,
 					 mshv_region_chunk_share);
 }
 
 static int
 mshv_region_chunk_unshare(struct mshv_mem_region *region,
-			  u32 flags, u64 page_offset, u64 page_count,
+			  u32 flags, u64 pfn_offset, u64 pfn_count,
 			  bool huge_page)
 {
 	if (huge_page)
 		flags |= HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE;
 
 	return hv_call_modify_spa_host_access(region->partition->pt_id,
-					      region->pages + page_offset,
-					      page_count, 0, flags, false);
+					      region->pfns + pfn_offset,
+					      pfn_count, 0, flags, false);
 }
 
 static int
@@ -1938,69 +1943,72 @@ mshv_partition_region_unshare(struct mshv_mem_region *region)
 	u32 flags = HV_MODIFY_SPA_PAGE_HOST_ACCESS_MAKE_EXCLUSIVE;
 
 	return mshv_region_process_range(region, flags,
-					 0, region->nr_pages,
+					 0, region->nr_pfns,
 					 mshv_region_chunk_unshare);
 }
 
 static int
 mshv_region_chunk_remap(struct mshv_mem_region *region, u32 flags,
-			u64 page_offset, u64 page_count,
+			u64 pfn_offset, u64 pfn_count,
 			bool huge_page)
 {
 	if (huge_page)
 		flags |= HV_MAP_GPA_LARGE_PAGE;
 
 	return hv_call_map_gpa_pages(region->partition->pt_id,
-				     region->start_gfn + page_offset,
-				     page_count, flags,
-				     region->pages + page_offset);
+				     region->start_gfn + pfn_offset,
+				     pfn_count, flags,
+				     region->pfns + pfn_offset);
 }
 
 static int
-mshv_region_remap_pages(struct mshv_mem_region *region, u32 map_flags,
-			u64 page_offset, u64 page_count)
+mshv_region_remap_pfns(struct mshv_mem_region *region, u32 map_flags,
+		       u64 pfn_offset, u64 pfn_count)
 {
 	return mshv_region_process_range(region, map_flags,
-					 page_offset, page_count,
+					 pfn_offset, pfn_count,
 					 mshv_region_chunk_remap);
 }
 
 static void
 mshv_region_evict_pages(struct mshv_mem_region *region,
-			u64 page_offset, u64 page_count)
+			u64 pfn_offset, u64 pfn_count)
 {
-	if (region->flags.memreg_pinned)
-		unpin_user_pages(region->pages + page_offset, page_count);
-
-	memset(region->pages + page_offset, 0,
-	       page_count * sizeof(struct page *));
+	(void)mshv_region_process_range(region, region->flags.memreg_pinned,
+					pfn_offset, pfn_count,
+					mshv_region_chunk_evict);
 }
 
 static void
 mshv_region_evict(struct mshv_mem_region *region)
 {
-	mshv_region_evict_pages(region, 0, region->nr_pages);
+	mshv_region_evict_pages(region, 0, region->nr_pfns);
 }
 
 static int
 mshv_region_populate_pages(struct mshv_mem_region *region,
-			   u64 page_offset, u64 page_count)
+			   u64 pfn_offset, u64 pfn_count)
 {
 	u64 done_count, nr_pages;
 	struct page **pages;
 	__u64 userspace_addr;
 	int ret;
 
-	if (page_offset + page_count > region->nr_pages)
+	if (pfn_offset + pfn_count > region->nr_pfns)
 		return -EINVAL;
 
-	for (done_count = 0; done_count < page_count; done_count += ret) {
-		pages = region->pages + page_offset + done_count;
+	pages = kmalloc_array(MSHV_PIN_PAGES_BATCH_SIZE,
+			      sizeof(struct page *), GFP_KERNEL);
+	if (!pages)
+		return -ENOMEM;
+
+	for (pinned = 0; pinned < pfn_count; pinned += ret) {
 		userspace_addr = region->start_uaddr +
-				(page_offset + done_count) *
+				(pfn_offset + pinned) *
 				HV_HYP_PAGE_SIZE;
-		nr_pages = min(page_count - done_count,
+		nr_pages = min(pfn_count - pinned,
 			       MSHV_PIN_PAGES_BATCH_SIZE);
+		pfns = region->pfns + pfn_offset + pinned;
 
 		/*
 		 * Pinning assuming 4k pages works for large pages too.
@@ -2020,14 +2028,17 @@ mshv_region_populate_pages(struct mshv_mem_region *region,
 	return 0;
 
 release_pages:
-	mshv_region_evict_pages(region, page_offset, done_count);
-	return ret;
+	if (ret > 0)
+		unpin_user_pages(pages, ret);
+	mshv_region_evict_pages(region, pfn_offset, pinned);
+	kfree(pages);
+	return ret < 0 ? ret : -ENOMEM;
 }
 
 static int
 mshv_region_populate(struct mshv_mem_region *region)
 {
-	return mshv_region_populate_pages(region, 0, region->nr_pages);
+	return mshv_region_populate_pages(region, 0, region->nr_pfns);
 }
 
 static struct mshv_mem_region *
@@ -2037,7 +2048,7 @@ mshv_partition_region_by_gfn(struct mshv_partition *partition, u64 gfn)
 
 	hlist_for_each_entry(region, &partition->pt_mem_regions, hnode) {
 		if (gfn >= region->start_gfn &&
-		    gfn < region->start_gfn + region->nr_pages)
+		    gfn < region->start_gfn + region->nr_pfns)
 			return region;
 	}
 
@@ -2078,7 +2089,7 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 	struct mshv_mem_region *region = container_of(mni,
 						struct mshv_mem_region,
 						memreg_mni);
-	u64 page_offset, page_count;
+	u64 pfn_offset, pfn_count;
 	unsigned long mstart, mend;
 	int ret = -EPERM;
 
@@ -2091,20 +2102,20 @@ static bool mshv_region_invalidate(struct mmu_interval_notifier *mni,
 
 	mstart = max(range->start, region->start_uaddr);
 	mend = min(range->end, region->start_uaddr +
-		   (region->nr_pages << HV_HYP_PAGE_SHIFT));
+		   (region->nr_pfns << HV_HYP_PAGE_SHIFT));
 
-	page_offset = HVPFN_DOWN(mstart - region->start_uaddr);
-	page_count = HVPFN_DOWN(mend - mstart);
+	pfn_offset = HVPFN_DOWN(mstart - region->start_uaddr);
+	pfn_count = HVPFN_DOWN(mend - mstart);
 
-	ret = mshv_region_remap_pages(region, HV_MAP_GPA_NO_ACCESS,
-				      page_offset, page_count);
+	ret = mshv_region_remap_pfns(region, HV_MAP_GPA_NO_ACCESS,
+				     pfn_offset, pfn_count);
 	if (ret) {
 		mutex_unlock(&region->memreg_mutex);
 		goto out_fail;
 	}
 
-	memset(region->pages + page_offset, 0,
-	       page_count * sizeof(struct page *));
+	for (i = pfn_offset; i < pfn_offset + pfn_count; i++)
+		region->pfns[i] = MSHV_INVALID_PFN;
 
 	mutex_unlock(&region->memreg_mutex);
 
@@ -2114,9 +2125,9 @@ out_fail:
 	WARN_ONCE(ret,
 		  "Failed to invalidate region %#llx-%#llx (range %#lx-%#lx, event: %u, pages %#llx-%#llx, mm: %#llx): %d\n",
 		  region->start_uaddr,
-		  region->start_uaddr + (region->nr_pages << HV_HYP_PAGE_SHIFT),
+		  region->start_uaddr + (region->nr_pfns << HV_HYP_PAGE_SHIFT),
 		  range->start, range->end, range->event,
-		  page_offset, page_offset + page_count - 1, (u64)range->mm, ret);
+		  pfn_offset, pfn_offset + pfn_count - 1, (u64)range->mm, ret);
 	return false;
 }
 
@@ -2130,7 +2141,7 @@ static bool mshv_region_movable_init(struct mshv_mem_region *region)
 
 	ret = mmu_interval_notifier_insert(&region->memreg_mni, current->mm,
 					   region->start_uaddr,
-					   region->nr_pages << HV_HYP_PAGE_SHIFT,
+					   region->nr_pfns << HV_HYP_PAGE_SHIFT,
 					   &mshv_region_mni_ops);
 	if (ret)
 		return false;
@@ -2160,18 +2171,19 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 					bool is_mmio)
 {
 	struct mshv_mem_region *region;
-	u64 nr_pages = HVPFN_DOWN(mem->size);
+	u64 i, nr_pfns = HVPFN_DOWN(mem->size);
 
 	/* Reject overlapping regions */
 	if (mshv_partition_region_by_gfn(partition, mem->guest_pfn) ||
-	    mshv_partition_region_by_gfn(partition, mem->guest_pfn + nr_pages - 1))
+	    mshv_partition_region_by_gfn(partition, mem->guest_pfn + nr_pfns - 1)) {
+		spin_unlock(&partition->pt_mem_regions_lock);
 		return -EEXIST;
 
-	region = vzalloc(sizeof(*region) + sizeof(struct page *) * nr_pages);
+	region = vzalloc(sizeof(*region) + sizeof(unsigned long) * nr_pfns);
 	if (!region)
 		return -ENOMEM;
 
-	region->nr_pages = nr_pages;
+	region->nr_pfns = nr_pfns;
 	region->start_gfn = mem->guest_pfn;
 	region->start_uaddr = mem->userspace_addr;
 	region->hv_map_flags = HV_MAP_GPA_READABLE | HV_MAP_GPA_ADJUSTABLE;
@@ -2187,6 +2199,10 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 		    !mshv_region_movable_init(region))
 			region->flags.memreg_pinned = true;
 	}
+
+	/* Set all the PFNs as invalid */
+	for (i = 0; i < nr_pfns; i++)
+		region->pfns[i] = MSHV_INVALID_PFN;
 
 	region->partition = partition;
 
@@ -2237,8 +2253,8 @@ static int mshv_handle_pinned_region(struct mshv_mem_region *region)
 		}
 	}
 
-	ret = mshv_region_remap_pages(region, region->hv_map_flags,
-				      0, region->nr_pages);
+	ret = mshv_region_remap_pfns(region, region->hv_map_flags,
+				     0, region->nr_pfns);
 	if (ret && mshv_partition_encrypted(partition)) {
 		int shrc;
 
@@ -2312,12 +2328,12 @@ mshv_map_user_memory(struct mshv_partition *partition,
 		 */
 		ret = hv_call_map_gpa_pages(partition->pt_id,
 					    region->start_gfn,
-					    region->nr_pages,
+					    region->nr_pfns,
 					    HV_MAP_GPA_NO_ACCESS, NULL);
 	}
 
 	trace_mshv_map_user_memory(partition->pt_id, region->start_uaddr,
-				   region->start_gfn, region->nr_pages,
+				   region->start_gfn, region->nr_pfns,
 				   region->hv_map_flags,
 				   region->flags.memreg_isram, ret);
 
@@ -2334,47 +2350,47 @@ mshv_map_user_memory(struct mshv_partition *partition,
 
 static int
 mshv_region_chunk_unmap(struct mshv_mem_region *region, u32 flags,
-			u64 page_offset, u64 page_count,
+			u64 pfn_offset, u64 pfn_count,
 			bool huge_page)
 {
 	if (huge_page)
 		flags |= HV_UNMAP_GPA_LARGE_PAGE;
 
 	return hv_call_unmap_gpa_pages(region->partition->pt_id,
-				       region->start_gfn + page_offset,
-				       page_count, 0);
+				       region->start_gfn + pfn_offset,
+				       pfn_count, 0);
 }
 
 static int mshv_partition_unmap_range(struct mshv_mem_region *region,
 				      u32 map_flags,
-				      u64 page_offset, u64 page_count)
+				      u64 pfn_offset, u64 pfn_count)
 {
 	return mshv_region_process_range(region, map_flags,
-					 page_offset, page_count,
+					 pfn_offset, pfn_count,
 					 mshv_region_chunk_unmap);
 }
 
 static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 {
-	u64 page_offset, page_count;
+	u64 pfn_offset, pfn_count;
 
 	/*
 	 * Unmap only the mapped pages to optimize performance,
 	 * especially for large memory regions.
 	 */
-	for (page_offset = 0; page_offset < region->nr_pages; page_offset += page_count) {
-		page_count = 1;
-		if (!region->pages[page_offset])
+	for (pfn_offset = 0; pfn_offset < region->nr_pfns; pfn_offset += pfn_count) {
+		pfn_count = 1;
+		if (!pfn_valid(region->pfns[pfn_offset]))
 			continue;
 
-		for (; page_count < region->nr_pages - page_offset; page_count++) {
-			if (!region->pages[page_offset + page_count])
+		for (; pfn_count < region->nr_pfns - pfn_offset; pfn_count++) {
+			if (!pfn_valid(region->pfns[pfn_offset + pfn_count]))
 				break;
 		}
 
 		/* ignore unmap failures and continue as process may be exiting */
 		mshv_partition_unmap_range(region, 0,
-					   page_offset, page_count);
+					   pfn_offset, pfn_count);
 	}
 }
 
@@ -2420,7 +2436,8 @@ mshv_unmap_user_memory(struct mshv_partition *partition,
 	/* Paranoia check */
 	if (region->start_uaddr != mem.userspace_addr ||
 	    region->start_gfn != mem.guest_pfn ||
-	    region->nr_pages != HVPFN_DOWN(mem.size))
+	    region->nr_pfns != HVPFN_DOWN(mem.size)) {
+		spin_unlock(&partition->pt_mem_regions_lock);
 		return -EINVAL;
 
 	mshv_partition_unmap_region(region);
@@ -3994,16 +4011,16 @@ struct notifier_block mshv_reboot_nb = {
 static void mshv_panic_unlock_snp(struct mshv_partition *vm)
 {
 	struct mshv_mem_region *memreg;
-	u64 numpgs;
+	u64 numpfns;
 	int ret;
 
 	hlist_for_each_entry(memreg, &vm->pt_mem_regions, hnode) {
-		numpgs = memreg->nr_pages;
-		mshv_partition_unmap_range(memreg, 0, 0, numpgs);
+		numpfns = memreg->nr_pfns;
+		mshv_partition_unmap_range(memreg, 0, 0, numpfns);
 		ret = mshv_partition_region_share(memreg);
 		if (ret)
-			pt_err(vm, "Unlock snp failed. ret:0x%x gfn:%llx numpgs:%lld\n",
-			       ret, memreg->start_gfn, numpgs);
+			pt_err(vm, "Unlock snp failed. ret:0x%x gfn:%llx numpfns:%lld\n",
+			       ret, memreg->start_gfn, numpfns);
 	}
 }
 
