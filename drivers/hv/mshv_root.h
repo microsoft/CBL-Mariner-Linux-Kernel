@@ -78,7 +78,8 @@ do { \
 
 struct mshv_mem_region {
 	struct hlist_node hnode;
-	u64 nr_pages;
+	struct kref mreg_refcount;
+	u64 nr_pfns;
 	u64 start_gfn;
 	u64 start_uaddr;
 	u32 hv_map_flags;
@@ -90,7 +91,7 @@ struct mshv_mem_region {
 	struct mshv_partition *partition;
 #if defined(CONFIG_MMU_NOTIFIER)
 	struct mmu_interval_notifier memreg_mni;
-	struct mutex memreg_mutex;	/* protects region pages remapping */
+	struct mutex memreg_mutex;	/* protects region pfns remapping */
 #endif
 	struct page *pages[];
 };
