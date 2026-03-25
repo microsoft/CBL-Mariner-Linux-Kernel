@@ -2454,26 +2454,8 @@ static int mshv_partition_unmap_range(struct mshv_mem_region *region,
 
 static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 {
-	u64 pfn_offset, pfn_count;
-
-	/*
-	 * Unmap only the mapped pages to optimize performance,
-	 * especially for large memory regions.
-	 */
-	for (pfn_offset = 0; pfn_offset < region->nr_pfns; pfn_offset += pfn_count) {
-		pfn_count = 1;
-		if (!pfn_valid(region->pfns[pfn_offset]))
-			continue;
-
-		for (; pfn_count < region->nr_pfns - pfn_offset; pfn_count++) {
-			if (!pfn_valid(region->pfns[pfn_offset + pfn_count]))
-				break;
-		}
-
-		/* ignore unmap failures and continue as process may be exiting */
-		mshv_partition_unmap_range(region, 0,
-					   pfn_offset, pfn_count);
-	}
+	/* ignore unmap failures and continue as process may be exiting */
+	(void)mshv_partition_unmap_range(region, 0, 0, region->nr_pfns);
 }
 
 static void mshv_partition_destroy_region(struct kref *ref)
@@ -4108,16 +4090,14 @@ struct notifier_block mshv_reboot_nb = {
 static void mshv_panic_unlock_snp(struct mshv_partition *vm)
 {
 	struct mshv_mem_region *memreg;
-	u64 numpfns;
 	int ret;
 
 	hlist_for_each_entry(memreg, &vm->pt_mem_regions, hnode) {
-		numpfns = memreg->nr_pfns;
-		mshv_partition_unmap_range(memreg, 0, 0, numpfns);
+		mshv_partition_unmap_region(memreg);
 		ret = mshv_partition_region_share(memreg);
 		if (ret)
 			pt_err(vm, "Unlock snp failed. ret:0x%x gfn:%llx numpfns:%lld\n",
-			       ret, memreg->start_gfn, numpfns);
+			       ret, memreg->start_gfn, memreg->nr_pfns);
 	}
 }
 
