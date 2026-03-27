@@ -1706,6 +1706,7 @@ init_cifs(void)
 		goto out_init_cifs_idmap;
 	}
 
+	smb3_crypto_register();
 	return 0;
 
 out_init_cifs_idmap:
@@ -1771,6 +1772,7 @@ exit_cifs(void)
 	destroy_workqueue(decrypt_wq);
 	destroy_workqueue(fileinfo_put_wq);
 	destroy_workqueue(cifsiod_wq);
+	smb3_crypto_unregister();
 	cifs_proc_clean();
 }
 
