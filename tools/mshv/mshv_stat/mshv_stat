@@ -27,6 +27,7 @@ import re
 import time
 import csv
 import curses
+from datetime import datetime, timezone
 
 from pathlib import Path
 
@@ -219,6 +220,7 @@ class StatsStreamCsvScreen(StatsStream):
     """
     def __init__(self):
         self.keys = None
+        self.start_time = datetime.now(timezone.utc)
 
     def write(self, stats_dict: dict[str, int], max_name_len: int, header: str = None):
         """
@@ -230,9 +232,12 @@ class StatsStreamCsvScreen(StatsStream):
         """
         if not self.keys:
             self.keys = sorted(stats_dict.keys())
-            print(','.join('"{0}"'.format(k) for k in self.keys), flush=True)
-        print(",".join('"{0}"'.format(stats_dict[k]) for k in self.keys),
+            print('"Timestamp(UTC)","Duration",' + ','.join('"{0}"'.format(k) for k in self.keys), flush=True)
+        now = datetime.now(timezone.utc)
+        duration = (now - self.start_time).total_seconds()
+        print('"{0}","{1:.6f}",'.format(self.start_time.isoformat(), duration) + ",".join('"{0}"'.format(stats_dict[k]) for k in self.keys),
               flush=True)
+        self.start_time = now
 
 
 class StatsStreamCsvFile(StatsStream):
@@ -242,6 +247,7 @@ class StatsStreamCsvFile(StatsStream):
     def __init__(self, path: str):
         self.csvfile = open(path, 'w', newline='')
         self.writer = None
+        self.start_time = datetime.now(timezone.utc)
 
     def write(self, stats_dict: dict[str, int], max_name_len: int, header: str = None):
         """
@@ -252,11 +258,17 @@ class StatsStreamCsvFile(StatsStream):
             max_name_len (int): The maximum length of the statistic names, used for formatting.
         """
         if not self.writer:
+            fieldnames = ["Timestamp(UTC)", "Duration"] + list(stats_dict.keys())
             self.writer = csv.DictWriter(self.csvfile,
-                                         fieldnames=list(stats_dict.keys()),
+                                         fieldnames=fieldnames,
                                          dialect="unix")
             self.writer.writeheader()
-        self.writer.writerow(stats_dict)
+        now = datetime.now(timezone.utc)
+        duration = (now - self.start_time).total_seconds()
+        stats_dict_with_ts = {"Timestamp(UTC)": self.start_time.isoformat(), "Duration": "{:.6f}".format(duration)}
+        stats_dict_with_ts.update(stats_dict)
+        self.writer.writerow(stats_dict_with_ts)
+        self.start_time = now
 
 
 class StatsWriter:
@@ -400,9 +412,11 @@ class IncrementalStatsWriter(StatsWriter):
     A concrete class for writing statistics to the screen incrementally.
     """
     def __init__(self, stats_names: list = None, stats_filter: str = None,
-                 csv_path: str = None, print_all: bool = None, count: str = None):
+                 csv_path: str = None, print_all: bool = None, count: str = None,
+                 interval: int = 1):
         CsvStatsWriter.__init__(self, stats_names, stats_filter, csv_path, print_all)
         self.count = int(count) if count else None
+        self.interval = interval
         if csv_path or csv_path is None:  # Add screen writer only if CSV output isn't writtent to screen
             self.streams.append(StatsStreamTop())
 
@@ -427,7 +441,7 @@ class IncrementalStatsWriter(StatsWriter):
         inc_stats = IncrementalStats(stats)
         while self.__run():
             try:
-                time.sleep(1)
+                time.sleep(self.interval)
                 StatsWriter.write(self, inc_stats)
             except KeyboardInterrupt:
                 break
@@ -437,15 +451,19 @@ class SummarizedStats(Stats):
     """
     A base class for computing the summarized statistics for multiple Stats objects.
     """
-    def __init__(self, term_subdirs: list[str]):
+    def __init__(self, term_subdirs: list[str], per_item: bool = False, item_label: str = ""):
         """
         A class for summarizing stats from subdirectories.
 
         Args:
         - term_subdirs: a list of subdirectory names to summarize stats from.
+        - per_item: if True, as_dict() returns per-item expanded names.
+        - item_label: prefix for per-item names (e.g. "VP", "LP").
         """
         Stats.__init__(self)
         self.__term_subdirs = term_subdirs
+        self.per_item = per_item
+        self.item_label = item_label
 
     @property
     def path(self) -> str:
@@ -492,16 +510,46 @@ class SummarizedStats(Stats):
     def as_dict(self) -> dict[str, int]:
         """
         Get a dictionary representation of the summarized stats.
+        When per_item is True, returns expanded names like StatName(VP0), StatName(Sum).
 
         Returns:
         - A dictionary containing the summarized stats.
         """
+        if self.per_item:
+            return self._as_per_item_dict()
+
         stats = {}
         for subdir in self.term_subdirs:
             subdir_stats = self.term_stats(subdir).as_dict()
             for k, v in subdir_stats.items():
                 stats[k] = stats.get(k, 0) + v
         self.max_name_len = len(max(stats.keys(), key=len))
+        return stats
+
+    def _as_per_item_dict(self) -> dict[str, int]:
+        """
+        Get per-item stats with expanded names: StatName(VP0), StatName(VP1), StatName(Sum).
+
+        Returns:
+        - An ordered dict with per-item and sum entries grouped by original stat name.
+        """
+        per_subdir = {}
+        all_keys = []
+        for subdir in self.term_subdirs:
+            subdir_stats = self.term_stats(subdir).as_dict()
+            per_subdir[subdir] = subdir_stats
+            if not all_keys:
+                all_keys = list(subdir_stats.keys())
+
+        stats = {}
+        for k in all_keys:
+            for subdir in self.term_subdirs:
+                expanded_name = "{}({}{})".format(k, self.item_label, subdir)
+                stats[expanded_name] = per_subdir[subdir].get(k, 0)
+            sum_name = "{}(Total)".format(k)
+            stats[sum_name] = sum(per_subdir[subdir].get(k, 0) for subdir in self.term_subdirs)
+        if stats:
+            self.max_name_len = len(max(stats.keys(), key=len))
         return stats
 
 
@@ -750,14 +798,15 @@ class SummarizedVpStats(SummarizedStats):
     """
     A concrete class representing the summarized statistics of partition's virtual processors.
     """
-    def __init__(self, partition: str, vp_idx_list: list):
+    def __init__(self, partition: str, vp_idx_list: list, per_item: bool = False):
         """
         Initializes a SummarizedVpStats class.
 
         :param partition: The partition the virtual partitions are on.
         :param vp_idx_list: A list of virtual processor indices to summarize statistics for.
+        :param per_item: If True, show per-VP expanded stat names.
         """
-        SummarizedStats.__init__(self, vp_idx_list)
+        SummarizedStats.__init__(self, vp_idx_list, per_item=per_item, item_label="VP")
         self.partition = partition
 
     @property
@@ -821,13 +870,14 @@ class SummarizedLpStats(SummarizedStats):
     """
     A concrete class representing the summarized statistics of logical processors.
     """
-    def __init__(self, lp_idx_list: list):
+    def __init__(self, lp_idx_list: list, per_item: bool = False):
         """
-        Initializes a SummarizedVpStats class.
+        Initializes a SummarizedLpStats class.
 
         :param lp_idx_list: A list of logical processor indices to summarize statistics for.
+        :param per_item: If True, show per-LP expanded stat names.
         """
-        SummarizedStats.__init__(self, lp_idx_list)
+        SummarizedStats.__init__(self, lp_idx_list, per_item=per_item, item_label="LP")
 
     @property
     def header(self):
@@ -920,6 +970,14 @@ Incremental mode examples:
     Write statistics that match a regular expression into a file as CSV:
         mshv_stat --lp -1 -f .*RunTime --csv stats.csv
 
+Per-VP/LP examples:
+
+    Display per-VP statistics for a partition's virtual processors:
+        mshv_stat -p 1 --vp 0 1 -1 --all --per-vp
+
+    Display per-LP statistics for all logical processors:
+        mshv_stat --lp -1 --all --per-lp
+
 """
 
     def check_number(value):
@@ -941,6 +999,12 @@ Incremental mode examples:
             raise argparse.ArgumentTypeError(
                 "{} is a negative value".format(value))
         return value
+
+    def check_positive(value):
+        if check_number(value) < 1:
+            raise argparse.ArgumentTypeError(
+                "{} must be greater or equal to 1".format(value))
+        return int(value)
 
     def check_regex(value):
         try:
@@ -973,6 +1037,10 @@ Incremental mode examples:
                              required=False,
                              help="number of times to display statistics (for incremental mode; default: unlimited)")
 
+    parser.add_argument("-i", "--interval", type=check_positive, default=1,
+                        required=False,
+                        help="interval in seconds between statistics reads (for incremental mode; default: 1)")
+
     parser.add_argument("--all", action="store_true", default=False,
                         help="display all statistics, including those with value zero")
 
@@ -990,6 +1058,12 @@ Incremental mode examples:
                         required=False,
                         help="list of indexes of the virtual processor to display statistics for (default: all)")
 
+    parser.add_argument("--per-vp", action="store_true", default=False,
+                        help="display per-VP statistics with expanded names (requires --vp)")
+
+    parser.add_argument("--per-lp", action="store_true", default=False,
+                        help="display per-LP statistics with expanded names (requires --lp)")
+
     parser.add_argument("-s", "--stats", nargs="+", required=False,
                         help="list of statistic names to display")
 
@@ -1006,6 +1080,16 @@ Incremental mode examples:
     if args.csv and not args.all and not args.filter and not args.stats:
         parser.error("CSV output requires either \"--filter\", \"--stats\""
                      "or \"--all\" option")
+
+    if args.per_vp and args.vp is None:
+        parser.error("--per-vp requires --vp")
+
+    if args.per_lp and args.lp is None:
+        parser.error("--per-lp requires --lp")
+
+    interval_specified = any(a in sys.argv for a in ['-i', '--interval'])
+    if interval_specified and args.once:
+        parser.error("--interval/-i cannot be used in batch mode (-1/--once)")
 
     if args.vp is not None and not args.partition:
         args.partition = "1"
@@ -1048,11 +1132,12 @@ def main():
 
     if options.partition:
         if options.vp is not None:
-            stats = SummarizedVpStats(options.partition, options.vp)
+            stats = SummarizedVpStats(options.partition, options.vp,
+                                     per_item=options.per_vp)
         else:
             stats = PartitionStats(options.partition)
     elif options.lp is not None:
-        stats = SummarizedLpStats(options.lp)
+        stats = SummarizedLpStats(options.lp, per_item=options.per_lp)
     else:
         stats = MshvStats()
 
@@ -1067,7 +1152,8 @@ def main():
                                             stats_filter=options.filter,
                                             csv_path=options.csv,
                                             print_all=options.all,
-                                            count=options.count)
+                                            count=options.count,
+                                            interval=options.interval)
         writer.write(stats)
     except FileNotFoundError as e:
         sys.stderr.write("Error: {}\n".format(e))
