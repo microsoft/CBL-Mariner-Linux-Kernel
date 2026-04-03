@@ -95,6 +95,7 @@ enum hv_partition_property_code {
 	/* Resource properties */
 	HV_PARTITION_PROPERTY_GPA_PAGE_ACCESS_TRACKING		= 0x00050005,
 	HV_PARTITION_PROPERTY_UNIMPLEMENTED_MSR_ACTION		= 0x00050017,
+	HV_PARTITION_PROPERTY_PARTITION_DIAG_BUFFER_CONFIG      = 0x00050026,
 
 	/* Compatibility properties */
 	HV_PARTITION_PROPERTY_PROCESSOR_XSAVE_FEATURES		= 0x00060002,
@@ -150,6 +151,17 @@ enum hv_system_property {
 	HV_SYSTEM_PROPERTY_SLEEP_STATE = 3,
 	HV_SYSTEM_PROPERTY_SCHEDULER_TYPE = 15,
 	HV_DYNAMIC_PROCESSOR_FEATURE_PROPERTY = 21,
+	HV_SYSTEM_PROPERTY_DIAGOSTICS_LOG_BUFFERS = 28,
+};
+
+#define HV_PFN_RANGE_PGBITS 24  /* HV_SPA_PAGE_RANGE_ADDITIONAL_PAGES_BITS */
+union hv_pfn_range {            /* HV_SPA_PAGE_RANGE */
+	u64 as_uint64;
+	struct {
+		/* 39:0: base pfn.  63:40: additional pages */
+		u64 base_pfn : 64 - HV_PFN_RANGE_PGBITS;
+		u64 add_pfns : HV_PFN_RANGE_PGBITS;
+	} __packed;
 };
 
 enum hv_sleep_state {
@@ -171,6 +183,14 @@ enum hv_dynamic_processor_feature_property {
 	HV_X64_DYNAMIC_PROCESSOR_FEATURE_SNP_STATUS = 16,
 };
 
+union hv_partition_diag_log_buffer_config {
+        struct {
+                u32 buffer_count;
+                u32 buffer_size_in_pages;
+        } __packed;
+        u64 as_uint64;
+};
+
 struct hv_input_get_system_property {
 	u32 property_id; /* enum hv_system_property */
 	union {
@@ -183,9 +203,16 @@ struct hv_input_get_system_property {
 	};
 } __packed;
 
+/* HV_SYSTEM_DIAG_LOG_BUFFER_CONFIG */
+struct  hv_system_diag_log_buffer_config {
+        u32 buffer_count;
+        u32 buffer_size_in_pages;
+} __packed;
+
 struct hv_output_get_system_property {
 	union {
 		u32 scheduler_type; /* enum hv_scheduler_type */
+		struct hv_system_diag_log_buffer_config hv_diagbuf_info;
 #if IS_ENABLED(CONFIG_X86)
 		u64 hv_processor_feature_value;
 #endif

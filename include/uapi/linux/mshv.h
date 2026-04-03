@@ -334,4 +334,41 @@ struct mshv_translate_gva {
  * #define MSHV_ROOT_HVCALL			_IOWR(MSHV_IOCTL, 0x07, struct mshv_root_hvcall)
  */
 
+/*
+ ***********************
+ * Diag and trace APIs *
+ ***********************
+ */
+
+/* TODO: remove and use MSHV_IOCTL */
+#define MSHV_DIAG_IOCTL         0xB9
+/* TODO: remove and use MSHV_IOCTL */
+#define MSHV_TRACE_IOCTL        0xBA
+
+struct mshv_trace_config {
+	__u32 mode; /* enum hv_eventlog_mode */
+	__u32 max_buffers_count;
+	__u32 pages_per_buffer;
+	__u32 buffers_threshold;
+	__u32 time_basis; /* enum hv_eventlog_entry_time_basis */
+	__u64 system_time;
+};
+
+/* /dev/mshv_diag device */
+#define MSHV_GET_TRACE_FD                               \
+		_IO(MSHV_DIAG_IOCTL, HV_EVENT_LOG_TYPE_LOCAL_DIAGNOSTICS)
+#define MSHV_GET_DIAGLOG_FD                             \
+		_IO(MSHV_DIAG_IOCTL, HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS)
+
+/* Trace fd created with MSHV_GET_TRACE_FD */
+#define MSHV_TRACE_STATE_CREATE		_IOW(MSHV_TRACE_IOCTL, 0x0, \
+		struct mshv_trace_config)
+#define MSHV_TRACE_STATE_INFO		_IOR(MSHV_TRACE_IOCTL, 0x1, \
+		struct mshv_trace_config)
+#define MSHV_TRACE_STATE_DESTROY	_IO(MSHV_TRACE_IOCTL, 0x2)
+#define MSHV_TRACE_STATE_ATTACH		_IO(MSHV_TRACE_IOCTL, 0x3)
+#define MSHV_TRACE_STATE_DETACH		_IO(MSHV_TRACE_IOCTL, 0x4)
+#define MSHV_TRACE_START		_IO(MSHV_TRACE_IOCTL, 0x5)
+#define MSHV_TRACE_STOP			_IO(MSHV_TRACE_IOCTL, 0x6)
+
 #endif

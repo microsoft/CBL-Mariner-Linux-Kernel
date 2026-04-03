@@ -946,4 +946,11 @@ struct hv_output_translate_virtual_address_ex {
 	u64 gpa_page;
 } __packed;
 
+#define HV_EVENTLOG_BUFFER_INDEX_NONE                   0xffffffff
+
+struct hv_eventlog_message_payload {
+        u32 type;
+        u32 buffer_index;
+} __packed;
+
 #endif /* _HV_HVHDK_H */

@@ -3,6 +3,7 @@ obj-$(CONFIG_HYPERV_VMBUS)	+= hv_vmbus.o
 obj-$(CONFIG_HYPERV_UTILS)	+= hv_utils.o
 obj-$(CONFIG_HYPERV_BALLOON)	+= hv_balloon.o
 obj-$(CONFIG_MSHV_ROOT)		+= mshv_root.o
+obj-$(CONFIG_MSHV_DIAG)		+= diag/
 
 CFLAGS_hv_trace.o = -I$(src)
 CFLAGS_hv_balloon.o = -I$(src)
@@ -18,4 +19,7 @@ mshv_root-$(CONFIG_DEBUG_FS) += mshv_debugfs.o
 
 # Code that must be built-in
 obj-$(CONFIG_HYPERV) += hv_common.o
-obj-$(subst m,y,$(CONFIG_MSHV_ROOT)) += hv_proc.o mshv_common.o
+# Following modules depend on this file which we just statically link in.
+ifneq ($(CONFIG_MSHV_ROOT)$(CONFIG_MSHV_DIAG),)
+  obj-y += hv_proc.o mshv_common.o
+endif
