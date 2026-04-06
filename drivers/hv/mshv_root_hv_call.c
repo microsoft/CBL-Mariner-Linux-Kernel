@@ -15,7 +15,6 @@
 #include "mshv_root.h"
 
 /* Determined empirically */
-#define HV_INIT_PARTITION_DEPOSIT_PAGES 208
 #define HV_MAP_GPA_DEPOSIT_PAGES	256
 #define HV_UMAP_GPA_PAGES		512
 
@@ -137,11 +136,6 @@ int hv_call_initialize_partition(u64 partition_id)
 
 	input.partition_id = partition_id;
 
-	ret = hv_call_deposit_pages(NUMA_NO_NODE, partition_id,
-				    HV_INIT_PARTITION_DEPOSIT_PAGES);
-	if (ret)
-		return ret;
-
 	do {
 		status = hv_do_fast_hypercall8(HVCALL_INITIALIZE_PARTITION,
 					       *(u64 *)&input);
@@ -239,8 +233,7 @@ static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 		completed = hv_repcomp(status);
 
 		if (hv_result_needs_memory(status)) {
-			ret = hv_call_deposit_pages(NUMA_NO_NODE, partition_id,
-						    HV_MAP_GPA_DEPOSIT_PAGES);
+			ret = hv_deposit_memory(partition_id, status);
 			if (ret)
 				break;
 

@@ -121,7 +121,7 @@ free_buf:
  *
  * Return: 0 on success, negative error code on failure
  */
-int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
+static int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
 {
 	u64 done;
 	int ret = 0;
@@ -137,7 +137,6 @@ int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(hv_call_deposit_pages);
 
 int hv_deposit_memory_node(int node, u64 partition_id,
 			   u64 hv_status)
@@ -166,6 +165,14 @@ int hv_deposit_memory_node(int node, u64 partition_id,
 		hv_status_err(hv_status, "Unexpected!\n");
 		return -ENOMEM;
 	}
+
+	/*
+	 * Deposit 2MB at once for guest partitions to speed up VMs
+	 * creation with nested virtualization enabled.
+	 */
+	if (partition_id != hv_current_partition_id)
+		num_pages = PTRS_PER_PMD;
+
 	return hv_call_deposit_pages(node, partition_id, num_pages);
 }
 EXPORT_SYMBOL_GPL(hv_deposit_memory_node);
@@ -231,14 +238,6 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 	u64 status;
 	unsigned long irq_flags;
 	int ret = 0;
-
-	/* Root VPs don't seem to need pages deposited */
-	if (partition_id != hv_current_partition_id) {
-		/* The value 90 is empirically determined. It may change. */
-		ret = hv_call_deposit_pages(node, partition_id, 90);
-		if (ret)
-			return ret;
-	}
 
 	do {
 		local_irq_save(irq_flags);
