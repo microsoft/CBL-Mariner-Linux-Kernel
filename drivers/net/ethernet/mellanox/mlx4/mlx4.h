@@ -233,6 +233,7 @@ do {									\
 
 extern int log_mtts_per_seg;
 extern int mlx4_internal_err_reset;
+extern bool force_mlx4_ib_support;
 
 #define MLX4_MAX_NUM_SLAVES	(min(MLX4_MAX_NUM_PF + MLX4_MAX_NUM_VF, \
 				     MLX4_MFUNC_MAX))
