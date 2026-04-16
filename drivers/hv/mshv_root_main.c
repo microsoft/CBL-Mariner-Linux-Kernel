@@ -622,17 +622,12 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 {
 	struct hv_message *hvmsg = vp->vp_intercept_msg_page;
 	struct hv_x64_memory_intercept_message *msg;
-	union hv_x64_memory_access_info accinfo;
-	u64 gfn, mmio_spa, numpgs;
+	u64 gfn, mmio_spa, numpfns;
 	struct mshv_mem_region *reg;
 	struct mshv_partition *pt = vp->vp_partition;
 	int rc;
 
 	msg = (struct hv_x64_memory_intercept_message *)hvmsg->u.payload;
-	accinfo = msg->memory_access_info;
-
-	if (!accinfo.gva_gpa_valid)
-		return false;
 
 	gfn = msg->guest_physical_address >> HV_HYP_PAGE_SHIFT;
 	reg = mshv_partition_region_by_gfn(pt, gfn);
@@ -651,11 +646,7 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 		numpgs = 1;
 	}
 
-	/* mapping happens upfront for non attached, ie, mapped devices */
-	if (hv_no_attdev)
-		vp_err(vp, "warn: delayed mmio fault for hv_no_attdev\n");
-
-	rc = hv_call_map_mmio_pages(pt->pt_id, gfn, mmio_spa, numpgs);
+	rc = hv_call_map_mmio_pages(pt->pt_id, gfn, mmio_spa, numpfns);
 
 	return rc == 0;
 }
