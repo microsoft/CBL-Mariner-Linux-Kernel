@@ -70,7 +70,7 @@ static int hv_vtl_bringup_vcpu(u32 target_vp_index, int cpu, u64 eip_ignored)
 {
 	u64 status, rsp, rip;
 	int ret = 0;
-	struct hv_enable_vp_vtl *input;
+	struct hv_input_start_vp *input;
 	unsigned long irq_flags;
 
 	struct desc_ptr gdt_ptr;
