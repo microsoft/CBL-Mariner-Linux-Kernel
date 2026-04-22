@@ -5474,6 +5474,9 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.cipher = __VECS(fcrypt_pcbc_tv_template)
 		}
 	}, {
+		.alg = "pkcs1pad(rsa,sha1)",
+		.test = alg_test_null,
+	}, {
 		.alg = "pkcs1pad(rsa,sha224)",
 		.test = alg_test_null,
 		.fips_allowed = 1,
