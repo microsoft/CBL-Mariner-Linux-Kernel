@@ -5333,6 +5333,9 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.sig = __VECS(pkcs1_rsa_none_tv_template)
 		}
 	}, {
+		.alg = "pkcs1(rsa,sha1)",
+		.test = alg_test_null,
+	}, {
 		.alg = "pkcs1(rsa,sha224)",
 		.test = alg_test_null,
 		.fips_allowed = 1,
@@ -5367,6 +5370,9 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.alg = "pkcs1pad(rsa)",
 		.test = alg_test_null,
 		.fips_allowed = 1,
+	}, {
+		.alg = "pkcs1pad(rsa,sha1)",
+		.test = alg_test_null,
 	}, {
 		.alg = "polyval",
 		.test = alg_test_hash,
