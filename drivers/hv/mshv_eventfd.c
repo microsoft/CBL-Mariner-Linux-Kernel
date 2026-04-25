@@ -192,6 +192,77 @@ out:
 
 }
 
+/* NOTE: caller does spin_lock_irq on pt_irqfds_lock, hence no disable here */
+static void mshv_do_guest_irq_retarget(u64 partid, struct mshv_irqfd *irqfd)
+{
+	int rc, var_size;
+	u64 status;
+	union hv_device_id hv_devid;
+	struct hv_input_get_vp_set_from_mda *mda_input;
+	union hv_output_get_vp_set_from_mda *mda_output;
+	struct hv_retarget_device_interrupt *remap_inp;
+	struct pci_dev *pdev;
+	struct irq_data *irqdata;
+	struct mshv_lapic_irq *lapic_irq = &irqfd->irqfd_lapic_irq;
+	struct hv_interrupt_entry *inte = NULL;
+
+	if (!irqfd->irqfd_girq_ent.girq_entry_valid ||
+	    irqfd->irqfd_bypass_prod == NULL)
+		return;
+
+	rc = mshv_parse_mshv_irqfd(irqfd, &pdev, &irqdata);
+	if (rc)
+		return;
+
+	inte = irqdata->chip_data;
+	if (inte == NULL)
+		return;
+
+	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
+
+
+	mda_input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	mda_output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	rc = hv_vpset_from_hyp_disabled(mda_input, mda_output, lapic_irq,
+					partid);
+	if (rc)
+		return;
+
+	remap_inp = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(remap_inp, 0, sizeof(*remap_inp));
+
+	rc = hv_copy_vpset(&remap_inp->int_target.vp_set,
+			   &mda_output->target_vpset);
+	if (rc <= 0) {
+		pr_err("Hyper-V: ptid %lld - vpset copy failed (%d)\n",
+		       partid, rc);
+		return;
+	}
+
+	/*
+	 * var-sized hcall: var-size starts after vp_mask (thus vp_set.format
+	 * does not count, but vp_set.valid_bank_mask does).
+	 */
+	var_size = rc + 1;
+
+	remap_inp->partition_id = partid;
+	remap_inp->device_id = hv_devid.as_uint64;
+	remap_inp->int_target.vector = lapic_irq->lapic_vector;
+	remap_inp->int_target.flags = HV_DEVICE_INTERRUPT_TARGET_PROCESSOR_SET;
+
+	remap_inp->int_entry.source = inte->source;
+	remap_inp->int_entry.msi_entry.as_uint64 = inte->msi_entry.as_uint64;
+
+	status = hv_do_rep_hypercall(HVCALL_RETARGET_INTERRUPT, 0, var_size,
+				     remap_inp, NULL);
+
+	if (!hv_result_success(status))
+		hv_status_err(status, "pt:%lld vec:%d lapic-id:%lld\n",
+			      partid, lapic_irq->lapic_vector,
+			      lapic_irq->lapic_apic_id);
+}
+
 static int mshv_unmap_device_interrupt(union hv_device_id hv_devid,
 				       struct hv_interrupt_entry *irq_entry)
 {
@@ -736,9 +807,12 @@ static void mshv_irqfd_update(struct mshv_partition *pt,
 			      struct mshv_irqfd *irqfd)
 {
 	write_seqcount_begin(&irqfd->irqfd_irqe_sc);
-	irqfd->irqfd_girq_ent = mshv_ret_girq_entry(pt,
-						    irqfd->irqfd_irqnum);
+	irqfd->irqfd_girq_ent = mshv_ret_girq_entry(pt, irqfd->irqfd_irqnum);
 	mshv_copy_girq_info(&irqfd->irqfd_girq_ent, &irqfd->irqfd_lapic_irq);
+
+#if IS_ENABLED(CONFIG_X86_64)
+	mshv_do_guest_irq_retarget(pt->pt_id, irqfd);
+#endif
 	write_seqcount_end(&irqfd->irqfd_irqe_sc);
 }
 
