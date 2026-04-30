@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause
 /* Copyright (c) 2021, Microsoft Corporation. */
 
-#include "gdma.h"
-#include "hw_channel.h"
+#include <net/mana/gdma.h>
+#include <net/mana/hw_channel.h>
 
 static int mana_hwc_get_msg_index(struct hw_channel_context *hwc, u16 *msg_id)
 {
@@ -166,6 +166,14 @@ static void mana_hwc_init_event_handler(void *ctx, struct gdma_queue *q_self,
 			hwc->rxq->msg_buf->gpa_mkey = val;
 			hwc->txq->msg_buf->gpa_mkey = val;
 			break;
+
+		case HWC_INIT_DATA_PF_DEST_RQ_ID:
+			hwc->pf_dest_vrq_id = val;
+			break;
+
+		case HWC_INIT_DATA_PF_DEST_CQ_ID:
+			hwc->pf_dest_vrcq_id = val;
+			break;
 		}
 
 		break;
@@ -174,7 +182,25 @@ static void mana_hwc_init_event_handler(void *ctx, struct gdma_queue *q_self,
 		complete(&hwc->hwc_init_eqe_comp);
 		break;
 
+	case GDMA_EQE_HWC_SOC_RECONFIG_DATA:
+		type_data.as_uint32 = event->details[0];
+		type = type_data.type;
+		val = type_data.value;
+
+		switch (type) {
+		case HWC_DATA_CFG_HWC_TIMEOUT:
+			hwc->hwc_timeout = val;
+			break;
+
+		default:
+			dev_warn(hwc->dev, "Received unknown reconfig type %u\n", type);
+			break;
+		}
+
+		break;
+
 	default:
+		dev_warn(hwc->dev, "Received unknown gdma event %u\n", event->type);
 		/* Ignore unknown events, which should never happen. */
 		break;
 	}
@@ -366,7 +392,7 @@ static int mana_hwc_create_cq(struct hw_channel_context *hwc, u16 q_depth,
 	}
 	hwc_cq->gdma_cq = cq;
 
-	comp_buf = kcalloc(q_depth, sizeof(struct gdma_comp), GFP_KERNEL);
+	comp_buf = kcalloc(q_depth, sizeof(*comp_buf), GFP_KERNEL);
 	if (!comp_buf) {
 		err = -ENOMEM;
 		goto out;
@@ -486,15 +512,15 @@ static int mana_hwc_create_wq(struct hw_channel_context *hwc,
 	if (err)
 		goto out;
 
-	err = mana_hwc_alloc_dma_buf(hwc, q_depth, max_msg_size,
-				     &hwc_wq->msg_buf);
-	if (err)
-		goto out;
-
 	hwc_wq->hwc = hwc;
 	hwc_wq->gdma_wq = queue;
 	hwc_wq->queue_depth = q_depth;
 	hwc_wq->hwc_cq = hwc_cq;
+
+	err = mana_hwc_alloc_dma_buf(hwc, q_depth, max_msg_size,
+				     &hwc_wq->msg_buf);
+	if (err)
+		goto out;
 
 	*hwc_wq_ptr = hwc_wq;
 	return 0;
@@ -580,7 +606,7 @@ static int mana_hwc_test_channel(struct hw_channel_context *hwc, u16 q_depth,
 			return err;
 	}
 
-	ctx = kzalloc(q_depth * sizeof(struct hwc_caller_ctx), GFP_KERNEL);
+	ctx = kcalloc(q_depth, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
 
@@ -625,7 +651,7 @@ static int mana_hwc_establish_channel(struct gdma_context *gc, u16 *q_depth,
 	if (WARN_ON(cq->id >= gc->max_num_cqs))
 		return -EPROTO;
 
-	gc->cq_table = vzalloc(gc->max_num_cqs * sizeof(struct gdma_queue *));
+	gc->cq_table = vcalloc(gc->max_num_cqs, sizeof(struct gdma_queue *));
 	if (!gc->cq_table)
 		return -ENOMEM;
 
@@ -694,6 +720,7 @@ int mana_hwc_create_channel(struct gdma_context *gc)
 	gd->driver_data = hwc;
 	hwc->gdma_dev = gd;
 	hwc->dev = gc->dev;
+	hwc->hwc_timeout = HW_CHANNEL_WAIT_RESOURCE_TIMEOUT_MS;
 
 	/* HWC's instance number is always 0. */
 	gd->dev_id.as_uint32 = 0;
@@ -768,6 +795,8 @@ void mana_hwc_destroy_channel(struct gdma_context *gc)
 	hwc->gdma_dev->doorbell = INVALID_DOORBELL;
 	hwc->gdma_dev->pdid = INVALID_PDID;
 
+	hwc->hwc_timeout = 0;
+
 	kfree(hwc);
 	gc->hwc.driver_data = NULL;
 	gc->hwc.gdma_context = NULL;
@@ -779,10 +808,13 @@ void mana_hwc_destroy_channel(struct gdma_context *gc)
 int mana_hwc_send_request(struct hw_channel_context *hwc, u32 req_len,
 			  const void *req, u32 resp_len, void *resp)
 {
+	struct gdma_context *gc = hwc->gdma_dev->gdma_context;
 	struct hwc_work_request *tx_wr;
 	struct hwc_wq *txq = hwc->txq;
 	struct gdma_req_hdr *req_msg;
 	struct hwc_caller_ctx *ctx;
+	u32 dest_vrcq = 0;
+	u32 dest_vrq = 0;
 	u16 msg_id;
 	int err;
 
@@ -809,13 +841,19 @@ int mana_hwc_send_request(struct hw_channel_context *hwc, u32 req_len,
 
 	tx_wr->msg_size = req_len;
 
-	err = mana_hwc_post_tx_wqe(txq, tx_wr, 0, 0, false);
+	if (gc->is_pf) {
+		dest_vrq = hwc->pf_dest_vrq_id;
+		dest_vrcq = hwc->pf_dest_vrcq_id;
+	}
+
+	err = mana_hwc_post_tx_wqe(txq, tx_wr, dest_vrq, dest_vrcq, false);
 	if (err) {
 		dev_err(hwc->dev, "HWC: Failed to post send WQE: %d\n", err);
 		goto out;
 	}
 
-	if (!wait_for_completion_timeout(&ctx->comp_event, 30 * HZ)) {
+	if (!wait_for_completion_timeout(&ctx->comp_event,
+					 (msecs_to_jiffies(hwc->hwc_timeout) * HZ))) {
 		dev_err(hwc->dev, "HWC: Request timed out!\n");
 		err = -ETIMEDOUT;
 		goto out;
@@ -826,7 +864,7 @@ int mana_hwc_send_request(struct hw_channel_context *hwc, u32 req_len,
 		goto out;
 	}
 
-	if (ctx->status_code) {
+	if (ctx->status_code && ctx->status_code != GDMA_STATUS_MORE_ENTRIES) {
 		dev_err(hwc->dev, "HWC: Failed hw_channel req: 0x%x\n",
 			ctx->status_code);
 		err = -EPROTO;
