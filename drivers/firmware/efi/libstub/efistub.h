@@ -43,6 +43,8 @@ extern const efi_system_table_t *efi_system_table;
 
 typedef union efi_dxe_services_table efi_dxe_services_table_t;
 extern const efi_dxe_services_table_t *efi_dxe_table;
+extern unsigned long efi_mmap_nr_slack_slots;
+#define powerof2(x) ((((x)-1)&(x))==0)
 
 efi_status_t __efiapi efi_pe_entry(efi_handle_t handle,
 				   efi_system_table_t *sys_table_arg);
