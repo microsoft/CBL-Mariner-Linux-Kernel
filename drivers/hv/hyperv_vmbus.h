@@ -15,10 +15,10 @@
 #include <linux/list.h>
 #include <linux/bitops.h>
 #include <asm/sync_bitops.h>
-#include <asm/hyperv-tlfs.h>
 #include <linux/atomic.h>
 #include <linux/hyperv.h>
 #include <linux/interrupt.h>
+#include <hyperv/hvhdk.h>
 
 #include "hv_trace.h"
 
@@ -113,7 +113,7 @@ enum {
 	VMBUS_EVENT_PORT_ID		= 2,
 	VMBUS_MONITOR_CONNECTION_ID	= 3,
 	VMBUS_MONITOR_PORT_ID		= 3,
-	VMBUS_MESSAGE_SINT		= 2,
+	VMBUS_MESSAGE_SINT		= HV_SYNIC_VMBUS_SINT_INDEX,
 };
 
 /*
