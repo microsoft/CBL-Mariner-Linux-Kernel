@@ -861,6 +861,72 @@ mshv_vp_ioctl_get_set_state(struct mshv_vp *vp,
 	return 0;
 }
 
+static bool mshv_gpa_fault_retryable(u32 result_code)
+{
+	/*
+	 * Note: HV_TRANSLATE_GVA_GPA_UNMAPPED is intentionally not handled
+	 * here. The guest page table cannot be unmapped under normal
+	 * operation. It may be mapped with no access during page moves,
+	 * but a truly unmapped state indicates a kernel driver bug.
+	 * Retrying in this case would only mask the underlying problem of
+	 * an unmapped guest page table.
+	 */
+	return result_code == HV_TRANSLATE_GVA_GPA_NO_READ_ACCESS;
+}
+
+static long
+mshv_vp_ioctl_translate_gva(struct mshv_vp *vp, void __user *user_args)
+{
+	struct mshv_partition *partition = vp->vp_partition;
+	struct mshv_translate_gva args;
+	struct hv_translate_gva_result_ex result;
+	u64 gfn, gpa;
+	int ret;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	do {
+		ret = hv_call_translate_virtual_address_ex(vp->vp_index,
+							   partition->pt_id,
+							   args.flags, args.gva,
+							   &gfn, &result);
+		if (ret)
+			return ret;
+
+		if (mshv_gpa_fault_retryable(result.result_code)) {
+			struct mshv_mem_region *region;
+			bool faulted;
+
+			region = mshv_partition_region_by_gfn_get(partition,
+								  gfn);
+			if (!region)
+				return -EFAULT;
+
+			faulted = false;
+			if (region->mreg_type == MSHV_REGION_TYPE_MEM_MOVABLE)
+				faulted = mshv_region_handle_gfn_fault(region,
+								       gfn);
+			mshv_region_put(region);
+
+			if (!faulted)
+				return -EFAULT;
+
+			cond_resched();
+		}
+	} while (mshv_gpa_fault_retryable(result.result_code));
+
+	gpa = (gfn << PAGE_SHIFT) | (args.gva & ~PAGE_MASK);
+
+	if (copy_to_user(args.result, &result, sizeof(*args.result)))
+		return -EFAULT;
+
+	if (copy_to_user(args.gpa, &gpa, sizeof(*args.gpa)))
+		return -EFAULT;
+
+	return 0;
+}
+
 static long
 mshv_vp_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 {
@@ -879,6 +945,9 @@ mshv_vp_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 		break;
 	case MSHV_SET_VP_STATE:
 		r = mshv_vp_ioctl_get_set_state(vp, (void __user *)arg, true);
+		break;
+	case MSHV_TRANSLATE_GVA:
+		r = mshv_vp_ioctl_translate_gva(vp, (void __user *)arg);
 		break;
 	case MSHV_ROOT_HVCALL:
 		r = mshv_ioctl_passthru_hvcall(vp->vp_partition, false,

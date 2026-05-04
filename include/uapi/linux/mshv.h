@@ -318,6 +318,16 @@ struct mshv_get_set_vp_state {
 #define MSHV_RUN_VP			_IOR(MSHV_IOCTL, 0x00, struct mshv_run_vp)
 #define MSHV_GET_VP_STATE		_IOWR(MSHV_IOCTL, 0x01, struct mshv_get_set_vp_state)
 #define MSHV_SET_VP_STATE		_IOWR(MSHV_IOCTL, 0x02, struct mshv_get_set_vp_state)
+
+struct mshv_translate_gva {
+	__u64 gva;
+	__u64 flags;
+	enum hv_translate_gva_result_code *result;
+	__u64 *gpa;
+};
+
+#define MSHV_TRANSLATE_GVA		_IOWR(MSHV_IOCTL, 0xF2, struct mshv_translate_gva)
+
 /*
  * Generic hypercall
  * Defined above in partition IOCTLs, avoid redefining it here

@@ -676,6 +676,43 @@ int hv_call_get_partition_property_ex(u64 partition_id, u64 property_code,
 	return 0;
 }
 
+int hv_call_translate_virtual_address_ex(u32 vp_index, u64 partition_id,
+					 u64 flags, u64 gva, u64 *gfn,
+					 struct hv_translate_gva_result_ex *result)
+{
+	struct hv_input_translate_virtual_address *input;
+	struct hv_output_translate_virtual_address_ex *output;
+	unsigned long irq_flags;
+	u64 status;
+
+	local_irq_save(irq_flags);
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	memset(input, 0, sizeof(*input));
+	input->partition_id = partition_id;
+	input->vp_index = vp_index;
+	input->control_flags = flags;
+	input->gva_page = gva >> HV_HYP_PAGE_SHIFT;
+
+	status = hv_do_hypercall(HVCALL_TRANSLATE_VIRTUAL_ADDRESS_EX,
+				 input, output);
+
+	if (!hv_result_success(status)) {
+		local_irq_restore(irq_flags);
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
+	}
+
+	*result = output->translation_result;
+	*gfn = output->gpa_page;
+
+	local_irq_restore(irq_flags);
+
+	return 0;
+}
+
 int
 hv_call_clear_virtual_interrupt(u64 partition_id)
 {

@@ -905,4 +905,45 @@ struct hv_input_modify_sparse_spa_page_host_access {
 #define HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE      0x4
 #define HV_MODIFY_SPA_PAGE_HOST_ACCESS_HUGE_PAGE       0x8
 
+enum hv_translate_gva_result_code {
+	HV_TRANSLATE_GVA_SUCCESS			= 0,
+
+	/* Translation failures */
+	HV_TRANSLATE_GVA_PAGE_NOT_PRESENT		= 1,
+	HV_TRANSLATE_GVA_PRIVILEGE_VIOLATION		= 2,
+	HV_TRANSLATE_GVA_INVALID_PAGE_TABLE_FLAGS	= 3,
+
+	/* GPA access failures */
+	HV_TRANSLATE_GVA_GPA_UNMAPPED			= 4,
+	HV_TRANSLATE_GVA_GPA_NO_READ_ACCESS		= 5,
+	HV_TRANSLATE_GVA_GPA_NO_WRITE_ACCESS		= 6,
+	HV_TRANSLATE_GVA_GPA_ILLEGAL_OVERLAY_ACCESS	= 7,
+
+	HV_TRANSLATE_GVA_INTERCEPT			= 8,
+	HV_TRANSLATE_GVA_GPA_UNACCEPTED			= 9,
+};
+
+struct hv_input_translate_virtual_address {
+	u64 partition_id;
+	u32 vp_index;
+	u32 padding;
+	u64 control_flags;
+	u64 gva_page;
+} __packed;
+
+struct hv_translate_gva_result_ex {
+	u32 result_code; /* enum hv_translate_gva_result_code */
+	u32 cache_type : 8;
+	u32 overlay_page : 1;
+	u32 reserved : 23;
+#if IS_ENABLED(CONFIG_X86)
+	char event_info[40]; /* HV_X64_PENDING_EVENT */
+#endif
+} __packed;
+
+struct hv_output_translate_virtual_address_ex {
+	struct hv_translate_gva_result_ex translation_result;
+	u64 gpa_page;
+} __packed;
+
 #endif /* _HV_HVHDK_H */

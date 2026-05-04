@@ -290,6 +290,9 @@ int hv_call_delete_vp(u64 partition_id, u32 vp_index);
 int hv_call_assert_virtual_interrupt(u64 partition_id, u32 vector,
 				     u64 dest_addr,
 				     union hv_interrupt_control control);
+int hv_call_translate_virtual_address_ex(u32 vp_index, u64 partition_id,
+					 u64 flags, u64 gva, u64 *gfn,
+					 struct hv_translate_gva_result_ex *result);
 int hv_call_clear_virtual_interrupt(u64 partition_id);
 int hv_call_get_gpa_access_states(u64 partition_id, u32 count, u64 gpa_base_pfn,
 				  union hv_gpa_page_access_state_flags state_flags,
