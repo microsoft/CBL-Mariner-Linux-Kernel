@@ -2741,6 +2741,10 @@ static int pl011_setup_port(struct device *dev, struct uart_amba_port *uap,
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
+	pl011_debug_addr = (char __iomem *)base;
+	pl011_debug_addr += UART011_IO_DEBUG;
+	has_pl011 = 1;
+
 	index = pl011_probe_dt_alias(index, dev);
 
 	uap->port.dev = dev;

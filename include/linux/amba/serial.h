@@ -206,6 +206,8 @@
 #define UART01x_RSR_ANY		(UART01x_RSR_OE|UART01x_RSR_BE|UART01x_RSR_PE|UART01x_RSR_FE)
 #define UART01x_FR_MODEM_ANY	(UART01x_FR_DCD|UART01x_FR_DSR|UART01x_FR_CTS)
 
+#define UART011_IO_DEBUG	0xf00		/* used for debug I/O port emulation in VM */
+
 #ifndef __ASSEMBLY__
 struct amba_device; /* in uncompress this is included but amba/bus.h is not */
 struct amba_pl010_data {
@@ -224,5 +226,15 @@ struct amba_pl011_data {
 	void (*exit) (void);
 };
 #endif
+
+extern char __iomem *pl011_debug_addr;		/* save the pl011 debug mmio address, equal to base + UART011_IO_DEBUG */
+extern int has_pl011;
+#define DEBUG_TRAP_VAL_END_BOOT 0x41		/* debug point at the end of kernel boot */
+
+/* wrapper of tricking pl011 debug */
+static inline void pl011_debug_trap(char val)
+{
+	writeb_relaxed(val, pl011_debug_addr);
+}
 
 #endif
