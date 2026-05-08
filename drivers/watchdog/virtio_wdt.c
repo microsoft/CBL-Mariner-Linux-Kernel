@@ -114,9 +114,19 @@ static int virtio_watchdog_stop(struct watchdog_device *wdd)
 	return 0;
 }
 
+/* Accept but ignore the requested timeout; the VMM controls the real
+ * timeout. wdd->timeout remains at VW_HEARTBEAT_DEFAULT from probe so
+ * GETTIMEOUT always reports the actual hardware value.
+ */
+static int virtio_watchdog_set_timeout(struct watchdog_device *wdd,
+				       unsigned int timeout)
+{
+	return 0;
+}
+
 static struct watchdog_info vw_info = {
 	.identity = "virtio-watchdog",
-	.options = WDIOF_KEEPALIVEPING,
+	.options = WDIOF_KEEPALIVEPING | WDIOF_SETTIMEOUT,
 };
 
 static const struct watchdog_ops vw_ops = {
@@ -124,6 +134,7 @@ static const struct watchdog_ops vw_ops = {
 	.start = virtio_watchdog_start,
 	.stop = virtio_watchdog_stop,
 	.ping = virtio_watchdog_ping,
+	.set_timeout = virtio_watchdog_set_timeout,
 };
 
 static int probe_common(struct virtio_device *vdev)
@@ -156,8 +167,8 @@ static int probe_common(struct virtio_device *vdev)
 
 	vi->wdd.info = &vw_info;
 	vi->wdd.ops = &vw_ops;
-	vi->wdd.min_timeout = VW_HEARTBEAT_DEFAULT;
-	vi->wdd.max_timeout = VW_HEARTBEAT_DEFAULT;
+	vi->wdd.min_timeout = 1;
+	vi->wdd.max_timeout = 0xFFFF;
 	vi->wdd.timeout = VW_HEARTBEAT_DEFAULT;
 
 	err = watchdog_register_device(&vi->wdd);
