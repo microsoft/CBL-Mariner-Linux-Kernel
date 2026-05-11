@@ -1,0 +1,116 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+
+#ifndef _DRIVERS_FIRMWARE_EFI_MSHV_H
+#define _DRIVERS_FIRMWARE_EFI_MSHV_H
+
+#include "efistub.h"
+
+#if !IS_ENABLED(CONFIG_MSHV_ROOT)
+#ifdef CONFIG_X86_64
+static inline efi_status_t mshv_efi_setup(struct boot_params *boot_params)
+{
+	return EFI_SUCCESS;
+}
+#endif /* CONFIG_X86_64 */
+
+#ifdef CONFIG_ARM64
+static inline efi_status_t mshv_efi_setup(char **cmdline_ptr)
+{
+	return EFI_SUCCESS;
+}
+#endif /* CONFIG_ARM64 */
+
+static inline efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map)
+{
+	return EFI_SUCCESS;
+}
+
+static inline void mshv_launch(void) {}
+#else /* !CONFIG_MSHV_ROOT */
+
+extern struct efi_hvloader_protocol *efi_mshv;
+
+static inline void mshv_efi_reboot(const char *fmt, ...)
+{
+	va_list args;
+
+	va_start(args, fmt);
+	efi_printk(fmt, args);
+	va_end(args);
+
+	efi_bs_call(stall, 5 * EFI_USEC_PER_SEC);
+	efi_rt_call(reset_system, EFI_RESET_COLD, EFI_ABORTED, 0, NULL);
+}
+
+efi_status_t mshv_efi_init(void);
+void mshv_get_hv_ranges(efi_memory_desc_t **mem_map, unsigned long *map_sz,
+			unsigned long *desc_sz);
+void mshv_efi_update_cmdline(efi_memory_desc_t *mem_map,
+		unsigned long map_sz, unsigned long desc_sz, char *cmdline,
+		char *buf, unsigned long buf_sz);
+
+#ifdef CONFIG_X86_64
+efi_status_t mshv_efi_setup(struct boot_params *boot_params);
+#endif /* CONFIG_X86_64 */
+
+#ifdef CONFIG_ARM64
+efi_status_t mshv_efi_setup(char **cmdline_ptr);
+#endif /* CONFIG_ARM64 */
+
+efi_status_t mshv_set_efi_rt_range(struct efi_boot_memmap *map);
+void mshv_launch(void);
+
+struct hvl_dbg_data {
+	u8 unused[552];
+} __packed;
+
+struct hvl_launch_data {
+	u64 launch_status;
+	u64 launch_substatus1;
+} __packed;
+
+struct hvl_load_data {
+	u32 is_unsafe_config:1;
+	u32 reserved:31;
+} __packed;
+
+struct hvl_return_data {
+	u32 crash_dump_area_page_count;
+	u32 unused;
+	u64 crashdump_area_spa;
+	union {
+		struct hvl_launch_data launch_data;
+		struct hvl_load_data load_data;
+	};
+	struct hvl_dbg_data debug_data;
+	void *spa_page_range_array;
+	u32 range_count;
+
+	struct
+	{
+		u32 base_checksum;
+		u32 base_timestamp;
+		u32 patch_checksum;
+		u32 patch_timestamp;
+		u32 base_hpat_entries_used;
+		u32 patch_hpat_entries_used;
+		u32 patch_sequence_number;
+	} patch_details;
+} __packed;
+
+struct efi_hvloader_protocol {
+	void (__efiapi * launch_hv)(void *, struct hvl_return_data *);
+	efi_status_t (__efiapi * register_range)(u64, u64);
+	efi_status_t (__efiapi * get_memory_map)(unsigned long *, void *,
+						unsigned long *,
+						unsigned long *, u32 *);
+	efi_status_t (__efiapi * get_hv_ranges)(void **,
+						unsigned long *,
+						unsigned long *);
+	efi_status_t (__efiapi * get_loader_init_status)(void);
+	efi_char16_t *(__efiapi * get_next_log_msg)(size_t *);
+};
+
+#endif /* CONFIG_MSHV_ROOT */
+
+#endif /* _DRIVERS_FIRMWARE_EFI_MSHV_H */
