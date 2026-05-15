@@ -1976,6 +1976,19 @@ mshv_region_chunk_unshare(struct mshv_mem_region *region,
 }
 
 static int
+mshv_region_chunk_unshare(struct mshv_mem_region *region,
+			  u32 flags, u64 pfn_offset, u64 pfn_count,
+			  bool huge_page)
+{
+	if (huge_page)
+		flags |= HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE;
+
+	return hv_call_modify_spa_host_access(region->partition->pt_id,
+					      region->pfns + pfn_offset,
+					      pfn_count, 0, flags, false);
+}
+
+static int
 mshv_partition_region_unshare(struct mshv_mem_region *region)
 {
 	u32 flags = HV_MODIFY_SPA_PAGE_HOST_ACCESS_MAKE_EXCLUSIVE;
@@ -1990,26 +2003,16 @@ mshv_region_chunk_remap(struct mshv_mem_region *region, u32 flags,
 			u64 pfn_offset, u64 pfn_count,
 			bool huge_page)
 {
+	/*
+	 * Remap missing pages with no access to let the
+	 * hypervisor track dirty pages, enabling precopy live
+	 * migration.
+	 */
+	if (!pfn_valid(region->pfns[pfn_offset]))
+		flags = HV_MAP_GPA_NO_ACCESS;
+
 	if (huge_page)
 		flags |= HV_MAP_GPA_LARGE_PAGE;
-
-	return hv_call_map_gpa_pages(region->partition->pt_id,
-				     region->start_gfn + pfn_offset,
-				     pfn_count, flags,
-				     region->pfns + pfn_offset);
-}
-
-static int
-mshv_region_remap_pages(struct mshv_mem_region *region, u32 map_flags,
-			u64 page_offset, u64 page_count)
-{
-	if (page_offset + page_count > region->nr_pages)
-		return -EINVAL;
-
-	if (region->flags.large_pages &&
-	    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
-	    VALUE_PMD_ALIGNED(page_count))
-		map_flags |= HV_MAP_GPA_LARGE_PAGE;
 
 	return hv_call_map_gpa_pages(region->partition->pt_id,
 				     region->start_gfn + pfn_offset,
@@ -2443,6 +2446,9 @@ mshv_region_chunk_unmap(struct mshv_mem_region *region, u32 flags,
 			u64 pfn_offset, u64 pfn_count,
 			bool huge_page)
 {
+	if (!pfn_valid(region->pfns[pfn_offset]))
+		return 0;
+
 	if (huge_page)
 		flags |= HV_UNMAP_GPA_LARGE_PAGE;
 
@@ -2477,11 +2483,6 @@ static void mshv_partition_unmap_region(struct mshv_mem_region *region)
 			if (!pfn_valid(region->pfns[pfn_offset + pfn_count]))
 				break;
 		}
-
-		if (region->flags.large_pages &&
-		    VALUE_PMD_ALIGNED(region->start_gfn + page_offset) &&
-		    VALUE_PMD_ALIGNED(page_count))
-			unmap_flags |= HV_UNMAP_GPA_LARGE_PAGE;
 
 		/* ignore unmap failures and continue as process may be exiting */
 		mshv_partition_unmap_range(region, 0,
