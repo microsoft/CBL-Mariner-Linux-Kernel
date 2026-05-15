@@ -628,7 +628,6 @@ static bool mshv_handle_unmapped_gpa(struct mshv_vp *vp)
 {
 	struct hv_message *hvmsg = vp->vp_intercept_msg_page;
 	struct hv_x64_memory_intercept_message *msg;
-	union hv_x64_memory_access_info accinfo;
 	u64 gfn, mmio_spa, numpfns;
 	struct mshv_mem_region *reg;
 	struct mshv_partition *pt = vp->vp_partition;
@@ -3453,7 +3452,7 @@ static void destroy_partition(struct mshv_partition *partition)
 
 			if (hv_scheduler_type == HV_SCHEDULER_TYPE_ROOT)
 				mshv_vp_stats_unmap(partition->pt_id, vp->vp_index,
-						    (void **)vp->vp_stats_pages);
+						    vp->vp_stats_pages);
 
 			if (vp->vp_register_page) {
 				(void)hv_unmap_vp_state_page(partition->pt_id,
