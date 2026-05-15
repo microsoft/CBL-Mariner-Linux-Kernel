@@ -1976,19 +1976,6 @@ mshv_region_chunk_unshare(struct mshv_mem_region *region,
 }
 
 static int
-mshv_region_chunk_unshare(struct mshv_mem_region *region,
-			  u32 flags, u64 pfn_offset, u64 pfn_count,
-			  bool huge_page)
-{
-	if (huge_page)
-		flags |= HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE;
-
-	return hv_call_modify_spa_host_access(region->partition->pt_id,
-					      region->pfns + pfn_offset,
-					      pfn_count, 0, flags, false);
-}
-
-static int
 mshv_partition_region_unshare(struct mshv_mem_region *region)
 {
 	u32 flags = HV_MODIFY_SPA_PAGE_HOST_ACCESS_MAKE_EXCLUSIVE;
