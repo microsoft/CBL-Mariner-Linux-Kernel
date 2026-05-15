@@ -368,20 +368,31 @@ static int arm_spe_pkt_desc_op_type(const struct arm_spe_pkt *packet,
 				arm_spe_pkt_out_string(&err, &buf, &buf_len, " AR");
 		}
 
-		if (SPE_OP_PKT_LDST_SUBCLASS_SIMD_FP(payload))
+		switch (SPE_OP_PKT_LDST_SUBCLASS_GET(payload)) {
+		case SPE_OP_PKT_LDST_SUBCLASS_SIMD_FP:
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " SIMD-FP");
-		else if (SPE_OP_PKT_LDST_SUBCLASS_GP_REG(payload))
+			break;
+		case SPE_OP_PKT_LDST_SUBCLASS_GP_REG:
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " GP-REG");
-		else if (SPE_OP_PKT_LDST_SUBCLASS_UNSPEC_REG(payload))
+			break;
+		case SPE_OP_PKT_LDST_SUBCLASS_UNSPEC_REG:
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " UNSPEC-REG");
-		else if (SPE_OP_PKT_LDST_SUBCLASS_NV_SYSREG(payload))
+			break;
+		case SPE_OP_PKT_LDST_SUBCLASS_NV_SYSREG:
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " NV-SYSREG");
-		else if (SPE_OP_PKT_LDST_SUBCLASS_MTE_TAG(payload))
+			break;
+		case SPE_OP_PKT_LDST_SUBCLASS_MTE_TAG:
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " MTE-TAG");
-		else if (SPE_OP_PKT_LDST_SUBCLASS_MEMCPY(payload))
+			break;
+		case SPE_OP_PKT_LDST_SUBCLASS_MEMCPY:
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " MEMCPY");
-		else if (SPE_OP_PKT_LDST_SUBCLASS_MEMSET(payload))
+			break;
+		case SPE_OP_PKT_LDST_SUBCLASS_MEMSET:
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " MEMSET");
+			break;
+		default:
+			break;
+		}
 
 		if (SPE_OP_PKT_IS_LDST_SVE(payload)) {
 			/* SVE effective vector length */
@@ -399,16 +410,10 @@ static int arm_spe_pkt_desc_op_type(const struct arm_spe_pkt *packet,
 
 		if (payload & SPE_OP_PKT_COND)
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " COND");
-		if (payload & SPE_OP_PKT_INDIRECT_BRANCH)
+
+		if (SPE_OP_PKT_IS_INDIRECT_BRANCH(payload))
 			arm_spe_pkt_out_string(&err, &buf, &buf_len, " IND");
-		if (payload & SPE_OP_PKT_GCS)
-			arm_spe_pkt_out_string(&err, &buf, &buf_len, " GCS");
-		if (SPE_OP_PKT_CR_BL(payload))
-			arm_spe_pkt_out_string(&err, &buf, &buf_len, " CR-BL");
-		if (SPE_OP_PKT_CR_RET(payload))
-			arm_spe_pkt_out_string(&err, &buf, &buf_len, " CR-RET");
-		if (SPE_OP_PKT_CR_NON_BL_RET(payload))
-			arm_spe_pkt_out_string(&err, &buf, &buf_len, " CR-NON-BL-RET");
+
 		break;
 	default:
 		/* Unknown index */
