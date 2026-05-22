@@ -944,11 +944,15 @@ void __noreturn efi_stub_entry(efi_handle_t handle,
 	 */
 	sev_enable(boot_params);
 
-	efi_5level_switch();
-
+	/*
+	 * Launch the hypervisor before switching to 5 level paging.
+	 * The hypervisor does not support being launched with LA57 enabled.
+	 */
 	if (mshv_status == EFI_SUCCESS) {
 		mshv_status = mshv_launch();
 	}
+
+	efi_5level_switch();
 
 	enter_kernel(kernel_entry, boot_params);
 
