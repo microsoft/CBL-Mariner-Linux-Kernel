@@ -444,6 +444,24 @@ mshv_vp_dispatch(struct mshv_vp *vp, u32 flags,
 }
 
 static int
+mshv_vp_set_explicit_suspend(struct mshv_vp *vp)
+{
+	struct hv_register_assoc explicit_suspend = {
+		.name = HV_REGISTER_EXPLICIT_SUSPEND,
+		.value.explicit_suspend.suspended = 1,
+	};
+	int ret;
+
+	ret = mshv_set_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
+				    1, &explicit_suspend);
+
+	if (ret)
+		vp_err(vp, "Failed to explicitly suspend vCPU\n");
+
+	return ret;
+}
+
+static int
 mshv_vp_clear_explicit_suspend(struct mshv_vp *vp)
 {
 	struct hv_register_assoc explicit_suspend = {
@@ -519,6 +537,12 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 			return ret;
 	}
 
+	if (!vp->run.flags.intercept_suspend) {
+		ret = mshv_vp_clear_explicit_suspend(vp);
+		if (ret)
+			return ret;
+	}
+
 	do {
 		u32 flags = 0;
 		struct hv_output_dispatch_vp output;
@@ -565,6 +589,15 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 				if (ret)
 					break;
 			}
+
+			/*
+			 * Wait for the hypervisor to unblock the VP before
+			 * re-dispatching. The VP cannot be dispatched while in
+			 * the blocked state.
+			 */
+			ret = mshv_vp_wait_for_hv_kick(vp);
+			if (ret)
+				break;
 		} else {
 			/* HV_VP_DISPATCH_STATE_READY */
 			if (output.dispatch_event ==
@@ -572,6 +605,13 @@ static long mshv_run_vp_with_root_scheduler(struct mshv_vp *vp)
 				vp->run.flags.intercept_suspend = 1;
 		}
 	} while (!vp->run.flags.intercept_suspend);
+
+	if (!vp->run.flags.intercept_suspend) {
+		int rc = mshv_vp_set_explicit_suspend(vp);
+
+		if (rc)
+			ret = rc;
+	}
 
 	return ret;
 }
