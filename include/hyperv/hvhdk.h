@@ -1000,4 +1000,153 @@ struct hv_eventlog_message_payload {
         u32 buffer_index;
 } __packed;
 
+/*
+ * Deprecated hypercall input/output structs - needed for backward compat
+ * with older userspace mshv crate v0.3.0
+ */
+
+#if IS_ENABLED(CONFIG_X86)
+
+struct hv_register_x64_cpuid_result_parameters {
+	struct {
+		u32 eax;
+		u32 ecx;
+		u8 subleaf_specific;
+		u8 always_override;
+		u16 padding;
+	} __packed input;
+	struct {
+		u32 eax;
+		u32 eax_mask;
+		u32 ebx;
+		u32 ebx_mask;
+		u32 ecx;
+		u32 ecx_mask;
+		u32 edx;
+		u32 edx_mask;
+	} __packed result;
+} __packed;
+
+struct hv_register_x64_msr_result_parameters {
+	u32 msr_index;
+	u32 access_type;
+	u32 action; /* enum hv_unimplemented_msr_action */
+} __packed;
+
+union hv_register_intercept_result_parameters {
+	struct hv_register_x64_cpuid_result_parameters cpuid;
+	struct hv_register_x64_msr_result_parameters msr;
+} __packed;
+
+struct hv_input_register_intercept_result {
+	u64 partition_id;
+	u32 vp_index;
+	u32 intercept_type; /* enum hv_intercept_type */
+	union hv_register_intercept_result_parameters parameters;
+} __packed;
+
+#endif /* CONFIG_X86 */
+
+struct hv_cpuid_leaf_info {
+	u32 eax;
+	u32 ecx;
+	u64 xfem;
+	u64 xss;
+} __packed;
+
+union hv_get_vp_cpuid_values_flags {
+	u32 as_uint32;
+	struct {
+		u32 use_vp_xfem_xss: 1;
+		u32 apply_registered_values: 1;
+		u32 reserved: 30;
+	} __packed;
+} __packed;
+
+struct hv_input_get_vp_cpuid_values {
+	u64 partition_id;
+	u32 vp_index;
+	union hv_get_vp_cpuid_values_flags flags;
+	u32 reserved;
+	u32 padding;
+	struct hv_cpuid_leaf_info cpuid_leaf_info[];
+} __packed;
+
+union hv_output_get_vp_cpuid_values {
+	u32 as_uint32[4];
+	struct {
+		u32 eax;
+		u32 ebx;
+		u32 ecx;
+		u32 edx;
+	} __packed;
+};
+
+struct hv_input_signal_event_direct {
+	u64 target_partition;
+	u32 target_vp;
+	u8  target_vtl;
+	u8  target_sint;
+	u16 flag_number;
+} __packed;
+
+struct hv_output_signal_event_direct {
+	u8	newly_signaled;
+	u8	reserved[7];
+} __packed;
+
+struct hv_input_post_message_direct {
+	u64 partition_id;
+	u32 vp_index;
+	u8  vtl;
+	u8  padding[3];
+	u32 sint_index;
+	u8  message[HV_MESSAGE_SIZE];
+	u32 padding2;
+} __packed;
+
+union hv_access_gpa_result {
+	u64 as_uint64;
+	struct {
+		u32 result_code; /* enum hv_access_gpa_result_code */
+		u32 reserved;
+	} __packed;
+};
+
+union hv_access_gpa_control_flags {
+	u64 as_uint64;
+	struct {
+		u64 cache_type: 8; /* enum hv_cache_type */
+		u64 reserved: 56;
+	} __packed;
+};
+
+struct hv_input_read_gpa {
+	u64 partition_id;
+	u32 vp_index;
+	u32 byte_count;
+	u64 base_gpa;
+	union hv_access_gpa_control_flags control_flags;
+} __packed;
+
+#define HV_READ_WRITE_GPA_MAX_SIZE 16
+
+struct hv_output_read_gpa {
+	union hv_access_gpa_result access_result;
+	u8 data[HV_READ_WRITE_GPA_MAX_SIZE];
+} __packed;
+
+struct hv_input_write_gpa {
+	u64 partition_id;
+	u32 vp_index;
+	u32 byte_count;
+	u64 base_gpa;
+	union hv_access_gpa_control_flags control_flags;
+	u8 data[HV_READ_WRITE_GPA_MAX_SIZE];
+} __packed;
+
+struct hv_output_write_gpa {
+	union hv_access_gpa_result access_result;
+} __packed;
+
 #endif /* _HV_HVHDK_H */

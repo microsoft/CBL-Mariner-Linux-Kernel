@@ -256,6 +256,61 @@ struct mshv_root_hvcall {
 #define MSHV_ROOT_HVCALL		_IOWR(MSHV_IOCTL, 0x07, struct mshv_root_hvcall)
 
 /*
+ * Deprecated partition ioctls - backward compat with older userspace mshv crate v0.3.0
+ * Superseded by MSHV_ROOT_HVCALL
+ */
+
+struct mshv_install_intercept {
+	__u32 access_type_mask;
+	__u32 intercept_type;
+	__u64 intercept_parameter;
+};
+
+struct mshv_assert_interrupt {
+	__u64 control;
+	__u64 dest_addr;
+	__u32 vector;
+	__u32 rsvd;
+};
+
+struct mshv_partition_property {
+	__u64 property_code;
+	__u64 property_value;
+};
+
+struct mshv_signal_event_direct {
+	__u32 vp;
+	__u8 vtl;
+	__u8 sint;
+	__u16 flag;
+	/* output */
+	__u8 newly_signaled;
+};
+
+struct mshv_post_message_direct {
+	__u32 vp;
+	__u8 vtl;
+	__u8 sint;
+	__u16 length;
+	__u8 __user const *message;
+};
+
+struct mshv_register_deliverabilty_notifications {
+	__u32 vp;
+	__u32 pad;
+	__u64 flag;
+};
+
+#define MSHV_INSTALL_INTERCEPT		_IOW(MSHV_IOCTL, 0xF0, struct mshv_install_intercept)
+#define MSHV_ASSERT_INTERRUPT		_IOW(MSHV_IOCTL, 0xF1, struct mshv_assert_interrupt)
+#define MSHV_SET_PARTITION_PROPERTY	_IOW(MSHV_IOCTL, 0xF2, struct mshv_partition_property)
+#define MSHV_GET_PARTITION_PROPERTY	_IOWR(MSHV_IOCTL, 0xF3, struct mshv_partition_property)
+#define MSHV_SIGNAL_EVENT_DIRECT	_IOWR(MSHV_IOCTL, 0xF7, struct mshv_signal_event_direct)
+#define MSHV_POST_MESSAGE_DIRECT	_IOW(MSHV_IOCTL, 0xF8, struct mshv_post_message_direct)
+#define MSHV_REGISTER_DELIVERABILITY_NOTIFICATIONS \
+	_IOW(MSHV_IOCTL, 0xF9, struct mshv_register_deliverabilty_notifications)
+
+/*
  ********************************
  * VP APIs for child partitions *
  ********************************
@@ -327,6 +382,57 @@ struct mshv_translate_gva {
 };
 
 #define MSHV_TRANSLATE_GVA		_IOWR(MSHV_IOCTL, 0xF2, struct mshv_translate_gva)
+
+/*
+ * Deprecated VP ioctls - backward compat with older userspace mshv crate v0.3.0
+ * Superseded by MSHV_ROOT_HVCALL
+ */
+
+#define MSHV_VP_MAX_REGISTERS	128
+
+struct mshv_vp_registers {
+	__u32 count;
+	__u32 padding;
+	struct hv_register_assoc __user *regs;
+};
+
+struct mshv_register_intercept_result {
+	__u32 intercept_type;
+	__u32 padding;
+	/*
+	 * This has different size on different archs.
+	 * On x86 it's union hv_register_intercept_result_parameters.
+	 * Pass as raw bytes for portability.
+	 */
+	__u8 parameters[48];
+};
+
+struct mshv_get_vp_cpuid_values {
+	__u32 function;
+	__u32 index;
+	__u64 xfem;
+	__u64 xss;
+	/* output */
+	__u32 eax;
+	__u32 ebx;
+	__u32 ecx;
+	__u32 edx;
+};
+
+struct mshv_read_write_gpa {
+	__u64 base_gpa;
+	__u32 byte_count;
+	__u32 flags;
+	__u8 data[16]; /* HV_READ_WRITE_GPA_MAX_SIZE */
+};
+
+#define MSHV_GET_VP_REGISTERS		_IOWR(MSHV_IOCTL, 0xF0, struct mshv_vp_registers)
+#define MSHV_SET_VP_REGISTERS		_IOW(MSHV_IOCTL, 0xF1, struct mshv_vp_registers)
+#define MSHV_VP_REGISTER_INTERCEPT_RESULT \
+	_IOW(MSHV_IOCTL, 0xF3, struct mshv_register_intercept_result)
+#define MSHV_GET_VP_CPUID_VALUES	_IOWR(MSHV_IOCTL, 0xF4, struct mshv_get_vp_cpuid_values)
+#define MSHV_READ_GPA			_IOWR(MSHV_IOCTL, 0xF5, struct mshv_read_write_gpa)
+#define MSHV_WRITE_GPA			_IOWR(MSHV_IOCTL, 0xF6, struct mshv_read_write_gpa)
 
 /*
  * Generic hypercall

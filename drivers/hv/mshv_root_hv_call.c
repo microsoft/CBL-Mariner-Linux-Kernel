@@ -1093,3 +1093,287 @@ int hv_call_modify_spa_host_access(u64 partition_id, struct page **pages,
 
 	return 0;
 }
+
+/*
+ * Deprecated hv_call wrappers - backward compat with older userspace
+ */
+
+int hv_call_install_intercept(u64 partition_id, u32 access_type,
+			      enum hv_intercept_type intercept_type,
+			      union hv_intercept_parameters intercept_parameter)
+{
+	struct hv_input_install_intercept *input;
+	unsigned long flags;
+	u64 status;
+	int ret;
+
+	do {
+		local_irq_save(flags);
+		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+		memset(input, 0, sizeof(*input));
+		input->partition_id = partition_id;
+		input->access_type = access_type;
+		input->intercept_type = intercept_type;
+		input->intercept_parameter = intercept_parameter;
+		status = hv_do_hypercall(HVCALL_INSTALL_INTERCEPT, input,
+					 NULL);
+		local_irq_restore(flags);
+
+		if (!hv_result_needs_memory(status)) {
+			if (!hv_result_success(status))
+				pr_err("%s: %s\n", __func__,
+				       hv_result_to_string(status));
+			ret = hv_result_to_errno(status);
+			break;
+		}
+
+		ret = hv_deposit_memory(partition_id, status);
+	} while (!ret);
+
+	return ret;
+}
+
+int hv_call_set_partition_property(u64 partition_id, u64 property_code,
+				   u64 property_value,
+				   void (*completion_handler)(void *, u64 *),
+				   void *completion_data)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_set_partition_property *input;
+
+	if (!completion_handler) {
+		pr_err("%s: Missing completion handler\n", __func__);
+		return -EINVAL;
+	}
+
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	memset(input, 0, sizeof(*input));
+	input->partition_id = partition_id;
+	input->property_code = property_code;
+	input->property_value = property_value;
+	status = hv_do_hypercall(HVCALL_SET_PARTITION_PROPERTY, input, NULL);
+	local_irq_restore(flags);
+
+	if (unlikely(status == HV_STATUS_CALL_PENDING))
+		completion_handler(completion_data, &status);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
+	}
+
+	return 0;
+}
+
+#if IS_ENABLED(CONFIG_X86)
+int hv_call_register_intercept_result(u32 vp_index, u64 partition_id,
+				      enum hv_intercept_type intercept_type,
+				      union hv_register_intercept_result_parameters *params)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_register_intercept_result *in;
+	int ret = 0;
+
+	do {
+		local_irq_save(flags);
+		in = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+		memset(in, 0, sizeof(*in));
+		in->vp_index = vp_index;
+		in->partition_id = partition_id;
+		in->intercept_type = intercept_type;
+		in->parameters = *params;
+
+		status = hv_do_hypercall(HVCALL_REGISTER_INTERCEPT_RESULT,
+					 in, NULL);
+		local_irq_restore(flags);
+
+		if (hv_result_success(status))
+			break;
+
+		if (!hv_result_needs_memory(status)) {
+			pr_err("%s: %s\n", __func__,
+			       hv_result_to_string(status));
+			ret = hv_result_to_errno(status);
+			break;
+		}
+
+		ret = hv_deposit_memory(partition_id, status);
+	} while (!ret);
+
+	return ret;
+}
+#endif
+
+int hv_call_signal_event_direct(u32 vp_index, u64 partition_id,
+				u8 vtl, u8 sint, u16 flag_number,
+				u8 *newly_signaled)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_signal_event_direct *in;
+	struct hv_output_signal_event_direct *out;
+
+	local_irq_save(flags);
+	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	out = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	memset(in, 0, sizeof(*in));
+	in->target_partition = partition_id;
+	in->target_vp = vp_index;
+	in->target_vtl = vtl;
+	in->target_sint = sint;
+	in->flag_number = flag_number;
+
+	status = hv_do_hypercall(HVCALL_SIGNAL_EVENT_DIRECT, in, out);
+	if (hv_result_success(status))
+		*newly_signaled = out->newly_signaled;
+
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
+	}
+	return 0;
+}
+
+int hv_call_post_message_direct(u32 vp_index, u64 partition_id,
+				u8 vtl, u32 sint_index, u8 *message)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_post_message_direct *in;
+
+	local_irq_save(flags);
+	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+	memset(in, 0, sizeof(*in));
+	in->partition_id = partition_id;
+	in->vp_index = vp_index;
+	in->vtl = vtl;
+	in->sint_index = sint_index;
+	memcpy(&in->message, message, HV_MESSAGE_SIZE);
+
+	status = hv_do_hypercall(HVCALL_POST_MESSAGE_DIRECT, in, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
+	}
+	return 0;
+}
+
+int hv_call_get_vp_cpuid_values(u32 vp_index, u64 partition_id,
+				union hv_get_vp_cpuid_values_flags values_flags,
+				struct hv_cpuid_leaf_info *info,
+				union hv_output_get_vp_cpuid_values *result)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_get_vp_cpuid_values *in;
+	union hv_output_get_vp_cpuid_values *out;
+
+	local_irq_save(flags);
+	in = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	out = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	memset(in, 0, sizeof(*in) + sizeof(*info));
+	in->partition_id = partition_id;
+	in->vp_index = vp_index;
+	in->flags = values_flags;
+	in->cpuid_leaf_info[0] = *info;
+
+	status = hv_do_rep_hypercall(HVCALL_GET_VP_CPUID_VALUES, 1, 0,
+				     in, out);
+	if (hv_result_success(status))
+		*result = *out;
+
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		return hv_result_to_errno(status);
+	}
+	return 0;
+}
+
+int hv_call_read_gpa(u32 vp_index, u64 partition_id,
+		     union hv_access_gpa_control_flags control_flags,
+		     u64 gpa_base, u8 *data, u32 byte_count,
+		     union hv_access_gpa_result *result)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_read_gpa *input;
+	struct hv_output_read_gpa *output;
+
+	local_irq_save(flags);
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	memset(input, 0, sizeof(*input));
+	input->partition_id = partition_id;
+	input->vp_index = vp_index;
+	input->control_flags = control_flags;
+	input->base_gpa = gpa_base;
+	input->byte_count = byte_count;
+
+	status = hv_do_hypercall(HVCALL_READ_GPA, input, output);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		goto out;
+	}
+
+	*result = output->access_result;
+	memcpy(data, output->data, byte_count);
+
+out:
+	local_irq_restore(flags);
+	return hv_result_to_errno(status);
+}
+
+int hv_call_write_gpa(u32 vp_index, u64 partition_id,
+		      union hv_access_gpa_control_flags control_flags,
+		      u64 gpa_base, u8 *data, u32 byte_count,
+		      union hv_access_gpa_result *result)
+{
+	u64 status;
+	unsigned long flags;
+	struct hv_input_write_gpa *input;
+	struct hv_output_write_gpa *output;
+
+	local_irq_save(flags);
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	memset(input, 0, sizeof(*input));
+	input->partition_id = partition_id;
+	input->vp_index = vp_index;
+	input->control_flags = control_flags;
+	input->base_gpa = gpa_base;
+	input->byte_count = byte_count;
+	memcpy(input->data, data, byte_count);
+
+	status = hv_do_hypercall(HVCALL_WRITE_GPA, input, output);
+
+	if (!hv_result_success(status)) {
+		pr_err("%s: %s\n", __func__, hv_result_to_string(status));
+		goto out;
+	}
+
+	*result = output->access_result;
+
+out:
+	local_irq_restore(flags);
+	return hv_result_to_errno(status);
+}

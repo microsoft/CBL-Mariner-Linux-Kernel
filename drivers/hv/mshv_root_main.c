@@ -964,6 +964,192 @@ mshv_vp_ioctl_translate_gva(struct mshv_vp *vp, void __user *user_args)
 	return 0;
 }
 
+/* Deprecated VP ioctl handlers - backward compat with older userspace */
+
+static long
+mshv_vp_ioctl_get_regs(struct mshv_vp *vp, void __user *user_args)
+{
+	struct mshv_vp_registers args;
+	struct hv_register_assoc *registers;
+	long ret;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	if (args.count > MSHV_VP_MAX_REGISTERS)
+		return -EINVAL;
+
+	registers = kmalloc_array(args.count, sizeof(*registers), GFP_KERNEL);
+	if (!registers)
+		return -ENOMEM;
+
+	if (copy_from_user(registers, args.regs,
+			   sizeof(*registers) * args.count)) {
+		ret = -EFAULT;
+		goto free_return;
+	}
+
+	ret = mshv_get_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
+				    args.count, registers);
+	if (ret)
+		goto free_return;
+
+	if (copy_to_user(args.regs, registers,
+			 sizeof(*registers) * args.count))
+		ret = -EFAULT;
+
+free_return:
+	kfree(registers);
+	return ret;
+}
+
+static long
+mshv_vp_ioctl_set_regs(struct mshv_vp *vp, void __user *user_args)
+{
+	struct mshv_vp_registers args;
+	struct hv_register_assoc *registers;
+	long ret;
+	int i;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	if (args.count > MSHV_VP_MAX_REGISTERS)
+		return -EINVAL;
+
+	registers = kmalloc_array(args.count, sizeof(*registers), GFP_KERNEL);
+	if (!registers)
+		return -ENOMEM;
+
+	if (copy_from_user(registers, args.regs,
+			   sizeof(*registers) * args.count)) {
+		ret = -EFAULT;
+		goto free_return;
+	}
+
+	for (i = 0; i < args.count; i++) {
+		if (registers[i].name == HV_REGISTER_EXPLICIT_SUSPEND ||
+		    registers[i].name == HV_REGISTER_INTERCEPT_SUSPEND) {
+			vp_err(vp, "Not allowed to set suspend registers\n");
+			ret = -EINVAL;
+			goto free_return;
+		}
+	}
+
+	ret = mshv_set_vp_registers(vp->vp_index, vp->vp_partition->pt_id,
+				    args.count, registers);
+
+free_return:
+	kfree(registers);
+	return ret;
+}
+
+#if IS_ENABLED(CONFIG_X86)
+static long
+mshv_vp_ioctl_register_intercept_result(struct mshv_vp *vp,
+					void __user *user_args)
+{
+	struct mshv_register_intercept_result args;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	return hv_call_register_intercept_result(vp->vp_index,
+						 vp->vp_partition->pt_id,
+						 args.intercept_type,
+						 (union hv_register_intercept_result_parameters *)
+						 &args.parameters);
+}
+#endif
+
+static long
+mshv_vp_ioctl_get_cpuid_values(struct mshv_vp *vp, void __user *user_args)
+{
+	struct mshv_get_vp_cpuid_values args;
+	union hv_get_vp_cpuid_values_flags flags;
+	struct hv_cpuid_leaf_info info;
+	union hv_output_get_vp_cpuid_values result;
+	long ret;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	flags.use_vp_xfem_xss = 1;
+	flags.apply_registered_values = 1;
+	flags.reserved = 0;
+
+	memset(&info, 0, sizeof(info));
+	info.eax = args.function;
+	info.ecx = args.index;
+	info.xfem = args.xfem;
+	info.xss = args.xss;
+
+	ret = hv_call_get_vp_cpuid_values(vp->vp_index,
+					  vp->vp_partition->pt_id,
+					  flags, &info, &result);
+	if (ret)
+		return ret;
+
+	args.eax = result.eax;
+	args.ebx = result.ebx;
+	args.ecx = result.ecx;
+	args.edx = result.edx;
+	if (copy_to_user(user_args, &args, sizeof(args)))
+		return -EFAULT;
+
+	return 0;
+}
+
+static long
+mshv_vp_ioctl_read_gpa(struct mshv_vp *vp, void __user *user_args)
+{
+	struct mshv_read_write_gpa args;
+	union hv_access_gpa_control_flags flags;
+	union hv_access_gpa_result result;
+	long ret;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	flags.as_uint64 = args.flags;
+
+	ret = hv_call_read_gpa(vp->vp_index, vp->vp_partition->pt_id,
+			       flags, args.base_gpa, args.data,
+			       args.byte_count, &result);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(user_args, &args, sizeof(args)))
+		return -EFAULT;
+
+	return 0;
+}
+
+static long
+mshv_vp_ioctl_write_gpa(struct mshv_vp *vp, void __user *user_args)
+{
+	struct mshv_read_write_gpa args;
+	union hv_access_gpa_control_flags flags;
+	union hv_access_gpa_result result;
+	long ret;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	flags.as_uint64 = args.flags;
+
+	ret = hv_call_write_gpa(vp->vp_index, vp->vp_partition->pt_id,
+				flags, args.base_gpa, args.data,
+				args.byte_count, &result);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(user_args, &args, sizeof(args)))
+		return -EFAULT;
+
+	return 0;
+}
+
 static long
 mshv_vp_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 {
@@ -989,6 +1175,28 @@ mshv_vp_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 	case MSHV_ROOT_HVCALL:
 		r = mshv_ioctl_passthru_hvcall(vp->vp_partition, false,
 					       (void __user *)arg);
+		break;
+	/* Deprecated VP ioctls - backward compat */
+	case MSHV_GET_VP_REGISTERS:
+		r = mshv_vp_ioctl_get_regs(vp, (void __user *)arg);
+		break;
+	case MSHV_SET_VP_REGISTERS:
+		r = mshv_vp_ioctl_set_regs(vp, (void __user *)arg);
+		break;
+#if IS_ENABLED(CONFIG_X86)
+	case MSHV_VP_REGISTER_INTERCEPT_RESULT:
+		r = mshv_vp_ioctl_register_intercept_result(vp,
+							    (void __user *)arg);
+		break;
+#endif
+	case MSHV_GET_VP_CPUID_VALUES:
+		r = mshv_vp_ioctl_get_cpuid_values(vp, (void __user *)arg);
+		break;
+	case MSHV_READ_GPA:
+		r = mshv_vp_ioctl_read_gpa(vp, (void __user *)arg);
+		break;
+	case MSHV_WRITE_GPA:
+		r = mshv_vp_ioctl_write_gpa(vp, (void __user *)arg);
 		break;
 	default:
 		vp_warn(vp, "Invalid ioctl: %#x\n", ioctl);
@@ -1688,6 +1896,145 @@ withdraw_mem:
 	return ret;
 }
 
+/* Deprecated partition ioctl handlers - backward compat with older userspace */
+
+static long
+mshv_partition_ioctl_get_property(struct mshv_partition *partition,
+				  void __user *user_args)
+{
+	struct mshv_partition_property args;
+	long ret;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	ret = hv_call_get_partition_property(partition->pt_id,
+					     args.property_code,
+					     &args.property_value);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(user_args, &args, sizeof(args)))
+		return -EFAULT;
+
+	return 0;
+}
+
+static long
+mshv_partition_ioctl_set_property(struct mshv_partition *partition,
+				  void __user *user_args)
+{
+	long ret;
+	struct mshv_partition_property args;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	ret = mshv_init_async_handler(partition);
+	if (ret)
+		return ret;
+
+	return hv_call_set_partition_property(partition->pt_id,
+					      args.property_code,
+					      args.property_value,
+					      mshv_async_hvcall_handler,
+					      (void *)partition);
+}
+
+static long
+mshv_partition_ioctl_install_intercept(struct mshv_partition *partition,
+				       void __user *user_args)
+{
+	struct mshv_install_intercept args;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	return hv_call_install_intercept(partition->pt_id,
+					 args.access_type_mask,
+					 args.intercept_type,
+					 *(union hv_intercept_parameters *)
+					 &args.intercept_parameter);
+}
+
+static long
+mshv_partition_ioctl_assert_interrupt(struct mshv_partition *partition,
+				      void __user *user_args)
+{
+	struct mshv_assert_interrupt args;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	return hv_call_assert_virtual_interrupt(partition->pt_id, args.vector,
+						args.dest_addr,
+						*(union hv_interrupt_control *)
+						&args.control);
+}
+
+static long
+mshv_partition_ioctl_signal_event_direct(struct mshv_partition *partition,
+					 void __user *user_args)
+{
+	struct mshv_signal_event_direct args;
+	long ret;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	ret = hv_call_signal_event_direct(args.vp, partition->pt_id,
+					  args.vtl, args.sint,
+					  args.flag, &args.newly_signaled);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(user_args, &args, sizeof(args)))
+		return -EFAULT;
+
+	return 0;
+}
+
+static long
+mshv_partition_ioctl_post_message_direct(struct mshv_partition *partition,
+					 void __user *user_args)
+{
+	struct mshv_post_message_direct args;
+	u8 message[HV_MESSAGE_SIZE];
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	if (args.length > HV_MESSAGE_SIZE)
+		return -E2BIG;
+
+	memset(&message[0], 0, sizeof(message));
+	if (copy_from_user(&message[0], args.message, args.length))
+		return -EFAULT;
+
+	return hv_call_post_message_direct(args.vp, partition->pt_id,
+					   args.vtl, args.sint,
+					   &message[0]);
+}
+
+#if IS_ENABLED(CONFIG_X86)
+static long
+mshv_partition_ioctl_register_deliverabilty_notifications(
+	struct mshv_partition *partition, void __user *user_args)
+{
+	struct mshv_register_deliverabilty_notifications args;
+	struct hv_register_assoc hv_reg;
+
+	if (copy_from_user(&args, user_args, sizeof(args)))
+		return -EFAULT;
+
+	memset(&hv_reg, 0, sizeof(hv_reg));
+	hv_reg.name = HV_X64_REGISTER_DELIVERABILITY_NOTIFICATIONS;
+	hv_reg.value.reg64 = args.flag;
+
+	return mshv_set_vp_registers(args.vp, partition->pt_id, 1, &hv_reg);
+}
+#endif
+
 static long
 mshv_partition_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 {
@@ -1724,6 +2071,31 @@ mshv_partition_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
 	case MSHV_ROOT_HVCALL:
 		ret = mshv_ioctl_passthru_hvcall(partition, true, uarg);
 		break;
+	/* Deprecated partition ioctls - backward compat */
+	case MSHV_GET_PARTITION_PROPERTY:
+		ret = mshv_partition_ioctl_get_property(partition, uarg);
+		break;
+	case MSHV_SET_PARTITION_PROPERTY:
+		ret = mshv_partition_ioctl_set_property(partition, uarg);
+		break;
+	case MSHV_INSTALL_INTERCEPT:
+		ret = mshv_partition_ioctl_install_intercept(partition, uarg);
+		break;
+	case MSHV_ASSERT_INTERRUPT:
+		ret = mshv_partition_ioctl_assert_interrupt(partition, uarg);
+		break;
+	case MSHV_SIGNAL_EVENT_DIRECT:
+		ret = mshv_partition_ioctl_signal_event_direct(partition, uarg);
+		break;
+	case MSHV_POST_MESSAGE_DIRECT:
+		ret = mshv_partition_ioctl_post_message_direct(partition, uarg);
+		break;
+#if IS_ENABLED(CONFIG_X86)
+	case MSHV_REGISTER_DELIVERABILITY_NOTIFICATIONS:
+		ret = mshv_partition_ioctl_register_deliverabilty_notifications(
+			partition, uarg);
+		break;
+#endif
 	default:
 		ret = -ENOTTY;
 	}

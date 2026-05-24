@@ -467,6 +467,8 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_GET_VP_REGISTERS				0x0050
 #define HVCALL_SET_VP_REGISTERS				0x0051
 #define HVCALL_TRANSLATE_VIRTUAL_ADDRESS		0x0052
+#define HVCALL_READ_GPA				0x0053
+#define HVCALL_WRITE_GPA				0x0054
 #define HVCALL_CLEAR_VIRTUAL_INTERRUPT			0x0056
 #define HVCALL_DELETE_PORT				0x0058
 #define HVCALL_DISCONNECT_PORT				0x005b
@@ -1055,6 +1057,9 @@ enum hv_register_name {
 	HV_X64_REGISTER_INTERMEDIATE_CR3			= 0x00041002,
 	HV_X64_REGISTER_INTERMEDIATE_CR4			= 0x00041003,
 	HV_X64_REGISTER_INTERMEDIATE_CR8			= 0x00041004,
+
+	/* Intercept Registers */
+	HV_X64_REGISTER_DELIVERABILITY_NOTIFICATIONS		= 0x00010006,
 };
 
 /*
@@ -1444,6 +1449,13 @@ union hv_intercept_parameters {
 #endif
 	/* N.B. Other intercept types do not have any parameters. */
 };
+
+struct hv_input_install_intercept {
+	u64 partition_id;
+	u32 access_type;	/* mask */
+	u32 intercept_type;	/* hv_intercept_type */
+	union hv_intercept_parameters intercept_parameter;
+} __packed;
 
 /* Data structures for HVCALL_MMIO_READ and HVCALL_MMIO_WRITE */
 #define HV_HYPERCALL_MMIO_MAX_DATA_LENGTH 64

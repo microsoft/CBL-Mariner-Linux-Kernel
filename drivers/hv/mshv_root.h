@@ -330,6 +330,37 @@ int hv_call_modify_spa_host_access(u64 partition_id, struct page **pages,
 int hv_call_get_partition_property_ex(u64 partition_id, u64 property_code, u64 arg,
 				      void *property_value, size_t property_value_sz);
 
+/* Deprecated hv_call wrappers - backward compat */
+int hv_call_install_intercept(u64 partition_id, u32 access_type,
+			      enum hv_intercept_type intercept_type,
+			      union hv_intercept_parameters intercept_parameter);
+int hv_call_set_partition_property(u64 partition_id, u64 property_code,
+				   u64 property_value,
+				   void (*completion_handler)(void *, u64 *),
+				   void *completion_data);
+#if IS_ENABLED(CONFIG_X86)
+int hv_call_register_intercept_result(u32 vp_index, u64 partition_id,
+				      enum hv_intercept_type intercept_type,
+				      union hv_register_intercept_result_parameters *params);
+#endif
+int hv_call_signal_event_direct(u32 vp_index, u64 partition_id,
+				u8 vtl, u8 sint, u16 flag_number,
+				u8 *newly_signaled);
+int hv_call_post_message_direct(u32 vp_index, u64 partition_id,
+				u8 vtl, u32 sint_index, u8 *message);
+int hv_call_get_vp_cpuid_values(u32 vp_index, u64 partition_id,
+				union hv_get_vp_cpuid_values_flags values_flags,
+				struct hv_cpuid_leaf_info *info,
+				union hv_output_get_vp_cpuid_values *result);
+int hv_call_read_gpa(u32 vp_index, u64 partition_id,
+		     union hv_access_gpa_control_flags control_flags,
+		     u64 gpa_base, u8 *data, u32 byte_count,
+		     union hv_access_gpa_result *result);
+int hv_call_write_gpa(u32 vp_index, u64 partition_id,
+		      union hv_access_gpa_control_flags control_flags,
+		      u64 gpa_base, u8 *data, u32 byte_count,
+		      union hv_access_gpa_result *result);
+
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 int __init mshv_debugfs_init(void);
 void mshv_debugfs_exit(void);
