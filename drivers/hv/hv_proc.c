@@ -244,6 +244,7 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 		local_irq_save(irq_flags);
 
 		input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+		memset(input, 0, sizeof(*input));
 
 		input->partition_id = partition_id;
 		input->vp_index = vp_index;
