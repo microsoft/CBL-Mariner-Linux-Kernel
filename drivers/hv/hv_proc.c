@@ -178,7 +178,7 @@ bool hv_result_needs_memory(u64 status)
 }
 EXPORT_SYMBOL_GPL(hv_result_needs_memory);
 
-int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
+int hv_call_add_logical_proc(int node, u32 lp_index, u64 apic_id)
 {
 	struct hv_input_add_logical_processor *input;
 	struct hv_output_add_logical_processor *output;
@@ -207,7 +207,7 @@ int hv_call_add_logical_proc(int node, u32 lp_index, u32 apic_id)
 
 		if (!hv_result_needs_memory(status)) {
 			if (!hv_result_success(status)) {
-				hv_status_err(status, "cpu %u apic ID: %u\n",
+				hv_status_err(status, "cpu %u apic ID: %llu\n",
 					      lp_index, apic_id);
 				ret = hv_result_to_errno(status);
 			}
