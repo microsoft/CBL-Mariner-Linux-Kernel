@@ -269,3 +269,40 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(hv_call_create_vp);
+
+/*
+ * Probe whether logical processor @lp_index is already known to the
+ * hypervisor. Used by hv_smp_prepare_cpus() to detect that we are running
+ * in a kexec'd kernel and the LPs/VPs from the previous boot still exist.
+ */
+bool hv_lp_exists(u32 lp_index)
+{
+	struct hv_input_get_logical_processor_run_time *input;
+	struct hv_output_get_logical_processor_run_time *out_page;
+	unsigned long flags;
+	u64 status;
+
+	local_irq_save(flags);
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	out_page = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	input->lp_index = lp_index;
+	status = hv_do_hypercall(HVCALL_GET_LOGICAL_PROCESSOR_RUN_TIME,
+				 input, out_page);
+
+	local_irq_restore(flags);
+
+	/*
+	 * Called early in boot before adding the LPs. HV_STATUS_SUCCESS and
+	 * HV_STATUS_INVALID_LP_INDEX are the only expected status codes;
+	 * anything else leaves the system in an indeterminate state.
+	 */
+	if (hv_result(status) != HV_STATUS_SUCCESS &&
+	    hv_result(status) != HV_STATUS_INVALID_LP_INDEX) {
+		hv_status_err(status, "lp_index %u\n", lp_index);
+		BUG();
+	}
+
+	return hv_result_success(status);
+}

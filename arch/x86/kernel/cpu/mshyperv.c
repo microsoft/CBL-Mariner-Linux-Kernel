@@ -440,6 +440,14 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 	}
 
 #ifdef CONFIG_X86_64
+	/*
+	 * If AP LPs already exist, we are running in a kexec'd kernel and
+	 * the VPs were created by the previous kernel. Skip readding them;
+	 * doing so would return HV_STATUS_INVALID_PARAMETER and BUG().
+	 */
+	if (hv_lp_exists(1))
+		return;
+
 	BUG_ON(ccpu != 0);
 
 	for (i = 0; i < NR_CPUS; i++)
