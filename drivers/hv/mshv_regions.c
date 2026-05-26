@@ -436,18 +436,21 @@ static int mshv_region_hmm_fault_and_lock(struct mshv_mem_region *region,
  *
  * Return: 0 on success, negative error code on failure.
  */
-static int mshv_region_range_fault(struct mshv_mem_region *region,
-				   u64 page_offset, u64 page_count)
+static int mshv_region_collect_and_map(struct mshv_mem_region *region,
+				       u64 page_offset, u64 page_count,
+				       bool do_fault)
 {
 	struct hmm_range range = {
 		.notifier = &region->mreg_mni,
-		.default_flags = HMM_PFN_REQ_FAULT | HMM_PFN_REQ_WRITE,
 	};
 	unsigned long *pfns;
 	int ret;
 	u64 i;
 
-	pfns = kmalloc_array(page_count, sizeof(*pfns), GFP_KERNEL);
+	if (do_fault)
+		range.default_flags = HMM_PFN_REQ_FAULT | HMM_PFN_REQ_WRITE;
+
+	pfns = vmalloc_array(page_count, sizeof(*pfns));
 	if (!pfns)
 		return -ENOMEM;
 
@@ -462,16 +465,39 @@ static int mshv_region_range_fault(struct mshv_mem_region *region,
 	if (ret)
 		goto out;
 
-	for (i = 0; i < page_count; i++)
-		region->mreg_pages[page_offset + i] = hmm_pfn_to_page(pfns[i]);
+	for (i = 0; i < page_count; i++) {
+		if (pfns[i] & HMM_PFN_VALID)
+			region->mreg_pages[page_offset + i] =
+				hmm_pfn_to_page(pfns[i]);
+		else
+			region->mreg_pages[page_offset + i] = NULL;
+	}
 
 	ret = mshv_region_remap_pages(region, region->hv_map_flags,
 				      page_offset, page_count);
 
 	mutex_unlock(&region->mreg_mutex);
 out:
-	kfree(pfns);
+	vfree(pfns);
 	return ret;
+}
+
+static int mshv_region_range_fault(struct mshv_mem_region *region,
+				   u64 page_offset, u64 page_count)
+{
+	return mshv_region_collect_and_map(region, page_offset, page_count,
+					   true);
+}
+
+/*
+ * Collect any pages already populated in the userspace mapping and map
+ * them into the hypervisor with full access. Missing pages remain
+ * unmapped (NO_ACCESS) and will be faulted in on demand.
+ */
+int mshv_region_map_populated(struct mshv_mem_region *region)
+{
+	return mshv_region_collect_and_map(region, 0, region->nr_pages,
+					   false);
 }
 
 bool mshv_region_handle_gfn_fault(struct mshv_mem_region *region, u64 gfn)

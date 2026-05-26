@@ -1642,14 +1642,21 @@ mshv_map_user_memory(struct mshv_partition *partition,
 		break;
 	case MSHV_REGION_TYPE_MEM_MOVABLE:
 		/*
-		 * For movable memory regions, remap with no access to let
-		 * the hypervisor track dirty pages, enabling pre-copy live
-		 * migration.
+		 * For movable memory regions, first map the whole region as
+		 * NO_ACCESS to let the hypervisor track dirty pages (precopy
+		 * live migration). Then collect any already-populated pages
+		 * from the userspace mapping and remap them with full access
+		 * upfront, so the guest does not take per-page faults on
+		 * pages that are already present (ported from main-6.6
+		 * commit a6ab020267dc).
 		 */
 		ret = hv_call_map_gpa_pages(partition->pt_id,
 					    region->start_gfn,
 					    region->nr_pages,
 					    HV_MAP_GPA_NO_ACCESS, NULL);
+		if (ret)
+			break;
+		ret = mshv_region_map_populated(region);
 		break;
 	case MSHV_REGION_TYPE_MMIO:
 		ret = hv_call_map_mmio_pages(partition->pt_id,
