@@ -2339,6 +2339,27 @@ mshv_partition_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+/* Given a process tgid, return partition id if it is a VMM process */
+u64 mshv_current_partid(void)
+{
+	struct mshv_partition *pt;
+	int i;
+	u64 ret_ptid = HV_PARTITION_ID_INVALID;
+
+	rcu_read_lock();
+
+	hash_for_each_rcu(mshv_root.pt_htable, i, pt, pt_hnode) {
+		if (pt->pt_vmm_tgid == current->tgid) {
+			ret_ptid = pt->pt_id;
+			break;
+		}
+	}
+
+	rcu_read_unlock();
+	return ret_ptid;
+}
+EXPORT_SYMBOL_GPL(mshv_current_partid);
+
 static int
 add_partition(struct mshv_partition *partition)
 {
@@ -2503,6 +2524,8 @@ mshv_ioctl_create_partition(void __user *user_arg, struct device *module_dev)
 				       &partition->pt_id);
 	if (ret)
 		goto cleanup_irq_srcu;
+
+	partition->pt_vmm_tgid = current->tgid;
 
 	ret = add_partition(partition);
 	if (ret)

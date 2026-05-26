@@ -384,6 +384,7 @@ bool hv_result_needs_memory(u64 status);
 int hv_deposit_memory_node(int node, u64 partition_id, u64 status);
 int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id);
 int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
+u64 mshv_current_partid(void);
 
 void __init hv_mark_resources(void);
 
@@ -406,6 +407,10 @@ static inline int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u3
 }
 
 static inline void __init hv_mark_resources(void) {}
+static inline u64 mshv_current_partid(void)
+{
+	return HV_PARTITION_ID_INVALID;
+}
 #endif /* CONFIG_MSHV_ROOT */
 
 static inline int hv_deposit_memory(u64 partition_id, u64 status)
