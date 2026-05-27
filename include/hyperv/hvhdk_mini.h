@@ -431,6 +431,32 @@ struct hv_send_ipi_ex { /* HV_INPUT_SEND_SYNTHETIC_CLUSTER_IPI_EX */
 	struct hv_vpset vp_set;
 } __packed;
 
+union hv_attdev_flags {		/* HV_ATTACH_DEVICE_FLAGS */
+	struct {
+		u32 logical_id : 1;
+		u32 resvd0 : 1;
+		u32 ats_enabled : 1;
+		u32 virt_func : 1;
+		u32 shared_irq_child : 1;
+		u32 virt_dev : 1;
+		u32 ats_supported : 1;
+		u32 small_irt : 1;
+		u32 resvd : 24;
+	} __packed;
+	u32 as_uint32;
+};
+
+union hv_dev_pci_caps {		/* HV_DEVICE_PCI_CAPABILITIES */
+	struct {
+		u32 max_pasid_width : 5;
+		u32 invalidate_qdepth : 5;
+		u32 global_inval : 1;
+		u32 prg_response_req : 1;
+		u32 resvd : 20;
+	} __packed;
+	u32 as_uint32;
+};
+
 typedef u16 hv_pci_rid;		/* HV_PCI_RID */
 typedef u16 hv_pci_segment;	/* HV_PCI_SEGMENT */
 typedef u64 hv_logical_device_id;
@@ -508,6 +534,92 @@ union hv_device_id {		/* HV_DEVICE_ID */
 		u32 input_mapping_count : 30;
 		u32 device_type : 2;
 	} acpi;
+} __packed;
+
+struct hv_input_attach_device {         /* HV_INPUT_ATTACH_DEVICE */
+	u64 partition_id;
+	union hv_device_id device_id;
+	union hv_attdev_flags attdev_flags;
+	u8  attdev_vtl;
+	u8  rsvd0;
+	u16 rsvd1;
+	u64 logical_devid;
+	union hv_dev_pci_caps dev_pcicaps;
+	u16 pf_pci_rid;
+	u16 resvd2;
+} __packed;
+
+struct hv_input_detach_device {		/* HV_INPUT_DETACH_DEVICE */
+	u64 partition_id;
+	u64 logical_devid;
+} __packed;
+
+
+/* 3 domain types: stage 1, stage 2, and SOC */
+#define HV_DEVICE_DOMAIN_TYPE_S2  0 /* HV_DEVICE_DOMAIN_ID_TYPE_S2 */
+#define HV_DEVICE_DOMAIN_TYPE_S1  1 /* HV_DEVICE_DOMAIN_ID_TYPE_S1 */
+#define HV_DEVICE_DOMAIN_TYPE_SOC 2 /* HV_DEVICE_DOMAIN_ID_TYPE_SOC */
+
+/* ID for stage 2 default domain and NULL domain */
+#define HV_DEVICE_DOMAIN_ID_S2_DEFAULT 0
+#define HV_DEVICE_DOMAIN_ID_S2_NULL    0xFFFFFFFFULL
+
+union hv_device_domain_id {
+	u64 as_uint64;
+	struct {
+		u32 type : 4;
+		u32 reserved : 28;
+		u32 id;
+	};
+} __packed;
+
+struct hv_input_device_domain { /* HV_INPUT_DEVICE_DOMAIN */
+	u64 partition_id;
+	union hv_input_vtl owner_vtl;
+	u8 padding[7];
+	union hv_device_domain_id domain_id;
+} __packed;
+
+union hv_create_device_domain_flags {	/* HV_CREATE_DEVICE_DOMAIN_FLAGS */
+	u32 as_uint32;
+	struct {
+		u32 forward_progress_required : 1;
+		u32 inherit_owning_vtl : 1;
+		u32 reserved : 30;
+	} __packed;
+} __packed;
+
+struct hv_input_create_device_domain {	/* HV_INPUT_CREATE_DEVICE_DOMAIN */
+	struct hv_input_device_domain device_domain;
+	union hv_create_device_domain_flags create_device_domain_flags;
+} __packed;
+
+struct hv_input_delete_device_domain {	/* HV_INPUT_DELETE_DEVICE_DOMAIN */
+	struct hv_input_device_domain device_domain;
+} __packed;
+
+struct hv_input_attach_device_domain {	/* HV_INPUT_ATTACH_DEVICE_DOMAIN */
+	struct hv_input_device_domain device_domain;
+	union hv_device_id device_id;
+} __packed;
+
+struct hv_input_detach_device_domain {	/* HV_INPUT_DETACH_DEVICE_DOMAIN */
+	u64 partition_id;
+	union hv_device_id device_id;
+} __packed;
+
+struct hv_input_map_device_gpa_pages {	/* HV_INPUT_MAP_DEVICE_GPA_PAGES */
+	struct hv_input_device_domain device_domain;
+	union hv_input_vtl target_vtl;
+	u8 padding[3];
+	u32 map_flags;
+	u64 target_device_va_base;
+	u64 gpa_page_list[];
+} __packed;
+
+struct hv_input_unmap_device_gpa_pages {  /* HV_INPUT_UNMAP_DEVICE_GPA_PAGES */
+	struct hv_input_device_domain device_domain;
+	u64 target_device_va_base;
 } __packed;
 
 #endif /* _HV_HVHDK_MINI_H */

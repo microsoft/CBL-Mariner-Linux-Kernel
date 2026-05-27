@@ -8,7 +8,7 @@
 #include <linux/types.h>
 #include <linux/bits.h>
 
-typedef u64 hv_nano100_time_t;  /* HV_NANO100_TIME */
+typedef u64 hv_nano100_time_t;	/* HV_NANO100_TIME */
 
 struct hv_u128 {
 	u64 low_part;
@@ -329,6 +329,9 @@ union hv_hypervisor_version_info {
 /* stimer Direct Mode is available */
 #define HV_STIMER_DIRECT_MODE_AVAILABLE			BIT(19)
 
+#define HV_DEVICE_DOMAIN_AVAILABLE			BIT(24)
+#define HV_S1_DEVICE_DOMAIN_AVAILABLE			BIT(25)
+
 /*
  * Implementation recommendations. Indicates which behaviors the hypervisor
  * recommends the OS implement for optimal performance.
@@ -494,6 +497,8 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_MAP_DEVICE_INTERRUPT			0x007c
 #define HVCALL_UNMAP_DEVICE_INTERRUPT			0x007d
 #define HVCALL_RETARGET_INTERRUPT			0x007e
+#define HVCALL_ATTACH_DEVICE				0x0082
+#define HVCALL_DETACH_DEVICE				0x0083
 #define HVCALL_ENTER_SLEEP_STATE			0x0084
 #define HVCALL_NOTIFY_PORT_RING_EMPTY			0x008b
 #define HVCALL_REGISTER_INTERCEPT_RESULT		0x0091
@@ -505,9 +510,15 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_TRANSLATE_VIRTUAL_ADDRESS_EX		0x00ac
 #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_SPACE	0x00af
 #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_LIST	0x00b0
+#define HVCALL_CREATE_DEVICE_DOMAIN			0x00b1
+#define HVCALL_ATTACH_DEVICE_DOMAIN			0x00b2
+#define HVCALL_MAP_DEVICE_GPA_PAGES			0x00b3
+#define HVCALL_UNMAP_DEVICE_GPA_PAGES			0x00b4
 #define HVCALL_SIGNAL_EVENT_DIRECT			0x00c0
 #define HVCALL_POST_MESSAGE_DIRECT			0x00c1
 #define HVCALL_DISPATCH_VP				0x00c2
+#define HVCALL_DETACH_DEVICE_DOMAIN			0x00c4
+#define HVCALL_DELETE_DEVICE_DOMAIN			0x00c5
 #define HVCALL_GET_GPA_PAGES_ACCESS_STATES		0x00c9
 #define HVCALL_INVOKE_TEST_FRAMEWORK			0x00cb
 #define HVCALL_ACQUIRE_SPARSE_SPA_PAGE_HOST_ACCESS	0x00d7
@@ -639,7 +650,7 @@ struct ms_hyperv_tsc_page {	 /* HV_REFERENCE_TSC_PAGE */
 #define HV_SYNIC_FIRST_UNUSED_SINT_INDEX 0x00000005
 
 /* mshv assigned SINT for doorbell */
-#define HV_SYNIC_DOORBELL_SINT_INDEX     HV_SYNIC_FIRST_UNUSED_SINT_INDEX
+#define HV_SYNIC_DOORBELL_SINT_INDEX	 HV_SYNIC_FIRST_UNUSED_SINT_INDEX
 
 enum hv_interrupt_type {
 	HV_X64_INTERRUPT_TYPE_FIXED		= 0x0000,
@@ -1484,9 +1495,9 @@ enum hv_intercept_access_type {
 };
 
 enum hv_eventlog_type { /* HV_EVENTLOG_TYPE */
-        HV_EVENT_LOG_TYPE_GLOBAL_SYSTEM_EVENTS  = 0x00000000,
-        HV_EVENT_LOG_TYPE_LOCAL_DIAGNOSTICS     = 0x00000001,
-        HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS    = 0x00000002,
+	HV_EVENT_LOG_TYPE_GLOBAL_SYSTEM_EVENTS	= 0x00000000,
+	HV_EVENT_LOG_TYPE_LOCAL_DIAGNOSTICS	= 0x00000001,
+	HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS	= 0x00000002,
 };
 
 #endif /* _HV_HVGDK_MINI_H */
