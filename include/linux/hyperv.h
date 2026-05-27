@@ -1736,4 +1736,10 @@ static inline unsigned long virt_to_hvpfn(void *addr)
 #define HVPFN_DOWN(x)	((x) >> HV_HYP_PAGE_SHIFT)
 #define page_to_hvpfn(page)	(page_to_pfn(page) * NR_HV_HYP_PAGES_IN_PAGE)
 
+#ifdef CONFIG_HYPERV_IOMMU
+void __init hv_iommu_detect(void);
+#else
+static inline void hv_iommu_detect(void) { }
+#endif /* CONFIG_HYPERV_IOMMU */
+
 #endif /* _HYPERV_H */

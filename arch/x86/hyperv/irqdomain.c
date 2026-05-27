@@ -94,6 +94,7 @@ static int hv_unmap_interrupt(u64 id, struct hv_interrupt_entry *irq_entry)
 }
 
 #ifdef CONFIG_PCI_MSI
+#if IS_ENABLED(CONFIG_HYPERV_IOMMU)
 struct rid_data {
 	struct pci_dev *bridge;
 	u32 rid;
@@ -175,6 +176,7 @@ out:
 	return hv_devid.as_uint64;
 }
 EXPORT_SYMBOL_GPL(hv_build_devid_type_pci);
+#endif /* IS_ENABLED(CONFIG_HYPERV_IOMMU) */
 
 /*
  * hv_map_msi_interrupt() - Map the MSI IRQ in the hypervisor.

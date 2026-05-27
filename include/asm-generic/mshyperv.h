@@ -253,8 +253,6 @@ int hv_common_cpu_init(unsigned int cpu);
 int hv_common_cpu_die(unsigned int cpu);
 void hv_identify_partition_type(void);
 
-int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages);
-
 /**
  * hv_cpu_number_to_vp_number() - Map CPU to VP.
  * @cpu_number: CPU number in Linux terms
@@ -361,6 +359,24 @@ u64 hv_pci_vmbus_device_id(struct pci_dev *pdev);
 static inline u64 hv_pci_vmbus_device_id(struct pci_dev *pdev)
 { return 0; }
 #endif /* IS_ENABLED(CONFIG_PCI_HYPERV) */
+
+#if IS_ENABLED(CONFIG_HYPERV_IOMMU)
+u64 hv_get_current_partid(void);
+bool hv_pcidev_is_attached_dev(struct pci_dev *pdev);
+bool hv_pcidev_is_pthru_dev(struct pci_dev *pdev);
+u64 hv_build_devid_oftype(struct pci_dev *pdev, enum hv_device_type type);
+#else
+static inline bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
+{ return false; }
+static inline bool hv_pcidev_is_pthru_dev(struct pci_dev *pdev)
+{ return false; }
+static inline u64 hv_build_devid_oftype(struct pci_dev *pdev,
+					enum hv_device_type type)
+{ return 0; }
+static inline u64 hv_get_current_partid(void)
+{ return HV_PARTITION_ID_INVALID; }
+#endif /* IS_ENABLED(CONFIG_HYPERV_IOMMU) */
+
 static inline void hv_root_crash_init(void) {}
 #else /* CONFIG_HYPERV */
 static inline void hv_identify_partition_type(void) {}
@@ -396,6 +412,8 @@ int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
 u64 mshv_current_partid(void);
 
 void __init hv_mark_resources(void);
+bool hv_lp_exists(u32 lp_index);
+int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages);
 
 #else /* CONFIG_MSHV_ROOT */
 static inline bool hv_root_partition(void) { return false; }
@@ -403,6 +421,10 @@ static inline bool hv_l1vh_partition(void) { return false; }
 static inline bool hv_parent_partition(void) { return false; }
 static inline bool hv_result_needs_memory(u64 status) { return false; }
 static inline int hv_deposit_memory_node(int node, u64 partition_id, u64 status)
+{
+	return -EOPNOTSUPP;
+}
+static inline int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
 {
 	return -EOPNOTSUPP;
 }

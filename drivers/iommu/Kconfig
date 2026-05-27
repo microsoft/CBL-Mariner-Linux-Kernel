@@ -351,13 +351,12 @@ config MTK_IOMMU_V1
 	  if unsure, say N here.
 
 config HYPERV_IOMMU
-	bool "Hyper-V IRQ Handling"
+	bool "Hyper-V IOMMU Unit"
 	depends on HYPERV && X86
 	select IOMMU_API
 	default HYPERV
 	help
-	  Stub IOMMU driver to handle IRQs to support Hyper-V Linux
-	  guest and root partitions.
+	  Hyper-V pseudo IOMMU unit.
 
 config VIRTIO_IOMMU
 	tristate "Virtio IOMMU driver"
