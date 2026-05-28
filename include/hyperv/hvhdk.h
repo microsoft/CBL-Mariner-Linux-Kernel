@@ -1149,4 +1149,21 @@ struct hv_output_write_gpa {
 	union hv_access_gpa_result access_result;
 } __packed;
 
+#ifdef CONFIG_X86
+
+struct hv_input_get_vp_set_from_mda {   /* HV_OUTPUT_GET_VP_SET_FROM_MDA */
+	u64 target_partid;
+	u64 dest_address;
+	u8  input_vtl;
+	u8  destmode_logical;         /* true => mode is logical */
+	u16 reserved0;                /* mbz */
+	u32 reserved1;                /* mbz */
+} __packed;
+
+union hv_output_get_vp_set_from_mda {  /* HV_OUTPUT_GET_VP_SET_FROM_MDA */
+	struct hv_vpset target_vpset;
+	u64 bitset_buffer[HV_GENERIC_SET_QWORD_COUNT(HV_MAX_VPS)];
+} __packed;
+
+#endif /* CONFIG_X86 */
 #endif /* _HV_HVHDK_H */
