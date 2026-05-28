@@ -218,6 +218,20 @@ u64 hv_build_devid_oftype(struct pci_dev *pdev, enum hv_device_type type)
 }
 EXPORT_SYMBOL_GPL(hv_build_devid_oftype);
 
+/* Build device id for the interrupt path */
+u64 hv_devid_from_pdev(struct pci_dev *pdev)
+{
+	enum hv_device_type dev_type;
+
+	if (hv_pcidev_is_attached_dev(pdev))
+		dev_type = HV_DEVICE_TYPE_LOGICAL;
+	else
+		dev_type = HV_DEVICE_TYPE_PCI;
+
+	return hv_build_devid_oftype(pdev, dev_type);
+}
+EXPORT_SYMBOL_GPL(hv_devid_from_pdev);
+
 /* Create a new device domain in the hypervisor */
 static int hv_iommu_create_hyp_devdom(struct hv_domain *hvdom)
 {

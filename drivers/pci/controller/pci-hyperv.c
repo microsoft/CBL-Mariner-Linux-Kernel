@@ -1745,6 +1745,16 @@ static void hv_irq_mask(struct irq_data *data)
 
 static void hv_irq_unmask(struct irq_data *data)
 {
+	struct pci_dev *pdev;
+	struct msi_desc *msi_desc;
+
+	msi_desc = irq_data_get_msi_desc(data);
+	pdev = msi_desc_to_pci_dev(msi_desc);
+
+	/* Done during bypass setup in mshv_eventfd.c: mshv_irqfd_assign() */
+	if (hv_pcidev_is_pthru_dev(pdev))
+		return;
+
 	hv_arch_irq_unmask(data);
 
 	if (data->parent_data->chip->irq_unmask)

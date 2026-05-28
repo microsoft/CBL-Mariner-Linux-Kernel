@@ -199,7 +199,7 @@ int hv_map_msi_interrupt(struct irq_data *data,
 
 	msidesc = irq_data_get_msi_desc(data);
 	pdev = msi_desc_to_pci_dev(msidesc);
-	hv_devid.as_uint64 = hv_build_devid_type_pci(pdev);
+	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
 	cpu = cpumask_first(irq_data_get_effective_affinity_mask(data));
 
 	return hv_map_interrupt(hv_devid, false, cpu, cfg->vector,
@@ -232,6 +232,20 @@ static void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 
 	if (!cfg) {
 		pr_debug("%s: cfg is NULL", __func__);
+		return;
+	}
+
+	/*
+	 * For direct attached devices, we cannot map interrupts in the
+	 * hypervisor because it will not allow it until we have guest target
+	 * vcpu and vector. So defer it until irqbypass. Also, do the same
+	 * for domain attached devices for simplicity.
+	 */
+	if (hv_pcidev_is_pthru_dev(pdev)) {
+		if (data->chip_data)
+			entry_to_msi_msg(data->chip_data, msg);
+		else
+			memset(msg, 0, sizeof(struct msi_msg));
 		return;
 	}
 
@@ -276,7 +290,7 @@ static int hv_unmap_msi_interrupt(struct pci_dev *pdev,
 {
 	union hv_device_id hv_devid;
 
-	hv_devid.as_uint64 = hv_build_devid_type_pci(pdev);
+	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
 	return hv_unmap_interrupt(hv_devid.as_uint64, irq_entry);
 }
 
