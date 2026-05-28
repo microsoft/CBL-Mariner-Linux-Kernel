@@ -294,7 +294,8 @@ int hv_call_create_partition(u64 flags,
 int hv_call_initialize_partition(u64 partition_id);
 int hv_call_finalize_partition(u64 partition_id);
 int hv_call_delete_partition(u64 partition_id);
-int hv_call_map_mmio_pages(u64 partition_id, u64 gfn, u64 mmio_spa, u64 numpgs);
+int hv_map_mmio_pages(u64 partition_id, struct mshv_mem_region *reg, u64 gfn,
+		      u64 mmio_mfn);
 int hv_call_map_gpa_pages(u64 partition_id, u64 gpa_target, u64 page_count,
 			  u32 flags, struct page **pages);
 int hv_call_unmap_gpa_pages(u64 partition_id, u64 gpa_target, u64 page_count,
