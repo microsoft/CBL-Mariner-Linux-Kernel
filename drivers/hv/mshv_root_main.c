@@ -46,6 +46,10 @@ MODULE_DESCRIPTION("Microsoft Hyper-V root partition VMM interface /dev/mshv");
 #define HV_VP_COUNTER_ROOT_DISPATCH_THREAD_BLOCKED 95
 #endif
 
+static bool hv_no_movbl_pgs;	/* disable movable pages completely */
+module_param(hv_no_movbl_pgs, bool, 0644);
+MODULE_PARM_DESC(hv_no_movbl_pgs, "If set, don't do movable pages for VMs");
+
 struct mshv_root mshv_root;
 
 enum hv_scheduler_type hv_scheduler_type;
@@ -1569,6 +1573,12 @@ static void mshv_async_hvcall_handler(void *data, u64 *status)
 	*status = partition->async_hypercall_status;
 }
 
+static bool mshv_do_pt_regions_pinned(struct mshv_partition *pt)
+{
+	return pt->pt_regions_pinned || mshv_partition_encrypted(pt) ||
+	       hv_no_movbl_pgs;
+}
+
 /*
  * NB: caller checks and makes sure mem->size is page aligned
  * Returns: 0 with regionpp updated on success, or -errno
@@ -1599,7 +1609,7 @@ static int mshv_partition_create_region(struct mshv_partition *partition,
 
 	if (is_mmio)
 		rg->mreg_type = MSHV_REGION_TYPE_MMIO;
-	else if (mshv_partition_encrypted(partition) ||
+	else if (mshv_do_pt_regions_pinned(partition) ||
 		 !mshv_region_movable_init(rg))
 		rg->mreg_type = MSHV_REGION_TYPE_MEM_PINNED;
 	else
@@ -1887,6 +1897,9 @@ static long mshv_partition_ioctl_create_device(struct mshv_partition *partition,
 	devargk.fd = rc;
 	if (copy_to_user(uarg, &devargk, sizeof(devargk)))
 		return -EFAULT;    /* cleanup in mshv_device_fop_release() */
+
+	/* For now, all regions must be pinned if there is device passthru. */
+	partition->pt_regions_pinned = true;
 
 	return 0;
 
