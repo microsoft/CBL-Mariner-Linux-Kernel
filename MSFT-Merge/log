@@ -1,0 +1,15 @@
+Name                                               SHA1
+----                                               ----
+feature/hvlite_virtio_pmem/6.6                     d8c83cf1ca2a4375dd39f885b863b100aae05f5f
+feature/cifs/6.6                                   22dbc6caced22d2260e238ed6758953b95f7205d
+feature/mana/6.6                                   ba6cf51a5a06a9b246318e1a5d0f2b87a2c06e93
+feature/ipe/6.6                                    364810aa91cc6207a703e15fc07bddaab3ad3fc4
+feature/secure-boot-lockdown/6.6                   320adb32ca7b82fb903d72291a03664f771149c4
+feature/mana-infiniband/6.6                        c09fbcd31ae6d71e7c69545839bec92d8e15c13b
+feature/mariner-3-tdx/6.6                          690b08b64db4c3bc2a0caa9c824243537906aa26
+feature/nvidia-gb-200/6.6                          4da3ec342c0646a17ba5d178de4a0375b8058323
+feature/gb200-cx8/6.6                              d25c658c7a2552783934ceadeb88767a76254f29
+feature/jitterentropy/6.6                          ba1d7a03d1b40372e271f15f22614554f7d32a0d
+feature/dm-verity/6.6                              080b894e9672df080edb91e93efc2b81969c8da1
+feature/reverts/6.6                                bfaf4bcdafa59ed549f7e6475ca9ab199382576f
+user/tahera/dom0/6.6                               9ef6e6aa7b2084bef1435f7e34eeb6912d4b004d
