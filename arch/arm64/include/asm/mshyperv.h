@@ -6,9 +6,8 @@
  * the ARM64 architecture.  See include/asm-generic/mshyperv.h for
  * definitions are that architecture independent.
  *
- * Definitions that are specified in the Hyper-V Top Level Functional
- * Spec (TLFS) should not go in this file, but should instead go in
- * hyperv-tlfs.h.
+ * Definitions that are derived from Hyper-V code or headers should not go in
+ * this file, but should instead go in the relevant files in include/hyperv.
  *
  * Copyright (C) 2021, Microsoft, Inc.
  *
@@ -20,7 +19,12 @@
 
 #include <linux/types.h>
 #include <linux/arm-smccc.h>
-#include <asm/hyperv-tlfs.h>
+#include <linux/errno.h>
+#include <hyperv/hvhdk.h>
+
+extern u64 hv_current_partition_id;
+
+int __init hyperv_init(void);
 
 /*
  * Declare calls to get and set Hyper-V VP register values on ARM64, which
@@ -40,6 +44,43 @@ static inline u64 hv_get_msr(unsigned int reg)
 {
 	return hv_get_vpreg(reg);
 }
+
+/*
+ * Nested is not supported on arm64
+ */
+static inline void hv_set_non_nested_msr(unsigned int reg, u64 value)
+{
+	hv_set_msr(reg, value);
+}
+static inline u64 hv_get_non_nested_msr(unsigned int reg)
+{
+	return hv_get_msr(reg);
+}
+
+static inline bool hv_should_clear_interrupt(enum hv_interrupt_type type)
+{
+	return 0;
+}
+
+struct irq_data;
+struct msi_msg;
+struct pci_dev;
+static inline void hv_irq_compose_msi_msg(struct irq_data *data,
+					  struct msi_msg *msg) {};
+static inline int hv_unmap_msi_interrupt(struct pci_dev *pdev,
+					struct hv_interrupt_entry *hvirqe)
+{
+	return -EOPNOTSUPP;
+}
+static inline bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
+{
+	return false;
+}
+
+extern bool hv_no_attdev;
+
+void hv_smp_prepare_cpus(unsigned int max_cpus);
+int hv_cpu_on(unsigned int cpu, phys_addr_t entry_point);
 
 /* SMCCC hypercall parameters */
 #define HV_SMCCC_FUNC_NUMBER	1
