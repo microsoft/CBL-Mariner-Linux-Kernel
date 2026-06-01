@@ -2425,10 +2425,80 @@ mshv_map_user_memory(struct mshv_partition *partition,
 	spin_unlock(&partition->pt_mem_regions_lock);
 
 	return 0;
+}
 
-errout:
-	mshv_region_put(region);
-	return ret;
+static int
+mshv_region_chunk_unmap(struct mshv_mem_region *region, u32 flags,
+			u64 pfn_offset, u64 pfn_count,
+			bool huge_page)
+{
+	if (!pfn_valid(region->pfns[pfn_offset]))
+		return 0;
+
+	if (huge_page)
+		flags |= HV_UNMAP_GPA_LARGE_PAGE;
+
+	return hv_call_unmap_gpa_pages(region->partition->pt_id,
+				       region->start_gfn + pfn_offset,
+				       pfn_count, 0);
+}
+
+static int mshv_partition_unmap_range(struct mshv_mem_region *region,
+				      u32 map_flags,
+				      u64 pfn_offset, u64 pfn_count)
+{
+	return mshv_region_process_range(region, map_flags,
+					 pfn_offset, pfn_count,
+					 mshv_region_chunk_unmap);
+}
+
+static void mshv_partition_unmap_region(struct mshv_mem_region *region)
+{
+	u64 pfn_offset, pfn_count;
+
+	/*
+	 * Unmap only the mapped pages to optimize performance,
+	 * especially for large memory regions.
+	 */
+	for (pfn_offset = 0; pfn_offset < region->nr_pfns; pfn_offset += pfn_count) {
+		pfn_count = 1;
+		if (!pfn_valid(region->pfns[pfn_offset]))
+			continue;
+
+		for (; pfn_count < region->nr_pfns - pfn_offset; pfn_count++) {
+			if (!pfn_valid(region->pfns[pfn_offset + pfn_count]))
+				break;
+		}
+
+		/* ignore unmap failures and continue as process may be exiting */
+		mshv_partition_unmap_range(region, 0,
+					   pfn_offset, pfn_count);
+	}
+}
+
+static void mshv_partition_destroy_region(struct kref *ref)
+{
+	struct mshv_mem_region *region =
+		container_of(ref, struct mshv_mem_region, mreg_refcount);
+	struct mshv_partition *partition = region->partition;
+	int ret;
+
+	if (region->flags.memreg_isram)
+		mshv_region_movable_fini(region);
+
+	if (mshv_partition_encrypted(partition)) {
+		ret = mshv_partition_region_share(region);
+		if (ret) {
+			pt_err(partition,
+			       "Failed to regain access to memory, unpinning user pages will fail and crash the host error: %d\n",
+			       ret);
+			return;
+		}
+	}
+
+	mshv_region_evict(region);
+
+	vfree(region);
 }
 
 /* Called for unmapping both the guest ram and the mmio space */
