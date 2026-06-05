@@ -126,7 +126,7 @@ efi_status_t mshv_launch(void)
 	struct hvl_return_data ret;
 
 	if (!efi_mshv)
-		return EFI_INVALID_PARAMETER;
+		return EFI_SUCCESS;
 
 	efi_mshv->launch_hv(NULL, &ret);
 	/* TODO: Where/how do we dump the hv loader logs? */
