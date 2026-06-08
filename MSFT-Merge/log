@@ -1,0 +1,12 @@
+Name                                               SHA1
+----                                               ----
+config/azure-mos-v6.12                             c1872262336cf088694aaaa96571ff89dbfb8e87
+feature/efi-slack-slots/6.12                       d8a01904ccf84ef0aa9fe1b6330a844ff1e8abe6
+feature/nvidia-gb-200/6.12                         164a80c0ae727211078d0a1e653828da31f46d0b
+feature/gb200-cx8/6.12                             bf9a67d307a656007b0a031f45764d058c892dc7
+feature/mana/6.12                                  d3e8f9612633aefd6b00a3ebceacd162b14bc9c3
+feature/reverts/6.12                               f9d6dd399d7f5028d104ee17da7b9a322b36cb71
+feature/secure-boot-lockdown/6.12                  94131eb8e0ff8ced028f7bee7ec7a91aff2fc842
+feature/platform-key-signing/6.12                  f91afba1fb7ddc68205737ddb9cbf0ea02a49a23
+feature/hyperv/6.12                                8eff37050704a094e9609d4266574cb18eeaa2c0
+feature/sec-fixes/6.12                             36bd8064ea9989a53d774656a67bf15d8ae6ea34
