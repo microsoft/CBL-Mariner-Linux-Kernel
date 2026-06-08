@@ -30,17 +30,29 @@ enum TRI_STATE {
 };
 
 /* Number of entries for hardware indirection table must be in power of 2 */
-#define MANA_INDIRECT_TABLE_SIZE 64
-#define MANA_INDIRECT_TABLE_MASK (MANA_INDIRECT_TABLE_SIZE - 1)
+#define MANA_INDIRECT_TABLE_MAX_SIZE 512
+#define MANA_INDIRECT_TABLE_DEF_SIZE 64
 
 /* The Toeplitz hash key's length in bytes: should be multiple of 8 */
 #define MANA_HASH_KEY_SIZE 40
 
 #define COMP_ENTRY_SIZE 64
 
-#define RX_BUFFERS_PER_QUEUE 512
+/* This Max value for RX buffers is derived from __alloc_page()'s max page
+ * allocation calculation. It allows maximum 2^(MAX_ORDER -1) pages. RX buffer
+ * size beyond this value gets rejected by __alloc_page() call.
+ */
+#define MAX_RX_BUFFERS_PER_QUEUE 8192
+#define DEF_RX_BUFFERS_PER_QUEUE 1024
+#define MIN_RX_BUFFERS_PER_QUEUE 128
 
-#define MAX_SEND_BUFFERS_PER_QUEUE 256
+/* This max value for TX buffers is derived as the maximum allocatable
+ * pages supported on host per guest through testing. TX buffer size beyond
+ * this value is rejected by the hardware.
+ */
+#define MAX_TX_BUFFERS_PER_QUEUE 16384
+#define DEF_TX_BUFFERS_PER_QUEUE 256
+#define MIN_TX_BUFFERS_PER_QUEUE 128
 
 #define EQ_SIZE (8 * MANA_PAGE_SIZE)
 
@@ -288,7 +300,7 @@ struct mana_recv_buf_oob {
 	void *buf_va;
 	bool from_pool; /* allocated from a page pool */
 
-	/* SGL of the buffer going to be sent has part of the work request. */
+	/* SGL of the buffer going to be sent as part of the work request. */
 	u32 num_sge;
 	struct gdma_sge sgl[MAX_RX_WQE_SGL_ENTRIES];
 
@@ -338,6 +350,7 @@ struct mana_rxq {
 	int xdp_rc; /* XDP redirect return code */
 
 	struct page_pool *page_pool;
+	struct dentry *mana_rx_debugfs;
 
 	/* MUST BE THE LAST MEMBER:
 	 * Each receive buffer has an associated mana_recv_buf_oob.
@@ -351,11 +364,32 @@ struct mana_tx_qp {
 	struct mana_cq tx_cq;
 
 	mana_handle_t tx_object;
+
+	struct dentry *mana_tx_debugfs;
 };
 
 struct mana_ethtool_stats {
 	u64 stop_queue;
 	u64 wake_queue;
+	u64 hc_rx_discards_no_wqe;
+	u64 hc_rx_err_vport_disabled;
+	u64 hc_rx_bytes;
+	u64 hc_rx_ucast_pkts;
+	u64 hc_rx_ucast_bytes;
+	u64 hc_rx_bcast_pkts;
+	u64 hc_rx_bcast_bytes;
+	u64 hc_rx_mcast_pkts;
+	u64 hc_rx_mcast_bytes;
+	u64 hc_tx_err_gf_disabled;
+	u64 hc_tx_err_vport_disabled;
+	u64 hc_tx_err_inval_vportoffset_pkt;
+	u64 hc_tx_err_vlan_enforcement;
+	u64 hc_tx_err_eth_type_enforcement;
+	u64 hc_tx_err_sa_enforcement;
+	u64 hc_tx_err_sqpdid_enforcement;
+	u64 hc_tx_err_cqpdid_enforcement;
+	u64 hc_tx_err_mtu_violation;
+	u64 hc_tx_err_inval_oob;
 	u64 hc_tx_bytes;
 	u64 hc_tx_ucast_pkts;
 	u64 hc_tx_ucast_bytes;
@@ -363,6 +397,7 @@ struct mana_ethtool_stats {
 	u64 hc_tx_bcast_bytes;
 	u64 hc_tx_mcast_pkts;
 	u64 hc_tx_mcast_bytes;
+	u64 hc_tx_err_gdma;
 	u64 tx_cqe_err;
 	u64 tx_cqe_unknown_type;
 	u64 rx_coalesced_err;
@@ -375,6 +410,7 @@ struct mana_context {
 	u16 num_ports;
 
 	struct mana_eq *eqs;
+	struct dentry *mana_eqs_debugfs;
 
 	struct net_device *ports[MAX_PORTS_IN_MANA_DEV];
 };
@@ -394,10 +430,11 @@ struct mana_port_context {
 	struct mana_tx_qp *tx_qp;
 
 	/* Indirection Table for RX & TX. The values are queue indexes */
-	u32 indir_table[MANA_INDIRECT_TABLE_SIZE];
+	u32 *indir_table;
+	u32 indir_table_sz;
 
 	/* Indirection table containing RxObject Handles */
-	mana_handle_t rxobj_table[MANA_INDIRECT_TABLE_SIZE];
+	mana_handle_t *rxobj_table;
 
 	/*  Hash key used by the NIC */
 	u8 hashkey[MANA_HASH_KEY_SIZE];
@@ -419,6 +456,9 @@ struct mana_port_context {
 	unsigned int max_queues;
 	unsigned int num_queues;
 
+	unsigned int rx_queue_size;
+	unsigned int tx_queue_size;
+
 	mana_handle_t port_handle;
 	mana_handle_t pf_filter_handle;
 
@@ -432,6 +472,9 @@ struct mana_port_context {
 	bool port_st_save; /* Saved port state */
 
 	struct mana_ethtool_stats eth_stats;
+
+	/* Debugfs */
+	struct dentry *mana_port_debugfs;
 };
 
 netdev_tx_t mana_start_xmit(struct sk_buff *skb, struct net_device *ndev);
@@ -446,6 +489,9 @@ int mana_detach(struct net_device *ndev, bool from_close);
 int mana_probe(struct gdma_dev *gd, bool resuming);
 void mana_remove(struct gdma_dev *gd, bool suspending);
 
+int mana_rdma_probe(struct gdma_dev *gd);
+void mana_rdma_remove(struct gdma_dev *gd);
+
 void mana_xdp_tx(struct sk_buff *skb, struct net_device *ndev);
 int mana_xdp_xmit(struct net_device *ndev, int n, struct xdp_frame **frames,
 		  u32 flags);
@@ -455,8 +501,11 @@ struct bpf_prog *mana_xdp_get(struct mana_port_context *apc);
 void mana_chn_setxdp(struct mana_port_context *apc, struct bpf_prog *prog);
 int mana_bpf(struct net_device *ndev, struct netdev_bpf *bpf);
 void mana_query_gf_stats(struct mana_port_context *apc);
+int mana_pre_alloc_rxbufs(struct mana_port_context *apc, int mtu, int num_queues);
+void mana_pre_dealloc_rxbufs(struct mana_port_context *apc);
 
 extern const struct ethtool_ops mana_ethtool_ops;
+extern struct dentry *mana_debugfs_root;
 
 /* A CQ can be created not associated with any EQ */
 #define GDMA_CQ_NO_EQ  0xffff
@@ -478,6 +527,7 @@ enum mana_command_code {
 	MANA_FENCE_RQ		= 0x20006,
 	MANA_CONFIG_VPORT_RX	= 0x20007,
 	MANA_QUERY_VPORT_CONFIG	= 0x20008,
+	MANA_QUERY_PHY_STAT     = 0x2000c,
 
 	/* Privileged commands for the PF mode */
 	MANA_REGISTER_FILTER	= 0x28000,
@@ -606,8 +656,8 @@ struct mana_query_gf_stat_resp {
 	struct gdma_resp_hdr hdr;
 	u64 reported_stats;
 	/* rx errors/discards */
-	u64 discard_rx_nowqe;
-	u64 err_rx_vport_disabled;
+	u64 rx_discards_nowqe;
+	u64 rx_err_vport_disabled;
 	/* rx bytes/packets */
 	u64 hc_rx_bytes;
 	u64 hc_rx_ucast_pkts;
@@ -617,16 +667,16 @@ struct mana_query_gf_stat_resp {
 	u64 hc_rx_mcast_pkts;
 	u64 hc_rx_mcast_bytes;
 	/* tx errors */
-	u64 err_tx_gf_disabled;
-	u64 err_tx_vport_disabled;
-	u64 err_tx_inval_vport_offset_pkt;
-	u64 err_tx_vlan_enforcement;
-	u64 err_tx_ethtype_enforcement;
-	u64 err_tx_SA_enforecement;
-	u64 err_tx_SQPDID_enforcement;
-	u64 err_tx_CQPDID_enforcement;
-	u64 err_tx_mtu_violation;
-	u64 err_tx_inval_oob;
+	u64 tx_err_gf_disabled;
+	u64 tx_err_vport_disabled;
+	u64 tx_err_inval_vport_offset_pkt;
+	u64 tx_err_vlan_enforcement;
+	u64 tx_err_ethtype_enforcement;
+	u64 tx_err_SA_enforcement;
+	u64 tx_err_SQPDID_enforcement;
+	u64 tx_err_CQPDID_enforcement;
+	u64 tx_err_mtu_violation;
+	u64 tx_err_inval_oob;
 	/* tx bytes/packets */
 	u64 hc_tx_bytes;
 	u64 hc_tx_ucast_pkts;
@@ -636,7 +686,7 @@ struct mana_query_gf_stat_resp {
 	u64 hc_tx_mcast_pkts;
 	u64 hc_tx_mcast_bytes;
 	/* tx error */
-	u64 err_tx_gdma;
+	u64 tx_err_gdma;
 }; /* HW DATA */
 
 /* Configure vPort Rx Steering */
@@ -655,6 +705,7 @@ struct mana_cfg_rx_steer_req_v2 {
 	u8 hashkey[MANA_HASH_KEY_SIZE];
 	u8 cqe_coalescing_enable;
 	u8 reserved2[7];
+	mana_handle_t indir_tab[] __counted_by(num_indir_entries);
 }; /* HW DATA */
 
 struct mana_cfg_rx_steer_resp {
@@ -780,4 +831,8 @@ void mana_destroy_wq_obj(struct mana_port_context *apc, u32 wq_type,
 int mana_cfg_vport(struct mana_port_context *apc, u32 protection_dom_id,
 		   u32 doorbell_pg_id);
 void mana_uncfg_vport(struct mana_port_context *apc);
+
+struct net_device *mana_get_primary_netdev(struct mana_context *ac,
+					   u32 port_index,
+					   netdevice_tracker *tracker);
 #endif /* _MANA_H */

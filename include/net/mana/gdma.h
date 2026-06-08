@@ -58,14 +58,16 @@ enum gdma_eqe_type {
 	GDMA_EQE_HWC_INIT_EQ_ID_DB	= 129,
 	GDMA_EQE_HWC_INIT_DATA		= 130,
 	GDMA_EQE_HWC_INIT_DONE		= 131,
-	GDMA_EQE_HWC_SOC_RECONFIG	= 132,
+	GDMA_EQE_HWC_FPGA_RECONFIG	= 132,
 	GDMA_EQE_HWC_SOC_RECONFIG_DATA	= 133,
+	GDMA_EQE_HWC_RESET_REQUEST	= 135,
 };
 
 enum {
 	GDMA_DEVICE_NONE	= 0,
 	GDMA_DEVICE_HWC		= 1,
 	GDMA_DEVICE_MANA	= 2,
+	GDMA_DEVICE_MANA_IB	= 3,
 };
 
 struct gdma_resource {
@@ -264,7 +266,8 @@ struct gdma_event {
 struct gdma_queue;
 
 struct mana_eq {
-	struct gdma_queue *eq;
+	struct gdma_queue	*eq;
+	struct dentry		*mana_eq_debugfs;
 };
 
 typedef void gdma_eq_callback(void *context, struct gdma_queue *q,
@@ -301,6 +304,7 @@ struct gdma_queue {
 
 	u32 head;
 	u32 tail;
+	struct list_head entry;
 
 	/* Extra fields specific to EQ/CQ. */
 	union {
@@ -336,6 +340,7 @@ struct gdma_queue_spec {
 			void *context;
 
 			unsigned long log2_throttle_limit;
+			unsigned int msix_index;
 		} eq;
 
 		struct {
@@ -352,18 +357,20 @@ struct gdma_queue_spec {
 
 struct gdma_irq_context {
 	void (*handler)(void *arg);
-	void *arg;
+	/* Protect the eq_list */
+	spinlock_t lock;
+	struct list_head eq_list;
 	char name[MANA_IRQ_NAME_SZ];
 };
 
 struct gdma_context {
 	struct device		*dev;
+	struct dentry		*mana_pci_debugfs;
 
 	/* Per-vPort max number of queues */
 	unsigned int		max_num_queues;
 	unsigned int		max_num_msix;
 	unsigned int		num_msix_usable;
-	struct gdma_resource	msix_resource;
 	struct gdma_irq_context	*irq_contexts;
 
 	/* L2 MTU */
@@ -379,6 +386,8 @@ struct gdma_context {
 	u32			test_event_eq_id;
 
 	bool			is_pf;
+	bool			in_service;
+
 	phys_addr_t		bar0_pa;
 	void __iomem		*bar0_va;
 	void __iomem		*shm_base;
@@ -395,9 +404,10 @@ struct gdma_context {
 
 	/* Azure network adapter */
 	struct gdma_dev		mana;
-};
 
-#define MAX_NUM_GDMA_DEVICES	4
+	/* Azure RDMA adapter */
+	struct gdma_dev		mana_ib;
+};
 
 static inline bool mana_gd_is_mana(struct gdma_dev *gd)
 {
@@ -543,11 +553,25 @@ enum {
  */
 #define GDMA_DRV_CAP_FLAG_1_NAPI_WKDONE_FIX BIT(2)
 #define GDMA_DRV_CAP_FLAG_1_HWC_TIMEOUT_RECONFIG BIT(3)
+#define GDMA_DRV_CAP_FLAG_1_VARIABLE_INDIRECTION_TABLE_SUPPORT BIT(5)
+
+/* Driver can handle holes (zeros) in the device list */
+#define GDMA_DRV_CAP_FLAG_1_DEV_LIST_HOLES_SUP BIT(11)
+
+/* Driver can self reset on EQE notification */
+#define GDMA_DRV_CAP_FLAG_1_SELF_RESET_ON_EQE BIT(14)
+
+/* Driver can self reset on FPGA Reconfig EQE notification */
+#define GDMA_DRV_CAP_FLAG_1_HANDLE_RECONFIG_EQE BIT(17)
 
 #define GDMA_DRV_CAP_FLAGS1 \
 	(GDMA_DRV_CAP_FLAG_1_EQ_SHARING_MULTI_VPORT | \
 	 GDMA_DRV_CAP_FLAG_1_NAPI_WKDONE_FIX | \
-	 GDMA_DRV_CAP_FLAG_1_HWC_TIMEOUT_RECONFIG)
+	 GDMA_DRV_CAP_FLAG_1_HWC_TIMEOUT_RECONFIG | \
+	 GDMA_DRV_CAP_FLAG_1_VARIABLE_INDIRECTION_TABLE_SUPPORT | \
+	 GDMA_DRV_CAP_FLAG_1_DEV_LIST_HOLES_SUP | \
+	 GDMA_DRV_CAP_FLAG_1_SELF_RESET_ON_EQE | \
+	 GDMA_DRV_CAP_FLAG_1_HANDLE_RECONFIG_EQE)
 
 #define GDMA_DRV_CAP_FLAGS2 0
 
@@ -608,11 +632,12 @@ struct gdma_query_max_resources_resp {
 }; /* HW DATA */
 
 /* GDMA_LIST_DEVICES */
+#define GDMA_DEV_LIST_SIZE 64
 struct gdma_list_devices_resp {
 	struct gdma_resp_hdr hdr;
 	u32 num_of_devs;
 	u32 reserved;
-	struct gdma_dev_id devs[64];
+	struct gdma_dev_id devs[GDMA_DEV_LIST_SIZE];
 }; /* HW DATA */
 
 /* GDMA_REGISTER_DEVICE */
@@ -867,5 +892,12 @@ int mana_gd_send_request(struct gdma_context *gc, u32 req_len, const void *req,
 			 u32 resp_len, void *resp);
 
 int mana_gd_destroy_dma_region(struct gdma_context *gc, u64 dma_region_handle);
+void mana_register_debugfs(void);
+void mana_unregister_debugfs(void);
+
+int mana_gd_suspend(struct pci_dev *pdev, pm_message_t state);
+int mana_gd_resume(struct pci_dev *pdev);
+
+bool mana_need_log(struct gdma_context *gc, int err);
 
 #endif /* _GDMA_H */
