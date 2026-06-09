@@ -1,0 +1,10 @@
+Name                                               SHA1
+----                                               ----
+config/hwe-6.18                                    af5f4c7026c393ee0ee3f95eed38abbedf5ce4bc
+feature/efi-slack-slots/6.18                       fa451229e919a6019425def9af40e7ea893670d6
+feature/reverts/6.18                               ba9b74af73dc627743446dd8fa4c7b6bc82b322d
+feature/vera-rubin/6.18                            28716eb0fda90aacba70931a56b739789a9cdee5
+feature/secure-boot-lockdown/6.18                  5359c7eba10497385506eb75a4f51dbc07a49246
+feature/platform-key-signing/6.18                  4fb2c6f391b287f82fa29d046774ef5a4cfcb594
+feature/sec-fixes/6.18                             028d95dd4c3bbdc7cda9c14705f4712fd850b2f7
+feature/amd-venice/6.18                            b888c3b9573983e30c19844fbaf84938dbb4bc7d
