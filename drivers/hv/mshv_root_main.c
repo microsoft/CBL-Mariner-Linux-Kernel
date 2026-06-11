@@ -2981,14 +2981,17 @@ static int __init mshv_init_vmm_caps(struct device *dev)
 {
 	int ret;
 
+	memset(&mshv_root.vmm_caps, 0, sizeof(mshv_root.vmm_caps));
 	ret = hv_call_get_partition_property_ex(HV_PARTITION_ID_SELF,
 						HV_PARTITION_PROPERTY_VMM_CAPABILITIES,
 						0, &mshv_root.vmm_caps,
 						sizeof(mshv_root.vmm_caps));
-	if (ret && hv_l1vh_partition()) {
-		dev_err(dev, "Failed to get VMM capabilities: %d\n", ret);
+
+	/* HV_PARTITION_PROPERTY_VMM_CAPABILITIES is not supported in
+	 * older hyperv. Ignore the -EIO error code.
+	 */
+	if (ret && ret != -EIO)
 		return ret;
-	}
 
 	dev_dbg(dev, "vmm_caps = %#llx\n", mshv_root.vmm_caps.as_uint64[0]);
 
