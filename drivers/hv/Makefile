@@ -17,6 +17,7 @@ mshv_root-y := mshv_root_main.o mshv_synic.o mshv_eventfd.o mshv_irq.o \
 	       mshv_root_hv_call.o mshv_portid_table.o mshv_regions.o  \
                mshv_vfio.o
 mshv_root-$(CONFIG_DEBUG_FS) += mshv_debugfs.o
+mshv_root-$(CONFIG_TRACEPOINTS) += mshv_trace.o
 
 # Code that must be built-in
 obj-$(CONFIG_HYPERV) += hv_common.o
