@@ -219,6 +219,8 @@ struct hv_output_get_system_property {
 #if IS_ENABLED(CONFIG_X86)
 		u64 hv_processor_feature_value;
 #endif
+		union hv_pfn_range hv_cda_info; /* CrashdumpAreaAddress */
+		u64 hv_tramp_pa;                /* CrashdumpTrampolineAddress */
 	};
 } __packed;
 
@@ -344,16 +346,46 @@ union hv_gpa_page_access_state {
 	u8 as_uint8;
 } __packed;
 
+enum hv_crashdump_action {
+	HV_CRASHDUMP_NONE = 0,
+	HV_CRASHDUMP_SUSPEND_ALL_VPS,
+	HV_CRASHDUMP_PREPARE_FOR_STATE_SAVE,
+	HV_CRASHDUMP_STATE_SAVED,
+	HV_CRASHDUMP_ENTRY,
+};
+
+struct hv_partition_event_root_crashdump_input {
+	u32 crashdump_action; /* enum hv_crashdump_action */
+} __packed;
+
+struct hv_input_disable_hyp_ex {   /* HV_X64_INPUT_DISABLE_HYPERVISOR_EX */
+	u64 rip;
+	u64 arg;
+} __packed;
+
+struct hv_crashdump_area {	   /* HV_CRASHDUMP_AREA */
+	u32 version;
+	union {
+		u32 flags_as_uint32;
+		struct {
+			u32 cda_valid : 1;
+			u32 cda_unused : 31;
+		} __packed;
+	};
+	/* more unused fields */
+} __packed;
+
 union hv_partition_event_input {
-	u64 reserved;
+	struct hv_partition_event_root_crashdump_input crashdump_input;
 };
 
 enum hv_partition_event {
+	HV_PARTITION_EVENT_ROOT_CRASHDUMP = 2,
 	HV_PARTITION_ALL_LOGICAL_PROCESSORS_STARTED = 4,
 };
 
 struct hv_input_notify_partition_event {
-	u32 event;	/* enum hv_partition_event */
+	u32 event;      /* enum hv_partition_event */
 	union hv_partition_event_input input;
 } __packed;
 
