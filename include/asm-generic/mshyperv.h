@@ -387,8 +387,6 @@ static inline u64 hv_devid_from_pdev(struct pci_dev *pdev)
 static inline u64 hv_get_current_partid(void)
 { return HV_PARTITION_ID_INVALID; }
 #endif /* IS_ENABLED(CONFIG_HYPERV_IOMMU) */
-
-static inline void hv_root_crash_init(void) {}
 #else /* CONFIG_HYPERV */
 static inline void hv_identify_partition_type(void) {}
 static inline bool hv_is_hyperv_initialized(void) { return false; }

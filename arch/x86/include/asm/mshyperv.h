@@ -245,6 +245,15 @@ u64 hv_build_devid_type_pci(struct pci_dev *pdev);
 static inline u64 hv_build_devid_type_pci(struct pci_dev *pdev) { return 0; }
 #endif /* IS_ENABLED(CONFIG_HYPERV_IOMMU) */
 
+#if IS_ENABLED(CONFIG_MSHV_ROOT) && IS_ENABLED(CONFIG_CRASH_DUMP)
+void hv_root_crash_init(void);
+void hv_crash_asm32(void);
+void hv_crash_asm64(void);
+void hv_crash_asm_end(void);
+#else	/* CONFIG_MSHV_ROOT && CONFIG_CRASH_DUMP */
+static inline void hv_root_crash_init(void) {}
+#endif	/* CONFIG_MSHV_ROOT && CONFIG_CRASH_DUMP */
+
 #else /* CONFIG_HYPERV */
 static inline void hyperv_init(void) {}
 static inline void hyperv_setup_mmu_ops(void) {}
