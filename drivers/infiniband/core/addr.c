@@ -458,10 +458,26 @@ static int addr_resolve_neigh(const struct dst_entry *dst,
 			      u32 seq)
 {
 	if (is_dst_local(dst)) {
-		/* When the destination is local entry, source and destination
-		 * are same. Skip the neighbour lookup.
+		struct net_device *dst_ndev;
+
+		/* When the destination is local, source and destination are on
+		 * the same host. For true loopback (same netdev) the source and
+		 * destination MACs are equal, but when the destination address
+		 * lives on a different netdev of the same host the destination
+		 * MAC must be that netdev's MAC -- otherwise the destination NIC
+		 * silently drops the frame. Look up the netdev that owns the
+		 * destination address and copy its MAC; fall back to the source
+		 * MAC if no netdev claims the address.
 		 */
-		memcpy(addr->dst_dev_addr, addr->src_dev_addr, MAX_ADDR_LEN);
+		rcu_read_lock();
+		dst_ndev = rdma_find_ndev_for_src_ip_rcu(dev_net(dst->dev), dst_in);
+		if (!IS_ERR(dst_ndev))
+			memcpy(addr->dst_dev_addr, dst_ndev->dev_addr,
+			       MAX_ADDR_LEN);
+		else
+			memcpy(addr->dst_dev_addr, addr->src_dev_addr,
+			       MAX_ADDR_LEN);
+		rcu_read_unlock();
 		return 0;
 	}
 
