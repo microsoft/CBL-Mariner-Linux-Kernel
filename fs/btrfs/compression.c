@@ -20,7 +20,6 @@
 #include <linux/slab.h>
 #include <linux/sched/mm.h>
 #include <linux/log2.h>
-#include <crypto/hash.h>
 #include "misc.h"
 #include "ctree.h"
 #include "fs.h"
