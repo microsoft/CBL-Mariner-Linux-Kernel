@@ -1615,7 +1615,20 @@ static bool validate_ipv6_net_dev(struct net_device *net_dev,
 	if (!rt)
 		return false;
 
-	ret = rt->rt6i_idev->dev == net_dev;
+	if (rt->rt6i_idev->dev == net_dev) {
+		ret = true;
+	} else if (rt->rt6i_flags & RTF_LOCAL) {
+		/* For a destination that is local to another netdev of the same
+		 * host, the FIB collapses the lookup onto the loopback netdev,
+		 * so rt6i_idev->dev is not net_dev even though the request was
+		 * correctly delivered on net_dev. Accept it when net_dev itself
+		 * owns the address we were listening on.
+		 */
+		ret = ipv6_chk_addr(dev_net(net_dev), &src_addr->sin6_addr,
+				    net_dev, 1);
+	} else {
+		ret = false;
+	}
 	ip6_rt_put(rt);
 
 	return ret;
