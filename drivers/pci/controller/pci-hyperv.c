@@ -2178,11 +2178,22 @@ static const struct msi_parent_ops hv_pcie_msi_parent_ops = {
 	.init_dev_msi_info	= hv_pcie_init_dev_msi_info,
 };
 
+static int hv_irq_set_affinity(struct irq_data *data,
+				const struct cpumask *dest, bool force)
+{
+	if (hv_nested && hv_root_partition()) {
+		printk_once("Hyper-V: IRQ affinity change in nested root partition is currently not available\n");
+		return -EPERM;
+	}
+
+	return irq_chip_set_affinity_parent(data, dest, force);
+}
+
 /* HW Interrupt Chip Descriptor */
 static struct irq_chip hv_msi_irq_chip = {
 	.name			= "Hyper-V PCIe MSI",
 	.irq_compose_msi_msg	= hv_compose_msi_msg,
-	.irq_set_affinity	= irq_chip_set_affinity_parent,
+	.irq_set_affinity	= hv_irq_set_affinity,
 	.irq_ack		= irq_chip_ack_parent,
 	.irq_eoi		= irq_chip_eoi_parent,
 	.irq_mask		= hv_irq_mask,
