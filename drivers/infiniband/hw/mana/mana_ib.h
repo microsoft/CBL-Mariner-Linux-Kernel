@@ -30,6 +30,13 @@
 struct mana_ib_dev {
 	struct ib_device ib_dev;
 	struct gdma_dev *gdma_dev;
+	mana_handle_t adapter_handle;
+	struct gdma_queue *fatal_err_eq;
+	struct gdma_queue **eqs;
+	struct xarray qp_table_wq;
+	struct mana_ib_adapter_caps adapter_caps;
+	struct dma_pool *av_pool;
+	netdevice_tracker dev_tracker;
 };
 
 struct mana_ib_wq {
