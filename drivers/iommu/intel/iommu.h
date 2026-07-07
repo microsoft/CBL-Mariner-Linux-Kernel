@@ -910,6 +910,8 @@ static inline bool ecmd_has_pmu_essential(struct intel_iommu *iommu)
 
 extern int dmar_disabled;
 extern int intel_iommu_enabled;
+extern void intel_iommu_get_resv_regions(struct device *device,
+				 struct list_head *head);
 #else
 static inline int iommu_calculate_agaw(struct intel_iommu *iommu)
 {
@@ -922,6 +924,8 @@ static inline int iommu_calculate_max_sagaw(struct intel_iommu *iommu)
 #define dmar_disabled	(1)
 #define intel_iommu_enabled (0)
 #define intel_iommu_sm (0)
+static inline void intel_iommu_get_resv_regions(struct device *device,
+				 struct list_head *head) {}
 #endif
 
 static inline const char *decode_prq_descriptor(char *str, size_t size,
