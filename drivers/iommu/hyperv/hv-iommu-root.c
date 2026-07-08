@@ -427,12 +427,10 @@ static int hv_iommu_direct_attach_device(struct pci_dev *pdev, u64 ptid)
 		status = hv_do_hypercall(HVCALL_ATTACH_DEVICE, input, NULL);
 		local_irq_restore(flags);
 
-		if (hv_result(status) == HV_STATUS_INSUFFICIENT_MEMORY) {
-			rc = hv_call_deposit_pages(NUMA_NO_NODE, ptid, 1);
-			if (rc)
-				break;
-		}
-	} while (hv_result(status) == HV_STATUS_INSUFFICIENT_MEMORY);
+		if (hv_result_needs_memory(status))
+			rc = hv_deposit_memory(ptid, status);
+
+	} while (hv_result_needs_memory(status) && rc == 0);
 
 	if (!hv_result_success(status))
 		hv_status_err(status, "\n");
@@ -677,14 +675,13 @@ static int hv_iommu_map_pages(struct iommu_domain *immdom, ulong iova,
 		iova = iova + (completed << HV_HYP_PAGE_SHIFT);
 		paddr = paddr + (completed << HV_HYP_PAGE_SHIFT);
 
-		if (hv_result(status) == HV_STATUS_INSUFFICIENT_MEMORY) {
-			ret = hv_call_deposit_pages(NUMA_NO_NODE,
-						    hv_current_partition_id,
-						    256);
-			if (ret)
-				break;
-			continue;
+		if (hv_result_needs_memory(status)) {
+			ret = hv_deposit_memory(hv_current_partition_id,
+						status);
+			if (ret == 0)
+				continue;
 		}
+
 		if (!hv_result_success(status))
 			break;
 	}

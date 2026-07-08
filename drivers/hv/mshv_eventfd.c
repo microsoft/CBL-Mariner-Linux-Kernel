@@ -395,7 +395,7 @@ static void mshv_pthru_dev_irq_remap(struct mshv_irqfd *irqfd)
 {
 	u64 ptid, status;
 	struct pci_dev *pdev;
-	int rc, deposit_pgs = 16;
+	int rc;
 	struct mshv_lapic_irq *ginfo = &irqfd->irqfd_lapic_irq;
 	union hv_device_id hv_devid;
 	struct hv_interrupt_entry *new_entry;
@@ -421,18 +421,15 @@ static void mshv_pthru_dev_irq_remap(struct mshv_irqfd *irqfd)
 
 	ptid = irqfd->irqfd_partn->pt_id;
 
-	while (deposit_pgs--) {
+	do {
 		rc = mshv_map_device_interrupt(ptid, hv_devid, ginfo, new_entry,
 					       &status);
-		if (rc == 0)
-			break;
-		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY)
+		if (rc == 0 || !hv_result_needs_memory(status))
 			break;
 
-		rc = hv_call_deposit_pages(NUMA_NO_NODE, ptid, 1);
-		if (rc)
-			break;
-	}
+		rc = hv_deposit_memory(ptid, status);
+	} while (hv_result_needs_memory(status) && rc == 0);
+
 	if (rc) {
 		kfree(new_entry);
 		return;

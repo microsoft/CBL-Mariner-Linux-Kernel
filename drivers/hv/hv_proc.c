@@ -9,172 +9,159 @@
 #include <linux/export.h>
 #include <asm/mshyperv.h>
 
+#define HV_DEPOSIT_MAX 512
+#define HV_DEPOSIT_INP_MAX ((HV_HYP_PAGE_SIZE -  \
+	offsetof(struct hv_deposit_memory, gpa_page_list)) / sizeof(u64))
+
 /*
- * See struct hv_deposit_memory. The first u64 is partition ID, the rest
- * are GPAs.
+ * Allocate free pages for deposit to hypervisor. pfna[] must be large enough
+ * to hold HV_DEPOSIT_INP_MAX (511) pages. If num_pages is 512, return last
+ * pfn in lastpfn.
+ *
+ * Returns : -ENOMEM if zero allocated, else number of pages allocated
  */
-#define HV_DEPOSIT_MAX (HV_HYP_PAGE_SIZE / sizeof(u64) - 1)
-
-/* Deposits exact number of pages. Must be called with interrupts enabled.  */
-static int __hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages)
+static int hv_alloc_dep_pages(int node, u64 *pfna, u64 *lastpfnp, int num_pages,
+			      bool contiguous)
 {
-	struct page **pages, *page;
-	int *counts;
-	int num_allocations;
-	int i, j, page_count;
-	int order;
-	u64 status;
-	int ret;
-	u64 base_pfn;
-	struct hv_deposit_memory *input_page;
-	unsigned long flags;
+	struct page *page;
+	int num_allocd, count = 0, rc = 0;
 
-	if (num_pages > HV_DEPOSIT_MAX)
-		return -E2BIG;
-	if (!num_pages)
-		return 0;
+	/* Published ABI, enforce its immutability. */
+	BUILD_BUG_ON(HV_DEPOSIT_INP_MAX != 511);
 
-	/* One buffer for page pointers and counts */
-	page = alloc_page(GFP_KERNEL);
-	if (!page)
-		return -ENOMEM;
-	pages = page_address(page);
+	if (num_pages > HV_DEPOSIT_MAX ||
+	    (num_pages == HV_DEPOSIT_MAX && lastpfnp == NULL))
+		return -EINVAL;
 
-	counts = kcalloc(HV_DEPOSIT_MAX, sizeof(int), GFP_KERNEL);
-	if (!counts) {
-		free_page((unsigned long)pages);
-		return -ENOMEM;
-	}
-
-	/* Allocate all the pages before disabling interrupts */
-	i = 0;
-
+	*lastpfnp = 0;
 	while (num_pages) {
 		/* Find highest order we can actually allocate */
-		order = 31 - __builtin_clz(num_pages);
+		int order = 31 - __builtin_clz(num_pages);
 
 		while (1) {
-			pages[i] = alloc_pages_node(node, GFP_KERNEL, order);
-			if (pages[i])
+			page = alloc_pages_node(node, GFP_KERNEL, order);
+			if (page || order == 0 || contiguous)
 				break;
-			if (!order) {
-				ret = -ENOMEM;
-				num_allocations = i;
-				goto err_free_allocations;
-			}
-			--order;
+
+			order--;
 		}
 
-		split_page(pages[i], order);
-		counts[i] = 1 << order;
-		num_pages -= counts[i];
-		i++;
+		if (page == NULL)
+			break;
+
+		split_page(page, order);
+		num_allocd = 1 << order;
+		num_pages -= num_allocd;
+
+		while (num_allocd && count < HV_DEPOSIT_INP_MAX) {
+			pfna[count++] = page_to_pfn(page++);
+			num_allocd--;
+		}
+
+		if (num_allocd-- && count == HV_DEPOSIT_INP_MAX) {
+			*lastpfnp = page_to_pfn(page);
+			count++;
+			break;
+		}
 	}
-	num_allocations = i;
 
-	local_irq_save(flags);
+	if (count == 0)
+		rc = -ENOMEM;
+	else
+		rc = count;
 
-	input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	return rc;
+}
 
-	input_page->partition_id = partition_id;
+/*
+ * Deposit memory in the hypervisor. A contiguous 2M worth of pfns is utmost
+ * desired, but short of that, we deposit whatever contiguous chunks we can
+ * get. If contiguous parameter is true, then the hypervisor requires deposited
+ * memory to be contiguous.
+ */
+static int hv_call_deposit_pages(int node, u64 partition_id, bool contiguous)
+{
+	struct hv_deposit_memory *hc_input;
+	int i, rc, num_pages;
+	u64 status, *pfna, lastpfn = 0;
 
-	/* Populate gpa_page_list - these will fit on the input page */
-	for (i = 0, page_count = 0; i < num_allocations; ++i) {
-		base_pfn = page_to_pfn(pages[i]);
-		for (j = 0; j < counts[i]; ++j, ++page_count)
-			input_page->gpa_page_list[page_count] = base_pfn + j;
-	}
-	status = hv_do_rep_hypercall(HVCALL_DEPOSIT_MEMORY,
-				     page_count, 0, input_page, NULL);
-	local_irq_restore(flags);
+	BUILD_BUG_ON(HV_MAX_CONTIGUOUS_ALLOCATION_PAGES > HV_DEPOSIT_MAX);
+
+	if (contiguous)
+		num_pages = HV_MAX_CONTIGUOUS_ALLOCATION_PAGES;
+	else
+		num_pages = HV_DEPOSIT_MAX;
+
+	hc_input = (struct hv_deposit_memory *)get_zeroed_page(GFP_KERNEL);
+	if (hc_input == NULL)
+		return -ENOMEM;
+
+	hc_input->partition_id = partition_id;
+	pfna = hc_input->gpa_page_list;
+
+	rc = hv_alloc_dep_pages(node, pfna, &lastpfn, num_pages, contiguous);
+	if (rc < 0)
+		goto out_free;
+
+	num_pages = rc;
+	if (num_pages > HV_DEPOSIT_INP_MAX)
+		num_pages = HV_DEPOSIT_INP_MAX;
+
+	/* We are not using hyperv_pcpu_input_arg, so no need to disable */
+
+	status = hv_do_rep_hypercall(HVCALL_DEPOSIT_MEMORY, num_pages,
+				     0, hc_input, NULL);
 	if (!hv_result_success(status)) {
 		hv_status_err(status, "\n");
-		ret = hv_result_to_errno(status);
-		goto err_free_allocations;
+		rc = hv_result_to_errno(status);
+		goto out_free_dep_pages;
 	}
 
-	ret = 0;
-	goto free_buf;
-
-err_free_allocations:
-	for (i = 0; i < num_allocations; ++i) {
-		base_pfn = page_to_pfn(pages[i]);
-		for (j = 0; j < counts[i]; ++j)
-			__free_page(pfn_to_page(base_pfn + j));
+	if (lastpfn) {
+		num_pages = 1;
+		hc_input->gpa_page_list[0] = lastpfn;
+		status = hv_do_rep_hypercall(HVCALL_DEPOSIT_MEMORY, num_pages,
+					     0, hc_input, NULL);
+		if (!hv_result_success(status))
+			/* We deposited some earlier, so just free this */
+			__free_page(pfn_to_page(lastpfn));
 	}
 
-free_buf:
-	free_page((unsigned long)pages);
-	kfree(counts);
-	return ret;
+	free_page((unsigned long)hc_input);
+	return 0;
+
+out_free_dep_pages:
+	for (i = 0; i < num_pages; i++)
+		__free_page(pfn_to_page(pfna[i]));
+	if (lastpfn)
+		__free_page(pfn_to_page(lastpfn));
+
+out_free:
+	free_page((unsigned long)hc_input);
+	return rc;
 }
 
-/**
- * hv_call_deposit_pages - Deposit memory pages to a partition
- * @node        : NUMA node from which to allocate pages
- * @partition_id: Target partition ID to deposit pages to
- * @num_pages   : Number of pages to deposit
- *
- * Deposits memory pages to the specified partition. The deposit is
- * performed in chunks of HV_DEPOSIT_MAX pages to handle large requests
- * efficiently.
- *
- * Return: 0 on success, negative error code on failure
- */
-int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
+int hv_deposit_memory_node(int node, u64 pt_id, u64 hv_status)
 {
-	u64 done;
-	int ret = 0;
+	int result = hv_result(hv_status);
+	bool contiguous = false;
 
-	for (done = 0; done < num_pages; done += HV_DEPOSIT_MAX) {
-		u32 to_deposit = min(num_pages - done, HV_DEPOSIT_MAX);
-
-		ret = __hv_call_deposit_pages(node, partition_id,
-					      to_deposit);
-		if (ret)
-			break;
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(hv_call_deposit_pages);
-
-int hv_deposit_memory_node(int node, u64 partition_id,
-			   u64 hv_status)
-{
-	u32 num_pages = 1;
-
-	switch (hv_result(hv_status)) {
-	case HV_STATUS_INSUFFICIENT_MEMORY:
-		break;
-	case HV_STATUS_INSUFFICIENT_CONTIGUOUS_MEMORY:
-		num_pages = HV_MAX_CONTIGUOUS_ALLOCATION_PAGES;
-		break;
-
-	case HV_STATUS_INSUFFICIENT_CONTIGUOUS_ROOT_MEMORY:
-		num_pages = HV_MAX_CONTIGUOUS_ALLOCATION_PAGES;
-		fallthrough;
-	case HV_STATUS_INSUFFICIENT_ROOT_MEMORY:
+	if (result == HV_STATUS_INSUFFICIENT_ROOT_MEMORY ||
+	    result == HV_STATUS_INSUFFICIENT_CONTIGUOUS_ROOT_MEMORY) {
 		if (!hv_root_partition()) {
-			hv_status_err(hv_status, "Unexpected root memory deposit\n");
-			return -ENOMEM;
+			hv_status_err(hv_status,
+				      "Unexpected root memory deposit\n");
+			return -EINVAL;
 		}
-		partition_id = HV_PARTITION_ID_SELF;
-		break;
 
-	default:
-		hv_status_err(hv_status, "Unexpected!\n");
-		return -ENOMEM;
+		pt_id = HV_PARTITION_ID_SELF;
 	}
 
-	/*
-	 * Deposit 2MB at once for guest partitions to speed up VMs
-	 * creation with nested virtualization enabled.
-	 */
-	if (partition_id != hv_current_partition_id)
-		num_pages = PTRS_PER_PMD;
+	if (result == HV_STATUS_INSUFFICIENT_CONTIGUOUS_MEMORY ||
+	    result == HV_STATUS_INSUFFICIENT_CONTIGUOUS_ROOT_MEMORY)
+		contiguous = true;
 
-	return hv_call_deposit_pages(node, partition_id, num_pages);
+	return hv_call_deposit_pages(node, pt_id, contiguous);
 }
 EXPORT_SYMBOL_GPL(hv_deposit_memory_node);
 

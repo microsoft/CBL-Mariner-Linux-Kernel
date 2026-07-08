@@ -422,7 +422,6 @@ int hv_call_notify_all_processors_started(void);
 u64 mshv_current_partid(void);
 
 bool hv_lp_exists(u32 lp_index);
-int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages);
 
 #else /* CONFIG_MSHV_ROOT */
 static inline bool hv_root_partition(void) { return false; }
@@ -430,10 +429,6 @@ static inline bool hv_l1vh_partition(void) { return false; }
 static inline bool hv_parent_partition(void) { return false; }
 static inline bool hv_result_needs_memory(u64 status) { return false; }
 static inline int hv_deposit_memory_node(int node, u64 partition_id, u64 status)
-{
-	return -EOPNOTSUPP;
-}
-static inline int hv_call_deposit_pages(int node, u64 partition_id, u64 num_pages)
 {
 	return -EOPNOTSUPP;
 }

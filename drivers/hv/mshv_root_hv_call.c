@@ -20,7 +20,6 @@ module_param(hv_nofull_mmio, bool, 0644);
 MODULE_PARM_DESC(hv_nofull_mmio, "If set only map 1 page upon guest mmio fault");
 
 /* Determined empirically */
-#define HV_MAP_GPA_DEPOSIT_PAGES	256
 #define HV_UMAP_GPA_PAGES		512
 
 #define HV_PAGE_COUNT_2M_ALIGNED(pg_count) (!((pg_count) & (0x200 - 1)))
