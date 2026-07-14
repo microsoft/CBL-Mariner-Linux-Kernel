@@ -1082,6 +1082,13 @@ union hv_output_get_vp_cpuid_values {
 	} __packed;
 };
 
+struct hv_input_precommit_gpa_pages {	/* HV_INPUT_PRECOMMIT_GPA_PAGES */
+	u64 partition_id;
+	u32 flags;
+	u32 reserved;
+	u64 target_gpa_base;
+} __packed;
+
 struct hv_input_signal_event_direct {
 	u64 target_partition;
 	u32 target_vp;

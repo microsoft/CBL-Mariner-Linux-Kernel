@@ -186,6 +186,54 @@ int hv_call_delete_partition(u64 partition_id)
 	return hv_result_to_errno(status);
 }
 
+/*
+ * Pre commit to reduce TLB flush overheads in the hypervisor. On systems with
+ * large CPUs, there is signficant advantage to doing this. Pre-commit allows
+ * the hypervisor to build all data structs needed in anticipation of the map
+ * gpa hypercall, thus reducing or eliminating deposit page returns from the
+ * map gpa hypercall, and as a result reducing TLB flushes.
+ */
+static int hv_pre_commit_gpa(u64 pt_id, u64 gfn, u64 num_pages)
+{
+	ulong irq_flags;
+	struct hv_input_precommit_gpa_pages *input_page;
+	int rc = 0;
+	u64 status, done = 0;
+
+	while (done < num_pages) {
+		u16 rep_count = min(num_pages - done, HV_REP_COUNT_MAX);
+
+		local_irq_save(irq_flags);
+		input_page = *this_cpu_ptr(hyperv_pcpu_input_arg);
+
+		input_page->partition_id = pt_id;
+		input_page->flags = 0;
+		input_page->target_gpa_base = gfn;
+
+		status = hv_do_rep_hypercall(HVCALL_PRECOMMIT_GPA_PAGES,
+					     rep_count, 0, input_page, NULL);
+		local_irq_restore(irq_flags);
+
+		done += hv_repcomp(status);
+		gfn += hv_repcomp(status);
+
+		if (hv_result_needs_memory(status)) {
+			rc = hv_deposit_memory(pt_id, status);
+			if (rc)
+				break;
+
+		} else if (!hv_result_success(status)) {
+			pr_err("%s: failed to pre commit for gfn %#llx done %llu/%llu, status=%#llx (%s)\n",
+			       __func__, gfn, done, num_pages, status,
+			       hv_result_to_string(hv_result(status)));
+			rc = hv_result_to_errno(status);
+			break;
+		}
+	}
+
+	return rc;
+}
+
 /* Ask the hypervisor to map guest ram pages or the guest mmio space */
 static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 			       u32 flags, struct page **pages, u64 mmio_mfn)
@@ -214,6 +262,10 @@ static int hv_do_map_gpa_hcall(u64 partition_id, u64 gfn, u64 page_struct_count,
 		large_shift = HV_HYP_LARGE_PAGE_SHIFT - HV_HYP_PAGE_SHIFT;
 		page_count >>= large_shift;
 	}
+
+	ret = hv_pre_commit_gpa(partition_id, gfn, page_struct_count);
+	if (ret)
+		return ret;
 
 	while (done < page_count) {
 		ulong i, completed, remain = page_count - done;
