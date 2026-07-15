@@ -21,6 +21,7 @@
 #include <linux/arm-smccc.h>
 #include <hyperv/hvhdk.h>
 
+void __init hyperv_early_init(void);
 int __init hyperv_init(void);
 
 /*

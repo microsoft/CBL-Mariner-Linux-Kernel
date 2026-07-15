@@ -355,6 +355,8 @@ void __init __no_sanitize_address setup_arch(char **cmdline_p)
 	else
 		psci_acpi_init();
 
+	hyperv_early_init();
+
 	arm64_rsi_init();
 
 	init_bootcpu_ops();
