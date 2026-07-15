@@ -521,13 +521,29 @@ static int mshv_synic_cpu_init(unsigned int cpu)
 
 	/* Setup the Synic's event ring page */
 	sirbp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIRBP);
+
+	if (hv_root_partition()) {
+		*event_ring_page = memremap(sirbp.base_sirbp_gpa << HV_HYP_PAGE_SHIFT,
+					    HV_HYP_PAGE_SIZE, MEMREMAP_WB);
+
+		if (!(*event_ring_page))
+			goto cleanup;
+	} else {
+		/*
+		 * On L1VH the hypervisor does not provide a SIRB page.
+		 * Allocate one and program its GPA into the MSR.
+		 */
+		*event_ring_page = (struct hv_synic_event_ring_page *)
+			get_zeroed_page(GFP_KERNEL);
+
+		if (!(*event_ring_page))
+			goto cleanup;
+
+		sirbp.base_sirbp_gpa = virt_to_phys(*event_ring_page)
+				>> HV_HYP_PAGE_SHIFT;
+	}
+
 	sirbp.sirbp_enabled = true;
-	*event_ring_page = memremap(sirbp.base_sirbp_gpa << PAGE_SHIFT,
-				    PAGE_SIZE, MEMREMAP_WB);
-
-	if (!(*event_ring_page))
-		goto cleanup;
-
 	hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
 
 	if (mshv_sint_irq != -1)
@@ -561,7 +577,10 @@ cleanup:
 	if (*event_ring_page) {
 		sirbp.sirbp_enabled = false;
 		hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
-		memunmap(*event_ring_page);
+		if (hv_root_partition())
+			memunmap(*event_ring_page);
+		else
+			free_page((unsigned long)*event_ring_page);
 	}
 	if (*event_flags_page) {
 		siefp.siefp_enabled = false;
@@ -609,8 +628,15 @@ static int mshv_synic_cpu_exit(unsigned int cpu)
 	/* Disable Synic's event ring page */
 	sirbp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIRBP);
 	sirbp.sirbp_enabled = false;
-	hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
-	memunmap(*event_ring_page);
+
+	if (hv_root_partition()) {
+		hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
+		memunmap(*event_ring_page);
+	} else {
+		sirbp.base_sirbp_gpa = 0;
+		hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
+		free_page((unsigned long)*event_ring_page);
+	}
 
 	/* Disable Synic's event flags page */
 	siefp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIEFP);
