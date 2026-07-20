@@ -1955,8 +1955,7 @@ static void serial8250_break_ctl(struct uart_port *port, int break_state)
 	serial_port_out(port, UART_LCR, up->lcr);
 }
 
-/* Returns true if @bits were set, false on timeout */
-static bool wait_for_lsr(struct uart_8250_port *up, int bits)
+static void wait_for_lsr(struct uart_8250_port *up, int bits)
 {
 	unsigned int status, tmout;
 
@@ -1979,11 +1978,11 @@ static bool wait_for_lsr(struct uart_8250_port *up, int bits)
 		udelay(1);
 		touch_nmi_watchdog();
 	}
-
-	return (tmout != 0);
 }
 
-/* Wait for transmitter and holding register to empty with timeout */
+/*
+ *	Wait for transmitter & holding register to empty
+ */
 static void wait_for_xmitr(struct uart_8250_port *up, int bits)
 {
 	unsigned int tmout;
@@ -3204,12 +3203,7 @@ EXPORT_SYMBOL_GPL(serial8250_set_defaults);
 
 void serial8250_fifo_wait_for_lsr_thre(struct uart_8250_port *up, unsigned int count)
 {
-	unsigned int i;
-
-	for (i = 0; i < count; i++) {
-		if (wait_for_lsr(up, UART_LSR_THRE))
-			return;
-	}
+	wait_for_lsr(up, UART_LSR_THRE);
 }
 EXPORT_SYMBOL_NS_GPL(serial8250_fifo_wait_for_lsr_thre, "SERIAL_8250");
 
@@ -3263,16 +3257,14 @@ static void serial8250_console_restore(struct uart_8250_port *up)
 static void serial8250_console_fifo_write(struct uart_8250_port *up,
 					  const char *s, unsigned int count)
 {
+	int i;
 	const char *end = s + count;
 	unsigned int fifosize = up->tx_loadsz;
 	struct uart_port *port = &up->port;
-	unsigned int tx_count = 0;
 	bool cr_sent = false;
-	unsigned int i;
 
 	while (s != end) {
-		/* Allow timeout for each byte of a possibly full FIFO */
-		serial8250_fifo_wait_for_lsr_thre(up, fifosize);
+		wait_for_lsr(up, UART_LSR_THRE);
 
 		for (i = 0; i < fifosize && s != end; ++i) {
 			if (*s == '\n' && !cr_sent) {
@@ -3283,14 +3275,7 @@ static void serial8250_console_fifo_write(struct uart_8250_port *up,
 				cr_sent = false;
 			}
 		}
-		tx_count = i;
 	}
-
-	/*
-	 * Allow timeout for each byte written since the caller will only wait
-	 * for UART_LSR_BOTH_EMPTY using the timeout of a single character
-	 */
-	serial8250_fifo_wait_for_lsr_thre(up, tx_count);
 }
 
 /*
