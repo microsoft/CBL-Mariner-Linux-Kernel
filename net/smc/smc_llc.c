@@ -1053,8 +1053,19 @@ int smc_llc_cli_add_link(struct smc_link *link, struct smc_llc_qentry *qentry)
 	ini->vlan_id = lgr->vlan_id;
 	if (lgr->smc_version == SMC_V2) {
 		ini->check_smcrv2 = true;
-		ini->smcrv2.saddr = lgr->saddr;
-		ini->smcrv2.daddr = smc_ib_gid_to_ipv4(llc->sender_gid);
+		ini->smcrv2.addr_family = lgr->addr_family;
+		if (lgr->addr_family == AF_INET) {
+			ini->smcrv2.saddr = lgr->saddr;
+			ini->smcrv2.daddr = smc_ib_gid_to_ipv4(llc->sender_gid);
+		}
+#if IS_ENABLED(CONFIG_IPV6)
+		else if (lgr->addr_family == AF_INET6) {
+			memcpy(&ini->smcrv2.saddr6, &lgr->saddr6,
+			       sizeof(ini->smcrv2.saddr6));
+			smc_ib_gid_to_ipv6(llc->sender_gid,
+					   &ini->smcrv2.daddr6);
+		}
+#endif
 	}
 	smc_pnet_find_alt_roce(lgr, ini, link->smcibdev);
 	if (!memcmp(llc->sender_gid, link->peer_gid, SMC_GID_SIZE) &&
@@ -1431,13 +1442,29 @@ int smc_llc_srv_add_link(struct smc_link *link,
 	ini->vlan_id = lgr->vlan_id;
 	if (lgr->smc_version == SMC_V2) {
 		ini->check_smcrv2 = true;
-		ini->smcrv2.saddr = lgr->saddr;
-		if (send_req_add_link_resp) {
-			struct smc_llc_msg_req_add_link_v2 *req_add =
-				&req_qentry->msg.req_add_link;
+		ini->smcrv2.addr_family = lgr->addr_family;
+		if (lgr->addr_family == AF_INET) {
+			ini->smcrv2.saddr = lgr->saddr;
+			if (send_req_add_link_resp) {
+				struct smc_llc_msg_req_add_link_v2 *req_add =
+					&req_qentry->msg.req_add_link;
 
-			ini->smcrv2.daddr = smc_ib_gid_to_ipv4(req_add->gid[0]);
+				ini->smcrv2.daddr = smc_ib_gid_to_ipv4(req_add->gid[0]);
+			}
 		}
+#if IS_ENABLED(CONFIG_IPV6)
+		else if (lgr->addr_family == AF_INET6) {
+			memcpy(&ini->smcrv2.saddr6, &lgr->saddr6,
+			       sizeof(ini->smcrv2.saddr6));
+			if (send_req_add_link_resp) {
+				struct smc_llc_msg_req_add_link_v2 *req_add =
+					&req_qentry->msg.req_add_link;
+
+				smc_ib_gid_to_ipv6(req_add->gid[0],
+						   &ini->smcrv2.daddr6);
+			}
+		}
+#endif
 	}
 	smc_pnet_find_alt_roce(lgr, ini, link->smcibdev);
 	if (lgr->smc_version == SMC_V2 && !ini->smcrv2.ib_dev_v2) {

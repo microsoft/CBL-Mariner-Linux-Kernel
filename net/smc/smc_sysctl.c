@@ -25,6 +25,17 @@ static int max_sndbuf = INT_MAX / 2;
 static int max_rcvbuf = INT_MAX / 2;
 static const int net_smc_wmem_init = (64 * 1024);
 static const int net_smc_rmem_init = (64 * 1024);
+static const unsigned int max_tos = 255;
+
+/* Module-global ToS value for RoCE v2 GRH.  Kept in the SMC module's data
+ * segment (not in struct netns_smc) so that updating this feature does not
+ * change the layout of struct net and can ship as a plain SMC module
+ * update against an unmodified running kernel. The trade-off: the value is
+ * per-host, not per-netns.  See the design doc for a per-netns alternative
+ * that requires a kernel rebuild.
+ */
+unsigned int smc_sysctl_smcr_tos;
+EXPORT_SYMBOL_GPL(smc_sysctl_smcr_tos);
 
 static struct ctl_table smc_table[] = {
 	{
@@ -68,6 +79,15 @@ static struct ctl_table smc_table[] = {
 		.extra1		= &min_rcvbuf,
 		.extra2		= &max_rcvbuf,
 	},
+	{
+		.procname	= "smcr_tos",
+		.data		= &smc_sysctl_smcr_tos,	/* module-local global */
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= proc_douintvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= (void *)&max_tos,
+	},
 	{  }
 };
 
@@ -83,8 +103,20 @@ int __net_init smc_sysctl_net_init(struct net *net)
 		if (!table)
 			goto err_alloc;
 
-		for (i = 0; i < ARRAY_SIZE(smc_table) - 1; i++)
+		for (i = 0; i < ARRAY_SIZE(smc_table) - 1; i++) {
+			/* smcr_tos is a module-global, not per-netns.
+			 * Skip the per-netns .data offsetting, and
+			 * demote the entry to 0444 in non-init netns
+			 * so a CAP_NET_ADMIN process in a container
+			 * cannot modify the host-wide ToS value via
+			 * its own /proc/sys view.
+			 */
+			if (table[i].data == &smc_sysctl_smcr_tos) {
+				table[i].mode = 0444;
+				continue;
+			}
 			table[i].data += (void *)net - (void *)&init_net;
+		}
 	}
 
 	net->smc.smc_hdr = register_net_sysctl_sz(net, "net/smc", table,
