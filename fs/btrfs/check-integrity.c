@@ -81,7 +81,6 @@
 #include <linux/blkdev.h>
 #include <linux/mm.h>
 #include <linux/string.h>
-#include <crypto/hash.h>
 #include "messages.h"
 #include "ctree.h"
 #include "disk-io.h"
@@ -1654,9 +1653,9 @@ static noinline_for_stack int btrfsic_test_for_metadata(
 		char **datav, unsigned int num_pages)
 {
 	struct btrfs_fs_info *fs_info = state->fs_info;
-	SHASH_DESC_ON_STACK(shash, fs_info->csum_shash);
+	struct btrfs_csum_ctx csum;
 	struct btrfs_header *h;
-	u8 csum[BTRFS_CSUM_SIZE];
+	u8 result[BTRFS_CSUM_SIZE];
 	unsigned int i;
 
 	if (num_pages * PAGE_SIZE < state->metablock_size)
@@ -1667,18 +1666,18 @@ static noinline_for_stack int btrfsic_test_for_metadata(
 	if (memcmp(h->fsid, fs_info->fs_devices->fsid, BTRFS_FSID_SIZE))
 		return 1;
 
-	shash->tfm = fs_info->csum_shash;
-	crypto_shash_init(shash);
+	btrfs_csum_init(&csum, fs_info->csum_type);
 
 	for (i = 0; i < num_pages; i++) {
 		u8 *data = i ? datav[i] : (datav[i] + BTRFS_CSUM_SIZE);
 		size_t sublen = i ? PAGE_SIZE :
 				    (PAGE_SIZE - BTRFS_CSUM_SIZE);
 
-		crypto_shash_update(shash, data, sublen);
+		btrfs_csum_update(&csum, data, sublen);
 	}
-	crypto_shash_final(shash, csum);
-	if (memcmp(csum, h->csum, fs_info->csum_size))
+
+	btrfs_csum_final(&csum, result);
+	if (memcmp(result, h->csum, fs_info->csum_size))
 		return 1;
 
 	return 0; /* is metadata */
