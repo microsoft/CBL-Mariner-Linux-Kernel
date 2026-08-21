@@ -59,3 +59,26 @@ rmem - INTEGER
 	only allowed 512KiB for SMC-R and 1MiB for SMC-D.
 
 	Default: 128K
+
+smcr_tos - UNSIGNED INTEGER
+	Type of Service (ToS) / Traffic Class value written to the GRH of every
+	new SMC-R RDMA QP.  The byte is carried into the outer IP header of the
+	RoCE v2 UDP-encapsulated traffic (IPv4 ToS field, IPv6 Traffic Class
+	field), so QoS-aware fabrics can classify and prioritize SMC-R flows.
+
+	Scope: this sysctl is backed by a single host-wide variable inside the
+	SMC module (not per-netns).  All netns on the host share the same value.
+	This design allows the feature to ship as a plain SMC kernel-module
+	update against an unmodified running kernel.  For a per-netns variant,
+	a kernel rebuild is required; see the SMC-R design doc for details.
+
+	For IPv4 RoCE v2 this sets the outer IP ToS byte; for IPv6 RoCE v2 it
+	sets the outer Traffic Class byte.  A value of 0 (default) preserves the
+	existing behaviour (no explicit marking).
+
+	Takes effect on new SMC-R QPs only.  Existing connections keep the ToS
+	they were created with.
+
+	Range: 0-255 (full 8-bit ToS byte; DSCP occupies bits 2-7, ECN bits 0-1)
+
+	Default: 0
