@@ -12,13 +12,31 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/stringify.h>
 #include <linux/time.h>
 #include <linux/platform_device.h>
 #include <linux/rtc.h>
 #include <linux/efi.h>
+#include <linux/dmi.h>
 
 #define EFI_ISDST (EFI_TIME_ADJUST_DAYLIGHT|EFI_TIME_IN_DAYLIGHT)
+
+static const struct dmi_system_id microsoft_dmi_blacklist[] = {
+	{
+		.ident = "Microsoft C2141",
+		.matches = {
+			DMI_MATCH(DMI_BIOS_VERSION, "C2141"),
+		},
+	},
+	{
+		.ident = "Microsoft C4143",
+		.matches = {
+			DMI_MATCH(DMI_BIOS_VERSION, "C4143"),
+		},
+	},
+	{ }
+};
 
 /*
  * returns day of the year [0-365]
@@ -191,6 +209,9 @@ static int __init efi_rtc_probe(struct platform_device *dev)
 	struct rtc_device *rtc;
 	efi_time_t eft;
 	efi_time_cap_t cap;
+
+	if (dmi_check_system(microsoft_dmi_blacklist))
+		return -ENODEV;
 
 	/* First check if the RTC is usable */
 	if (efi.get_time(&eft, &cap) != EFI_SUCCESS)
