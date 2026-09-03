@@ -2811,9 +2811,7 @@ void fbnic_napi_depletion_check(struct net_device *netdev)
 	fbnic_wrfl(fbd);
 }
 
-static int fbnic_queue_mem_alloc(struct net_device *dev,
-				 struct netdev_queue_config *qcfg,
-				 void *qmem, int idx)
+static int fbnic_queue_mem_alloc(struct net_device *dev, void *qmem, int idx)
 {
 	struct fbnic_net *fbn = netdev_priv(dev);
 	const struct fbnic_q_triad *real;
@@ -2865,9 +2863,7 @@ static void __fbnic_nv_restart(struct fbnic_net *fbn,
 		netif_wake_subqueue(fbn->netdev, nv->qt[i].sub0.q_idx);
 }
 
-static int fbnic_queue_start(struct net_device *dev,
-			     struct netdev_queue_config *qcfg,
-			     void *qmem, int idx)
+static int fbnic_queue_start(struct net_device *dev, void *qmem, int idx)
 {
 	struct fbnic_net *fbn = netdev_priv(dev);
 	struct fbnic_napi_vector *nv;
