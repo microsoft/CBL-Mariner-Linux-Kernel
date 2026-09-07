@@ -146,8 +146,7 @@ static int probe_common(struct virtio_device *vdev)
 	if (!vi)
 		return -ENOMEM;
 
-	vi->index = index =
-		ida_simple_get(&watchdog_index_ida, 0, 0, GFP_KERNEL);
+	vi->index = index = ida_alloc(&watchdog_index_ida, GFP_KERNEL);
 	if (index < 0) {
 		err = index;
 		goto err_ida;
@@ -179,7 +178,8 @@ static int probe_common(struct virtio_device *vdev)
 	return 0;
 
 err_find:
-	ida_simple_remove(&watchdog_index_ida, index);
+	if (index >= 0)
+		ida_free(&watchdog_index_ida, index);
 err_ida:
 	kfree(vi);
 	return err;
@@ -201,7 +201,8 @@ static void remove_common(struct virtio_device *vdev)
 		vi->wdd_register_done = false;
 	}
 	vdev->config->del_vqs(vdev);
-	ida_simple_remove(&watchdog_index_ida, vi->index);
+	if (vi->index >= 0)
+		ida_free(&watchdog_index_ida, vi->index);
 	kfree(vi);
 }
 
