@@ -1,0 +1,12 @@
+Name                                               SHA1
+----                                               ----
+feature/vera-rubin/6.18                            28716eb0fda90aacba70931a56b739789a9cdee5
+feature/reverts/6.18                               ba9b74af73dc627743446dd8fa4c7b6bc82b322d
+feature/secure-boot-lockdown/6.18                  5359c7eba10497385506eb75a4f51dbc07a49246
+feature/platform-key-signing/6.18                  4fb2c6f391b287f82fa29d046774ef5a4cfcb594
+feature/sec-fixes/6.18                             629c082de6eefaff26f8e0a5ef4c4ac40fffaaa5
+feature/bbr3/6.18                                  feab904c4e7302e0777d14afa2121c146a0f9ef6
+feature/fips/6.18                                  04142716552cec26d46c5b4a2eb9d322ba2ea14d
+feature/mana/6.18                                  3468b6d74c58929cd791b059724d09dcfefad76e
+feature/cobalt-200/6.18                            ae8cefbe24c110b58f8a9f3fd179d3060c8f6004
+feature/mlnx-reverts/6.18                          91678390f5dd784b22097ba254bb4c3a950fbd44
