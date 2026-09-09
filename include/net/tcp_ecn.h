@@ -624,6 +624,11 @@ static inline void tcp_ecn_send_syn(struct sock *sk, struct sk_buff *skb)
 	tp->ecn_flags = 0;
 
 	if (use_ecn) {
+		const struct dst_entry *dst = __sk_dst_get(sk);
+
+		if (dst)
+			tcp_set_ecn_low_from_dst(sk, dst);
+
 		if (tcp_ca_needs_ecn(sk) || bpf_needs_ecn)
 			INET_ECN_xmit_ect_1_negotiation(sk);
 
