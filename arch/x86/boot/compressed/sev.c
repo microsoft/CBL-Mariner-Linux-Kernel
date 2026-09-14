@@ -107,6 +107,24 @@ void snp_accept_memory(phys_addr_t start, phys_addr_t end)
 		__page_state_change(pa, pa, &d);
 }
 
+static void snp_unregister_boot_ghcb(void)
+{
+	unsigned long pfn = __pa(&boot_ghcb_page) >> PAGE_SHIFT;
+	u64 val;
+
+	if (!(get_hv_features() & GHCB_HV_FT_GHCB_UNREGISTER))
+		return;
+
+	/* GHCB specification 2.04, section 2.3.2: request data must be zero. */
+	sev_es_wr_ghcb_msr(GHCB_MSR_UNREG_GPA_REQ);
+	VMGEXIT();
+
+	val = sev_es_rd_ghcb_msr();
+	if (GHCB_RESP_CODE(val) != GHCB_MSR_UNREG_GPA_RESP ||
+	    GHCB_DATA(val) != pfn)
+		error("Can't unregister boot GHCB page");
+}
+
 void sev_es_shutdown_ghcb(void)
 {
 	if (!boot_ghcb)
@@ -124,6 +142,10 @@ void sev_es_shutdown_ghcb(void)
 	 * page.
 	 */
 	boot_ghcb = NULL;
+
+	/* Release any hypervisor mapping before making the old GHCB private. */
+	if (sev_snp_enabled())
+		snp_unregister_boot_ghcb();
 
 	/*
 	 * GHCB Page must be flushed from the cache and mapped encrypted again.
