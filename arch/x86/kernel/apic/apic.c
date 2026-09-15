@@ -1861,6 +1861,9 @@ static __init void try_to_enable_x2apic(int remap_mode)
 
 void __init check_x2apic(void)
 {
+	if (boot_cpu_has(X86_FEATURE_X2APIC) && !x2apic_enabled())
+		__x2apic_enable();
+
 	if (x2apic_enabled()) {
 		pr_info("x2apic: enabled by BIOS, switching to x2apic ops\n");
 		x2apic_mode = 1;
