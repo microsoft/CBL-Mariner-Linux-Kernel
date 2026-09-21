@@ -390,7 +390,8 @@ union hv_partition_isolation_properties {
 	struct {
 		u64 isolation_type: 5;
 		u64 isolation_host_type : 2;
-		u64 rsvd_z: 5;
+		u64 interrupt_injection_policy : 2;
+		u64 rsvd_z: 3;
 		u64 shared_gpa_boundary_page_number: 52;
 	} __packed;
 };
@@ -401,6 +402,10 @@ union hv_partition_isolation_properties {
 #define HV_PARTITION_ISOLATION_TYPE_NONE            0
 #define HV_PARTITION_ISOLATION_TYPE_SNP             2
 #define HV_PARTITION_ISOLATION_TYPE_TDX             3
+
+#define HV_PARTITION_ISOLATION_SNP_RESTRICTED_INTERRUPT_INJECTION 0x0
+#define HV_PARTITION_ISOLATION_SNP_NORMAL_INTERRUPT_INJECTION     0x1
+#define HV_PARTITION_ISOLATION_SNP_SECURE_AVIC_INJECTION           0x3
 
 /*
  * Various host isolation types supported by MSHV.

@@ -29,10 +29,18 @@ enum {
 	MSHV_PT_BIT_CPU_AND_XSAVE_FEATURES,
 	MSHV_PT_BIT_NESTED_VIRTUALIZATION,
 	MSHV_PT_BIT_SMT_ENABLED_GUEST,
+	MSHV_PT_BIT_SNP_INJECTION_POLICY0,
+	MSHV_PT_BIT_SNP_INJECTION_POLICY1,
 	MSHV_PT_BIT_COUNT,
 };
 
 #define MSHV_PT_FLAGS_MASK ((1 << MSHV_PT_BIT_COUNT) - 1)
+
+#define MSHV_PT_SNP_INJECTION_POLICY_MASK (3ULL << MSHV_PT_BIT_SNP_INJECTION_POLICY0)
+
+#define MSHV_PT_SNP_RESTRICTED_INJECTION	0
+#define MSHV_PT_SNP_NORMAL_INJECTION	1
+#define MSHV_PT_SNP_SECURE_AVIC_INJECTION	3
 
 enum {
 	MSHV_PT_ISOLATION_NONE,
@@ -44,6 +52,9 @@ enum {
  * struct mshv_create_partition - arguments for MSHV_CREATE_PARTITION
  * @pt_flags: Bitmask of 1 << MSHV_PT_BIT_*
  * @pt_isolation: MSHV_PT_ISOLATION_*
+ *
+ * Bits covered by MSHV_PT_SNP_INJECTION_POLICY_MASK encode the SNP interrupt
+ * injection policy.
  *
  * This is the initial/v1 version for backward compatibility.
  *
