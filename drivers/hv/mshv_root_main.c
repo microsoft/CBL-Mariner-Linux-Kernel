@@ -8,6 +8,7 @@
  * Authors: Microsoft Linux virtualization team
  */
 
+#include <linux/bitfield.h>
 #include <linux/entry-virt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -3054,6 +3055,7 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 					union hv_partition_isolation_properties *isol_props)
 {
 	int i;
+	u64 injection_policy;
 	struct mshv_create_partition_v2 args;
 	union hv_partition_processor_features *disabled_procs;
 	union hv_partition_processor_xsave_features *disabled_xsave;
@@ -3196,6 +3198,28 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 #endif
 	}
 
+	injection_policy = FIELD_GET(MSHV_PT_SNP_INJECTION_POLICY_MASK,
+				     args.pt_flags);
+	if (injection_policy != MSHV_PT_SNP_RESTRICTED_INJECTION &&
+	    args.pt_isolation != MSHV_PT_ISOLATION_SNP)
+		return -EINVAL;
+
+	switch (injection_policy) {
+	case MSHV_PT_SNP_RESTRICTED_INJECTION:
+		injection_policy =
+			HV_PARTITION_ISOLATION_SNP_RESTRICTED_INTERRUPT_INJECTION;
+		break;
+	case MSHV_PT_SNP_NORMAL_INJECTION:
+		injection_policy =
+			HV_PARTITION_ISOLATION_SNP_NORMAL_INTERRUPT_INJECTION;
+		break;
+	case MSHV_PT_SNP_SECURE_AVIC_INJECTION:
+		injection_policy = HV_PARTITION_ISOLATION_SNP_SECURE_AVIC_INJECTION;
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	/* Only support EXO partitions */
 	*pt_flags = HV_PARTITION_CREATION_FLAG_EXO_PARTITION |
 		    HV_PARTITION_CREATION_FLAG_INTERCEPT_MESSAGE_PAGE_ENABLED;
@@ -3219,6 +3243,7 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 		break;
 	case MSHV_PT_ISOLATION_SNP:
 		isol_props->isolation_type = HV_PARTITION_ISOLATION_TYPE_SNP;
+		isol_props->interrupt_injection_policy = injection_policy;
 		break;
 	}
 
