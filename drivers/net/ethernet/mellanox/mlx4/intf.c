@@ -59,6 +59,9 @@ static bool is_ib_supported(struct mlx4_dev *dev)
 	if (dev->caps.flags & MLX4_DEV_CAP_FLAG_IBOE)
 		return true;
 
+	if (force_mlx4_ib_support)
+		return true;
+
 	return false;
 }
 
