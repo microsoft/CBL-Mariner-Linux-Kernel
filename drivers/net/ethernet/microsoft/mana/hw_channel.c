@@ -315,6 +315,7 @@ static int mana_hwc_create_gdma_eq(struct hw_channel_context *hwc,
 	spec.eq.context = ctx;
 	spec.eq.callback = cb;
 	spec.eq.log2_throttle_limit = DEFAULT_LOG2_THROTTLING_FOR_ERROR_EQ;
+	spec.eq.msix_index = 0;
 
 	return mana_gd_create_hwc_queue(hwc->gdma_dev, &spec, queue);
 }
@@ -447,7 +448,8 @@ static int mana_hwc_alloc_dma_buf(struct hw_channel_context *hwc, u16 q_depth,
 	gmi = &dma_buf->mem_info;
 	err = mana_gd_alloc_memory(gc, buf_size, gmi);
 	if (err) {
-		dev_err(hwc->dev, "Failed to allocate DMA buffer: %d\n", err);
+		dev_err(hwc->dev, "Failed to allocate DMA buffer size: %u, err %d\n",
+			buf_size, err);
 		goto out;
 	}
 
@@ -536,6 +538,9 @@ static int mana_hwc_create_wq(struct hw_channel_context *hwc,
 out:
 	if (err)
 		mana_hwc_destroy_wq(hwc, hwc_wq);
+
+	dev_err(hwc->dev, "Failed to create HWC queue size= %u type= %d err= %d\n",
+		queue_size, q_type, err);
 	return err;
 }
 
@@ -863,7 +868,14 @@ int mana_hwc_send_request(struct hw_channel_context *hwc, u32 req_len,
 
 	if (!wait_for_completion_timeout(&ctx->comp_event,
 					 (msecs_to_jiffies(hwc->hwc_timeout)))) {
-		dev_err(hwc->dev, "HWC: Request timed out!\n");
+		if (hwc->hwc_timeout != 0)
+			dev_err(hwc->dev, "HWC: Request timed out: %u ms\n",
+				hwc->hwc_timeout);
+
+		/* Reduce further waiting if HWC no response */
+		if (hwc->hwc_timeout > 1)
+			hwc->hwc_timeout = 1;
+
 		err = -ETIMEDOUT;
 		goto out;
 	}
