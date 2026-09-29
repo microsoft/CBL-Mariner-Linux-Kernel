@@ -33,7 +33,7 @@ efi_status_t efi_get_memory_map(struct efi_boot_memmap **map,
 	if (status != EFI_BUFFER_TOO_SMALL)
 		return EFI_LOAD_ERROR;
 
-	size = tmp.map_size + tmp.desc_size * EFI_MMAP_NR_SLACK_SLOTS;
+	size = tmp.map_size + tmp.desc_size * efi_mmap_nr_slack_slots;
 	status = efi_bs_call(allocate_pool, memtype, sizeof(*m) + size,
 			     (void **)&m);
 	if (status != EFI_SUCCESS)
