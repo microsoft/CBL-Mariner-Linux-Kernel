@@ -154,8 +154,7 @@ struct xdp_desc_ctx {
 	struct xsk_tx_metadata *meta;
 };
 
-struct xdp_desc_ctx xp_raw_get_ctx(const struct xsk_buff_pool *pool, u64 addr,
-				   u32 options);
+struct xdp_desc_ctx xp_raw_get_ctx(const struct xsk_buff_pool *pool, u64 addr);
 
 static inline dma_addr_t xp_get_dma(struct xdp_buff_xsk *xskb)
 {
