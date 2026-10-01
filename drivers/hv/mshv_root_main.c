@@ -3056,9 +3056,7 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 	int i;
 	struct mshv_create_partition_v2 args;
 	union hv_partition_processor_features *disabled_procs;
-#if IS_ENABLED(CONFIG_X86_64)
 	union hv_partition_processor_xsave_features *disabled_xsave;
-#endif
 
 	/* First, copy v1 struct in case user is on previous versions */
 	if (copy_from_user(&args, user_arg,
@@ -3070,13 +3068,13 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 		return -EINVAL;
 
 	disabled_procs = &cr_props->disabled_processor_features;
+	disabled_xsave = &cr_props->disabled_processor_xsave_features;
 
 	/* Disable all processor features first. */
 	for (i = 0; i < HV_PARTITION_PROCESSOR_FEATURES_BANKS; i++)
 		disabled_procs->as_uint64[i] = U64_MAX;
 
 #if IS_ENABLED(CONFIG_X86_64)
-	disabled_xsave = &cr_props->disabled_processor_xsave_features;
 	/* Enable default features that are known to be supported. */
 	disabled_procs->sse3_support = 0;
 	disabled_procs->lahf_sahf_support = 0;
@@ -3183,6 +3181,11 @@ static long mshv_ioctl_process_pt_flags(void __user *user_arg, u64 *pt_flags,
 #if IS_ENABLED(CONFIG_X86_64)
 		disabled_xsave->as_uint64 = args.pt_disabled_xsave;
 #else
+		/*
+		 * In practice this field is ignored on arm64, but safer to
+		 * zero it in case it is ever used.
+		 */
+		disabled_xsave->as_uint64 = 0;
 
 		/*
 		 * Do not reject pt_rsvd2 on ARM64. Older ARM64 mshv bindings

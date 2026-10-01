@@ -133,162 +133,10 @@ struct hv_vp_register_page {
 #endif
 } __packed;
 
-#define HV_PARTITION_PROCESSOR_FEATURES_BANKS 3
-#define HV_PARTITION_PROCESSOR_FEATURES_RESERVEDBANK1_BITFIELD_COUNT 4
-
-#if IS_ENABLED(CONFIG_ARM64)
-#define HV_PARTITION_PROCESSOR_FEATURES_RESERVEDBANK2_BITFIELD_COUNT 56
-#else
-#define HV_PARTITION_PROCESSOR_FEATURES_RESERVEDBANK2_BITFIELD_COUNT 51
-#endif
+#define HV_PARTITION_PROCESSOR_FEATURES_BANKS 2
 
 union hv_partition_processor_features {
 	u64 as_uint64[HV_PARTITION_PROCESSOR_FEATURES_BANKS];
-#if IS_ENABLED(CONFIG_ARM64)
-	struct {
-		u64 asid16 : 1;
-		u64 t_gran16 : 1;
-		u64 t_gran64 : 1;
-		u64 haf : 1;
-		u64 hdbs : 1;
-		u64 pan : 1;
-		u64 at_s1e1 : 1;
-		u64 uao : 1;
-		u64 el0_aarch32 : 1;
-		u64 fp : 1;
-		u64 fp_hp : 1;
-		u64 adv_simd : 1;
-		u64 adv_simd_hp : 1;
-		u64 gic_v3v4 : 1;
-		u64 gic_v4p1 : 1;
-		u64 ras : 1; /* Not supported */
-		u64 pmu_v3 : 1;
-		u64 pmu_v3_arm_v81 : 1;
-		u64 pmu_v3_arm_v84 : 1; /* Not supported */
-		u64 pmu_v3_arm_v85 : 1; /* Not supported */
-		u64 aes : 1;
-		u64 poly_mul : 1;
-		u64 sha1 : 1;
-		u64 sha256 : 1;
-		u64 sha512 : 1;
-		u64 crc32 : 1;
-		u64 atomic : 1;
-		u64 rdm : 1;
-		u64 sha3 : 1;
-		u64 sm3 : 1;
-		u64 sm4 : 1;
-		u64 dp : 1;
-		u64 fhm : 1;
-		u64 dc_cvap : 1;
-		u64 dc_cvadp : 1;
-		u64 apa_base : 1;
-		u64 apa_ep : 1;
-		u64 apa_ep2 : 1;
-		u64 apa_ep2_fp : 1;
-		u64 apa_ep2_fpc : 1;
-		u64 jscvt : 1;
-		u64 fcma : 1;
-		u64 rcpc_v83 : 1;
-		u64 rcpc_v84 : 1;
-		u64 gpa : 1;
-		u64 l1ip_pipt : 1;
-		u64 dz_permitted : 1;
-		u64 ssbs : 1;
-		u64 ssbs_rw : 1;
-		u64 smccc_w1_supported : 1;
-		u64 smccc_w1_mitigated : 1;
-		u64 smccc_w2_supported : 1;
-		u64 smccc_w2_mitigated : 1;
-		u64 csv2 : 1;
-		u64 csv3 : 1;
-		u64 sb : 1;
-		u64 idc : 1;
-		u64 dic : 1;
-		u64 tlbi_os : 1;
-		u64 tlbi_os_range : 1;
-		u64 flags_m : 1;
-		u64 flags_m2 : 1;
-		u64 bf16 : 1;
-		u64 ebf16 : 1;
-
-		/* Second bank starts here. */
-		u64 sve_bf16 : 1;
-		u64 sve_ebf16 : 1;
-		u64 i8mm : 1;
-		u64 sve_i8mm : 1;
-		u64 frintts : 1;
-		u64 specres : 1;
-		u64 mtpmu : 1;
-		u64 rpres : 1;
-		u64 exs : 1;
-		u64 spec_sei : 1;
-		u64 ets : 1;
-		u64 afp : 1;
-		u64 iesb : 1;
-		u64 rng : 1;
-		u64 lse2 : 1;
-		u64 idst : 1;
-		u64 ras_v1p1 : 1;
-		u64 ras_frac_v1p1 : 1;
-		u64 sel2 : 1;
-		u64 amu_v1 : 1;
-		u64 amu_v1p1 : 1;
-		u64 dit : 1;
-		u64 ccidx : 1;
-		u64 fgt_for_intercepts : 1;
-		u64 l1ip_vpipt : 1;
-		u64 ecv : 1;
-		u64 ecv_poff : 1;
-		u64 nested_virt_support : 1;
-		u64 debug_v8p4 : 1;
-		u64 pmu_v3_arm_v87 : 1;
-		u64 double_lock : 1;
-		u64 clrbhb : 1;
-		u64 spe : 1;
-		u64 spe_v1p1 : 1;
-		u64 spe_v1p2 : 1;
-		u64 tt_cnp : 1;
-		u64 hpds : 1;
-		u64 sve : 1;
-		u64 sve_v2 : 1;
-		u64 sve_v2p1 : 1;
-		u64 spec_fpacc : 1;
-		u64 sve_aes : 1;
-		u64 sve_bit_perm : 1;
-		u64 sve_sha3 : 1;
-		u64 sve_sm4 : 1;
-		u64 e0_pd : 1;
-		u64 gpa3 : 1;
-		u64 apa3_base : 1;
-		u64 apa3_ep : 1;
-		u64 apa3_ep2 : 1;
-		u64 apa3_ep2_fp : 1;
-		u64 apa3_ep2_fpc : 1;
-		u64 lrcpc3 : 1;
-		u64 sme : 1;
-		u64 sme_f32_f32 : 1;
-		u64 sme_b16_f32 : 1;
-		u64 sme_f16_f32 : 1;
-		u64 sme_i8_i32 : 1;
-		u64 sme_f64_f64 : 1;
-		u64 sme_i16_i64 : 1;
-		u64 reserved0 : 1;
-		u64 reserved1 : 1;
-		u64 reserved2 : 1;
-		u64 reserved3 : 1;
-
-		/* Third bank starts here. */
-		u64 pmu_event_types : 1;
-		u64 test_bit : 1;
-		u64 fgt : 1;
-		u64 faminmax : 1;
-		u64 cssc : 1;
-		u64 bbm_level1 : 1;
-		u64 bbm_level2 : 1;
-		u64 sve_b16_b16 : 1;
-		u64 reserved_bank2 : HV_PARTITION_PROCESSOR_FEATURES_RESERVEDBANK2_BITFIELD_COUNT;
-	} __packed;
-#elif IS_ENABLED(CONFIG_X86)
 	struct {
 		u64 sse3_support : 1;
 		u64 lahf_sahf_support : 1;
@@ -336,7 +184,7 @@ union hv_partition_processor_features {
 		u64 invpcid_support : 1;
 		u64 ibrs_support : 1;
 		u64 stibp_support : 1;
-		u64 ibpb_support : 1;
+		u64 ibpb_support: 1;
 		u64 unrestricted_guest_support : 1;
 		u64 mdd_support : 1;
 		u64 fast_short_rep_mov_support : 1;
@@ -353,10 +201,14 @@ union hv_partition_processor_features {
 		u64 mb_clear_support : 1;
 		u64 taa_no_support : 1;
 		u64 tsx_ctrl_support : 1;
+		/*
+		 * N.B. The final processor feature bit in bank 0 is reserved to
+		 * simplify potential downlevel backports.
+		 */
 		u64 reserved_bank0 : 1;
 
 		/* N.B. Begin bank 1 processor features. */
-		u64 a_count_m_count_support : 1;
+		u64 acount_mcount_support : 1;
 		u64 tsc_invariant_support : 1;
 		u64 cl_zero_support : 1;
 		u64 rdpru_support : 1;
@@ -375,9 +227,9 @@ union hv_partition_processor_features {
 		u64 serialize_support : 1;
 		u64 tsc_deadline_tmr_support : 1;
 		u64 tsc_adjust_support : 1;
-		u64 fzl_rep_movsb : 1;
-		u64 fs_rep_stosb : 1;
-		u64 fs_rep_cmpsb : 1;
+		u64 fzlrep_movsb : 1;
+		u64 fsrep_stosb : 1;
+		u64 fsrep_cmpsb : 1;
 		u64 tsx_ld_trk_support : 1;
 		u64 vmx_ins_outs_exit_info_support : 1;
 		u64 hlat_support : 1;
@@ -385,7 +237,7 @@ union hv_partition_processor_features {
 		u64 fbsdp_no_support : 1;
 		u64 psdp_no_support : 1;
 		u64 fb_clear_support : 1;
-		u64 btc_no_support : 1; /* AMD branch confusion no support */
+		u64 btc_no_support : 1;
 		u64 ibpb_rsb_flush_support : 1;
 		u64 stibp_always_on_support : 1;
 		u64 perf_global_ctrl_support : 1;
@@ -395,7 +247,7 @@ union hv_partition_processor_features {
 		u64 amd_processor_topology_node_id_support : 1;
 		u64 local_machine_check_support : 1;
 		u64 extended_topology_leaf_fp256_amd_support : 1;
-		u64 gds_no_support : 1; /* If machine is vulnerable to GDS. */
+		u64 gds_no_support : 1;
 		u64 cmpccxadd_support : 1;
 		u64 tsc_aux_virtualization_support : 1;
 		u64 rmp_query_support : 1;
@@ -404,7 +256,7 @@ union hv_partition_processor_features {
 		u64 prefetch_i_support : 1;
 		u64 sha512_support : 1;
 		u64 mitigation_ctrl_support : 1;
-		u64 rfds_no_support : 1; /* If machine is vulnerable to RFDS. */
+		u64 rfds_no_support : 1;
 		u64 rfds_clear_support : 1;
 		u64 sm3_support : 1;
 		u64 sm4_support : 1;
@@ -417,31 +269,10 @@ union hv_partition_processor_features {
 		u64 vrew_clear_supported : 1;
 		u64 tsa_l1_no_supported : 1;
 		u64 tsa_sq_no_supported : 1;
-		u64 reserved0 : 1;
-		u64 reserved1 : 1;
-		u64 tsa_fill_no_supported : 1;
-
-		/* Third bank starts here. */
-		u64 fred_support : 1;
-		u64 lkgs_support : 1;
-		u64 msr_list_support : 1;
-		u64 mcg_ext_ctl_msr_lm : 1;
-		u64 idle_hlt_intercept_support : 1;
-		u64 lass_support : 1; /* Linear-address space separation (LASS) */
-		u64 virtual_nmi_support : 1;
-		u64 movrs_support : 1;
-		u64 avx512_bmm_support : 1;
-		u64 prefetch_i_amd_support : 1;
-		u64 wrmsrns_support : 1;
-		u64 arch_perfmon_extended_leaf_support : 1;
-		u64 test_bit : 1;
-		u64 reserved_bank2 : HV_PARTITION_PROCESSOR_FEATURES_RESERVEDBANK2_BITFIELD_COUNT;
+		u64 lass_support : 1;
+		u64 reserved_bank1 : 2;
 	} __packed;
-#endif
 };
-
-#if IS_ENABLED(CONFIG_X86)
-#define HV_PARTITION_PROCESSOR_XSAVE_FEATURES_RESERVED_BITFIELD_COUNT 23
 
 union hv_partition_processor_xsave_features {
 	struct {
@@ -483,314 +314,69 @@ union hv_partition_processor_xsave_features {
 		u64 avx10_1_256_support : 1;
 		u64 avx10_1_512_support : 1;
 		u64 amx_fp16_support : 1;
-		u64 apx_support : 1;
-		u64 apx_nci_ndd_nf_support : 1;
-		u64 avx10_2_support : 1;
-		u64 reserved : HV_PARTITION_PROCESSOR_XSAVE_FEATURES_RESERVED_BITFIELD_COUNT;
+		u64 reserved1 : 26;
 	} __packed;
-
 	u64 as_uint64;
 };
-#endif
 
 struct hv_partition_creation_properties {
 	union hv_partition_processor_features disabled_processor_features;
-#if IS_ENABLED(CONFIG_X86)
 	union hv_partition_processor_xsave_features
 		disabled_processor_xsave_features;
-#endif
 } __packed;
 
 #define HV_PARTITION_SYNTHETIC_PROCESSOR_FEATURES_BANKS 1
-#define HV_PARTITION_SYNTHETIC_PROCESSOR_FEATURES_RESERVED_BITFIELD_COUNT 10
 
 union hv_partition_synthetic_processor_features {
 	u64 as_uint64[HV_PARTITION_SYNTHETIC_PROCESSOR_FEATURES_BANKS];
 
 	struct {
-		/*
-		 * Report a hypervisor is present. CPUID leaves
-		 * 0x40000000 and 0x40000001 are supported.
-		 */
 		u64 hypervisor_present : 1;
-
-		/*
-		 * Features associated with HV#1:
-		 */
-
-		/* Report support for Hv1 (CPUID leaves 0x40000000 - 0x40000006). */
+		/* Support for HV#1: (CPUID leaves 0x40000000 - 0x40000006)*/
 		u64 hv1 : 1;
-
+		u64 access_vp_run_time_reg : 1; /* HV_X64_MSR_VP_RUNTIME */
+		u64 access_partition_reference_counter : 1; /* HV_X64_MSR_TIME_REF_COUNT */
+		u64 access_synic_regs : 1; /* SINT-related registers */
 		/*
-		 * Access to HV_X64_MSR_VP_RUNTIME.
-		 * Corresponds to access_vp_run_time_reg privilege.
-		 */
-		u64 access_vp_run_time_reg : 1;
-
-		/*
-		 * Access to HV_X64_MSR_TIME_REF_COUNT.
-		 * Corresponds to access_partition_reference_counter privilege.
-		 */
-		u64 access_partition_reference_counter : 1;
-
-		/*
-		 * Access to SINT-related registers (HV_X64_MSR_SCONTROL through
-		 * HV_X64_MSR_EOM and HV_X64_MSR_SINT0 through HV_X64_MSR_SINT15).
-		 * Corresponds to access_synic_regs privilege.
-		 */
-		u64 access_synic_regs : 1;
-
-		/*
-		 * Access to synthetic timers and associated MSRs
-		 * (HV_X64_MSR_STIMER0_CONFIG through HV_X64_MSR_STIMER3_COUNT).
-		 * Corresponds to access_synthetic_timer_regs privilege.
+		 * Access to HV_X64_MSR_STIMER0_CONFIG through
+		 * HV_X64_MSR_STIMER3_COUNT.
 		 */
 		u64 access_synthetic_timer_regs : 1;
-
-		/*
-		 * Access to APIC MSRs (HV_X64_MSR_EOI, HV_X64_MSR_ICR and
-		 * HV_X64_MSR_TPR) as well as the VP assist page.
-		 * Corresponds to access_intr_ctrl_regs privilege.
-		 */
-		u64 access_intr_ctrl_regs : 1;
-
-		/*
-		 * Access to registers associated with hypercalls
-		 * (HV_X64_MSR_GUEST_OS_ID and HV_X64_MSR_HYPERCALL).
-		 * Corresponds to access_hypercall_msrs privilege.
-		 */
+		u64 access_intr_ctrl_regs : 1; /* APIC MSRs and VP assist page*/
+		/* HV_X64_MSR_GUEST_OS_ID and HV_X64_MSR_HYPERCALL */
 		u64 access_hypercall_regs : 1;
-
-		/* VP index can be queried. Corresponds to access_vp_index privilege. */
 		u64 access_vp_index : 1;
-
-		/*
-		 * Access to the reference TSC. Corresponds to
-		 * access_partition_reference_tsc privilege.
-		 */
 		u64 access_partition_reference_tsc : 1;
-
-#if IS_ENABLED(CONFIG_X86)
-		/*
-		 * Partition has access to the guest idle reg. Corresponds to
-		 * access_guest_idle_reg privilege.
-		 */
 		u64 access_guest_idle_reg : 1;
-#else
-		u64 reserved_z10 : 1;
-#endif
-
-		/*
-		 * Partition has access to frequency regs. Corresponds to
-		 * access_frequency_regs privilege.
-		 */
 		u64 access_frequency_regs : 1;
-
-		u64 reserved_z12 : 1; /* Reserved for access_reenlightenment_controls. */
-		u64 reserved_z13 : 1; /* Reserved for access_root_scheduler_reg. */
-		u64 reserved_z14 : 1; /* Reserved for access_tsc_invariant_controls. */
-
-#if IS_ENABLED(CONFIG_X86)
-		/*
-		 * Extended GVA ranges for HvCallFlushVirtualAddressList hypercall.
-		 * Corresponds to privilege.
-		 */
+		u64 reserved_z12 : 1;
+		u64 reserved_z13 : 1;
+		u64 reserved_z14 : 1;
 		u64 enable_extended_gva_ranges_for_flush_virtual_address_list : 1;
-#else
-		u64 reserved_z15 : 1;
-#endif
-
-		/*
-		 * Partition has access to VSM. Corresponds to the access_vsm
-		 * privilege. This feature only affects exo partitions and requires
-		 * HV_PARTITION_CREATION_FLAG_VTL1_OVERRIDE.
-		 */
-		u64 access_vsm : 1;
-
-		/*
-		 * HvCallPostMessage is supported. Maps to the PostMessages
-		 * privilege for EXO partitions. No-op on Hyper-V partitions.
-		 */
-		u64 post_messages : 1;
-
+		u64 reserved_z16 : 1;
+		u64 reserved_z17 : 1;
 		/* Use fast hypercall output. Corresponds to privilege. */
 		u64 fast_hypercall_output : 1;
-
-		u64 reserved_z19 : 1; /* Reserved for enable_extended_hypercalls. */
-
-		/*
-		 * HvStartVirtualProcessor can be used to start virtual processors.
-		 * Corresponds to privilege.
-		 */
-		u64 start_virtual_processor : 1;
-
-		u64 reserved_z21 : 1; /* Reserved for Isolation. */
-
+		u64 reserved_z19 : 1;
+		u64 start_virtual_processor : 1; /* Can start VPs */
+		u64 reserved_z21 : 1;
 		/* Synthetic timers in direct mode. */
 		u64 direct_synthetic_timers : 1;
-
-		u64 reserved_z23 : 1; /* Reserved for synthetic time unhalted timer */
-
-		/* Use extended processor masks. */
+		u64 reserved_z23 : 1;
 		u64 extended_processor_masks : 1;
 
-		/* HvCallFlushVirtualAddressSpace / HvCallFlushVirtualAddressList are supported. */
+		/* Enable various hypercalls */
 		u64 tb_flush_hypercalls : 1;
-
-		/* HvCallSendSyntheticClusterIpi is supported. */
 		u64 synthetic_cluster_ipi : 1;
-
-		/* HvCallNotifyLongSpinWait is supported. */
 		u64 notify_long_spin_wait : 1;
-
-		/* HvCallQueryNumaDistance is supported. */
 		u64 query_numa_distance : 1;
-
-		/* HvCallSignalEvent is supported. Corresponds to privilege. */
 		u64 signal_events : 1;
-
-		/* HvCallRetargetDeviceInterrupt is supported. */
 		u64 retarget_device_interrupt : 1;
-
-#if IS_ENABLED(CONFIG_X86)
-		/* HvCallRestorePartitionTime is supported. */
 		u64 restore_time : 1;
 
 		/* EnlightenedVmcs nested enlightenment is supported. */
 		u64 enlightened_vmcs : 1;
-
-		u64 nested_debug_ctl : 1;
-		u64 synthetic_time_unhalted_timer : 1;
-		u64 idle_spec_ctrl : 1;
-#else
-		u64 reserved_z31 : 1;
-		u64 reserved_z32 : 1;
-		u64 reserved_z33 : 1;
-		u64 reserved_z34 : 1;
-		u64 reserved_z35 : 1;
-#endif
-
-#if IS_ENABLED(CONFIG_ARM64)
-		/*
-		 * Register intercepts supported in V1. As more registers are supported
-		 * in future releases, new bits will be added here to prevent migration
-		 * between incompatible hosts.
-		 *
-		 * List of registers supported in V1:
-		 * 1. TPIDRRO_EL0
-		 * 2. TPIDR_EL1
-		 * 3. SCTLR_EL1 - Supports write intercept mask.
-		 * 4. VBAR_EL1
-		 * 5. TCR_EL1 - Supports write intercept mask.
-		 * 6. MAIR_EL1 - Supports write intercept mask.
-		 * 7. CPACR_EL1 - Supports write intercept mask.
-		 * 8. CONTEXTIDR_EL1
-		 * 9. PAuth keys (total 10 registers)
-		 * 10. HvArm64RegisterSyntheticException
-		 */
-		u64 register_intercepts_v1 : 1;
-#else
-		u64 reserved_z36 : 1;
-#endif
-
-		/* HvCallWakeVps is supported */
-		u64 wake_vps : 1;
-
-		/*
-		 * HvCallGet/SetVpRegisters is supported.
-		 * Corresponds to AccessVpRegisters privilege.
-		 * This feature only affects exo partitions.
-		 */
-		u64 access_vp_regs : 1;
-
-#if IS_ENABLED(CONFIG_ARM64)
-		/* HvCallSyncContext/Ex is supported. */
-		u64 sync_context : 1;
-#else
-		u64 reserved_z39 : 1;
-#endif
-
-		/*
-		 * Management VTL synic support is allowed.
-		 * Corresponds to the ManagementVtlSynicSupport privilege.
-		 */
-		u64 management_vtl_synic_support : 1;
-
-#if IS_ENABLED(CONFIG_X86)
-		/* Hypervisor supports guest mechanism to signal pending interrupts to paravisor. */
-		u64 proxy_interrupt_doorbell_support : 1;
-#else
-		u64 reserved_z41 : 1;
-#endif
-
-#if IS_ENABLED(CONFIG_ARM64)
-		/* InterceptSystemResetAvailable is exposed. */
-		u64 intercept_system_reset : 1;
-#else
-		u64 reserved_z42 : 1;
-#endif
-
-		/* Hypercalls for host MMIO operations are available. */
-		u64 mmio_hypercalls : 1;
-
-#if IS_ENABLED(CONFIG_ARM64)
-		/* SPIs are advertised to VTL2. */
-		u64 management_vtl_spi_support : 1;
-#else
-		u64 reserved_z44 : 1;
-#endif
-
-		/* HvCallMapPartitionEventLogBuffer is supported. */
-		u64 map_partition_event_log_buffer : 1;
-
-#if IS_ENABLED(CONFIG_X86)
-		/* Hypervisor supports for lower VTLs to make guest requests. */
-		u64 lower_vtl_guest_request_support : 1;
-#else
-		u64 reserved_z46 : 1;
-#endif
-
-#if IS_ENABLED(CONFIG_X86)
-		/* Hypervisor supports mechanism to redirect proxied interrupts to paravisor. */
-		u64 proxy_interrupt_redirect_support : 1;
-#else
-		u64 reserved_z47 : 1;
-#endif
-
-		/* HvCallInstallIntercept is supported. */
-		u64 install_intercept : 1;
-
-#if IS_ENABLED(CONFIG_ARM64)
-		/* Guest can read HvArm64RegisterSintReservedInterruptId. */
-		u64 access_reserved_sint_interrupt_id : 1;
-#else
-		u64 reserved_z49 : 1;
-#endif
-
-		/*
-		 * HvCallPin/UnpinGpaPageRanges and HvQueryGpaRangeAlwaysPinnedSubranges
-		 * are supported.
-		 */
-		u64 pin_gpa_page_range_support : 1;
-
-		/* HvQueryGpaRangeHeatHintBeneficialSubranges is supported. */
-		u64 heat_hint_beneficial_support : 1;
-
-		/* Ring-buffer message ports are supported. */
-		u64 ring_buffer_message_port_support : 1;
-
-#if IS_ENABLED(CONFIG_X86)
-		/*
-		 * HvCallFlushGuestPhysicalAddressSpace and
-		 * HvCallFlushGuestPhysicalAddressList are supported for EXO partitions.
-		 */
-		u64 flush_guest_physical_address_space : 1; /* Bit 53 */
-#else
-		u64 reserved_z53 : 1; /* Bit 53 */
-#endif
-
-		/* Bits 54-63 */
-		u64 reserved : HV_PARTITION_SYNTHETIC_PROCESSOR_FEATURES_RESERVED_BITFIELD_COUNT;
+		u64 reserved : 31;
 	} __packed;
 };
 

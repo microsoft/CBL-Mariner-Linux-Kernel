@@ -58,7 +58,7 @@ struct mshv_create_partition {
 	__u64 pt_isolation;
 };
 
-#define MSHV_NUM_CPU_FEATURES_BANKS 3
+#define MSHV_NUM_CPU_FEATURES_BANKS 2
 
 /**
  * struct mshv_create_partition_v2
@@ -82,7 +82,7 @@ struct mshv_create_partition_v2 {
 	__u16 pt_num_cpu_fbanks;
 	__u8  pt_rsvd[6];		/* MBZ */
 	__u64 pt_cpu_fbanks[MSHV_NUM_CPU_FEATURES_BANKS];
-	__u64 pt_rsvd1[1];		/* MBZ */
+	__u64 pt_rsvd1[2];		/* MBZ */
 #if defined(__x86_64__)
 	__u64 pt_disabled_xsave;
 #else
