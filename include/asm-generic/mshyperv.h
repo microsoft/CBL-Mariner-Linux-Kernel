@@ -20,6 +20,7 @@
 #include <linux/types.h>
 #include <linux/atomic.h>
 #include <linux/bitops.h>
+#include <linux/ioport.h>
 #include <acpi/acpi_numa.h>
 #include <linux/cpumask.h>
 #include <linux/nmi.h>
@@ -27,6 +28,9 @@
 #include <hyperv/hvhdk.h>
 
 #define VTPM_BASE_ADDRESS 0xfed40000
+
+#define HV_REP_COUNT_MAX	\
+	(HV_HYPERCALL_REP_COMP_MASK >> HV_HYPERCALL_REP_COMP_OFFSET)
 
 enum hv_partition_type {
 	HV_PARTITION_TYPE_GUEST,
@@ -72,8 +76,9 @@ extern void * __percpu *hyperv_pcpu_input_arg;
 extern void * __percpu *hyperv_pcpu_output_arg;
 
 u64 hv_do_hypercall(u64 control, void *inputaddr, void *outputaddr);
-u64 hv_do_fast_hypercall8(u16 control, u64 input8);
-u64 hv_do_fast_hypercall16(u16 control, u64 input1, u64 input2);
+u64 hv_do_fast_hypercall8(u64 control, u64 input8);
+u64 hv_do_fast_hypercall16(u64 control, u64 input1, u64 input2);
+static inline bool hv_parent_partition(void);
 
 bool hv_isolation_type_snp(void);
 bool hv_isolation_type_tdx(void);
@@ -115,6 +120,11 @@ static inline bool hv_result_success(u64 status)
 	return hv_result(status) == HV_STATUS_SUCCESS;
 }
 
+static inline bool hv_result_timeout(u64 status)
+{
+	return hv_result(status) == HV_STATUS_TIMEOUT;
+}
+
 static inline unsigned int hv_repcomp(u64 status)
 {
 	/* Bits [43:32] of status have 'Reps completed' data. */
@@ -122,45 +132,63 @@ static inline unsigned int hv_repcomp(u64 status)
 			 HV_HYPERCALL_REP_COMP_OFFSET;
 }
 
-/*
- * Rep hypercalls. Callers of this functions are supposed to ensure that
- * rep_count, varhead_size, and rep_start comply with Hyper-V hypercall
- * definition.
- */
-static inline u64 hv_do_rep_hypercall_ex(u16 code, u16 rep_count,
-					 u16 varhead_size, u16 rep_start,
-					 void *input, void *output)
+static inline u64 hv_do_rep_hypercall_reg(u16 code, u16 rep_count,
+					  u16 varhead_size, u16 rep_start,
+					  void *input, void *output)
 {
 	u64 control = code;
-	u64 status;
-	u16 rep_comp;
 
 	control |= (u64)varhead_size << HV_HYPERCALL_VARHEAD_OFFSET;
 	control |= (u64)rep_count << HV_HYPERCALL_REP_COMP_OFFSET;
 	control |= (u64)rep_start << HV_HYPERCALL_REP_START_OFFSET;
 
-	do {
+	return hv_do_hypercall(control, input, output);
+}
+
+static inline u64 hv_do_rep_hypercall_cvm(u16 code, u16 rep_count,
+					  u16 varhead_size, u16 rep_start,
+					  void *input, void *output)
+{
+	u64 status, control = code;
+	u16 rep_comp = 0;
+
+	control |= (u64)varhead_size << HV_HYPERCALL_VARHEAD_OFFSET;
+	control |= (u64)rep_count << HV_HYPERCALL_REP_COMP_OFFSET;
+	control |= (u64)rep_start << HV_HYPERCALL_REP_START_OFFSET;
+
+	for (;;) {
 		status = hv_do_hypercall(control, input, output);
-		if (!hv_result_success(status))
+
+		if (!hv_result_timeout(status))
 			return status;
 
 		rep_comp = hv_repcomp(status);
-
 		control &= ~HV_HYPERCALL_REP_START_MASK;
 		control |= (u64)rep_comp << HV_HYPERCALL_REP_START_OFFSET;
 
 		touch_nmi_watchdog();
-	} while (rep_comp < rep_count);
+	}
 
 	return status;
 }
 
-/* For the typical case where rep_start is 0 */
+/*
+ * Rep hypercalls for HW confidential VMs return back when timeouts occur,
+ * whereas for regular VMs they return only on success or failure. In case
+ * of successful completion, entire rep_count is done. But a hypercall could
+ * fail with partial completions, hence callers must always check that
+ * in case of failure. Lastly, a rep_count value of 0 is allowed for some
+ * hypercalls.
+ */
 static inline u64 hv_do_rep_hypercall(u16 code, u16 rep_count, u16 varhead_size,
 				      void *input, void *output)
 {
-	return hv_do_rep_hypercall_ex(code, rep_count, varhead_size, 0,
-				      input, output);
+	if (!hv_isolation_hw_cvm())
+		return hv_do_rep_hypercall_reg(code, rep_count, varhead_size, 0,
+					       input, output);
+	else
+		return hv_do_rep_hypercall_cvm(code, rep_count, varhead_size, 0,
+					       input, output);
 }
 
 /* Generate the guest OS identifier as described in the Hyper-V TLFS */
@@ -188,8 +216,8 @@ static inline void vmbus_signal_eom(struct hv_message *msg, u32 old_msg_type)
 	 * CHANNELMSG_UNLOAD_RESPONSE and we don't care about other messages
 	 * on crash.
 	 */
-	if (cmpxchg(&msg->header.message_type, old_msg_type,
-		    HVMSG_NONE) != old_msg_type)
+	if (!try_cmpxchg(&msg->header.message_type,
+			 &old_msg_type, HVMSG_NONE))
 		return;
 
 	/*
@@ -242,6 +270,9 @@ extern u64 (*hv_read_reference_counter)(void);
 /* Sentinel value for an uninitialized entry in hv_vp_index array */
 #define VP_INVAL	U32_MAX
 
+/* Forward declarations */
+struct pci_dev;
+
 int __init hv_common_init(void);
 void __init hv_get_partition_id(void);
 void __init hv_common_free(void);
@@ -249,6 +280,13 @@ void __init ms_hyperv_late_init(void);
 int hv_common_cpu_init(unsigned int cpu);
 int hv_common_cpu_die(unsigned int cpu);
 void hv_identify_partition_type(void);
+
+#define HV_MAX_RESVD_RANGES 32
+extern struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
+extern u32 ranges_nr;
+
+void __init hv_dump_mshv_memory(void);
+void __init hv_mark_resources(void);
 
 /**
  * hv_cpu_number_to_vp_number() - Map CPU to VP.
@@ -350,6 +388,32 @@ u64 hv_tdx_hypercall(u64 control, u64 param1, u64 param2);
 void hyperv_cleanup(void);
 bool hv_query_ext_cap(u64 cap_query);
 void hv_setup_dma_ops(struct device *dev, bool coherent);
+#if IS_ENABLED(CONFIG_PCI_HYPERV)
+u64 hv_pci_vmbus_device_id(struct pci_dev *pdev);
+#else
+static inline u64 hv_pci_vmbus_device_id(struct pci_dev *pdev)
+{ return 0; }
+#endif /* IS_ENABLED(CONFIG_PCI_HYPERV) */
+
+#if IS_ENABLED(CONFIG_HYPERV_IOMMU) || IS_ENABLED(CONFIG_HYPERV_IOMMU_ARM)
+u64 hv_get_current_partid(void);
+bool hv_pcidev_is_attached_dev(struct pci_dev *pdev);
+bool hv_pcidev_is_pthru_dev(struct pci_dev *pdev);
+u64 hv_build_devid_oftype(struct pci_dev *pdev, enum hv_device_type type);
+u64 hv_devid_from_pdev(struct pci_dev *pdev);
+#else
+static inline bool hv_pcidev_is_attached_dev(struct pci_dev *pdev)
+{ return false; }
+static inline bool hv_pcidev_is_pthru_dev(struct pci_dev *pdev)
+{ return false; }
+static inline u64 hv_build_devid_oftype(struct pci_dev *pdev,
+					enum hv_device_type type)
+{ return 0; }
+static inline u64 hv_devid_from_pdev(struct pci_dev *pdev)
+{ return 0; }
+static inline u64 hv_get_current_partid(void)
+{ return HV_PARTITION_ID_INVALID; }
+#endif /* IS_ENABLED(CONFIG_HYPERV_IOMMU) || IS_ENABLED(CONFIG_HYPERV_IOMMU_ARM) */
 #else /* CONFIG_HYPERV */
 static inline void hv_identify_partition_type(void) {}
 static inline bool hv_is_hyperv_initialized(void) { return false; }
@@ -376,27 +440,49 @@ static inline bool hv_parent_partition(void)
 {
 	return hv_root_partition() || hv_l1vh_partition();
 }
-int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages);
-int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id);
+
+bool hv_result_needs_memory(u64 status);
+int hv_deposit_memory_node(int node, u64 partition_id, u64 status);
+int hv_call_add_logical_proc(int node, u32 lp_index, u64 acpi_id);
 int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags);
+int hv_call_notify_all_processors_started(void);
+u64 mshv_current_partid(void);
+
+bool hv_lp_exists(u32 lp_index);
 
 #else /* CONFIG_MSHV_ROOT */
 static inline bool hv_root_partition(void) { return false; }
 static inline bool hv_l1vh_partition(void) { return false; }
 static inline bool hv_parent_partition(void) { return false; }
-static inline int hv_call_deposit_pages(int node, u64 partition_id, u32 num_pages)
+static inline bool hv_result_needs_memory(u64 status) { return false; }
+static inline int hv_deposit_memory_node(int node, u64 partition_id, u64 status)
 {
 	return -EOPNOTSUPP;
 }
-static inline int hv_call_add_logical_proc(int node, u32 lp_index, u32 acpi_id)
+static inline int hv_call_add_logical_proc(int node, u32 lp_index, u64 acpi_id)
 {
 	return -EOPNOTSUPP;
 }
+static inline int hv_call_notify_all_processors_started(void)
+{
+	return -EOPNOTSUPP;
+}
+static inline bool hv_lp_exists(u32 lp_index) { return false; }
 static inline int hv_call_create_vp(int node, u64 partition_id, u32 vp_index, u32 flags)
 {
 	return -EOPNOTSUPP;
 }
+
+static inline u64 mshv_current_partid(void)
+{
+	return HV_PARTITION_ID_INVALID;
+}
 #endif /* CONFIG_MSHV_ROOT */
+
+static inline int hv_deposit_memory(u64 partition_id, u64 status)
+{
+	return hv_deposit_memory_node(NUMA_NO_NODE, partition_id, status);
+}
 
 #if IS_ENABLED(CONFIG_HYPERV_VTL_MODE)
 u8 __init get_vtl(void);

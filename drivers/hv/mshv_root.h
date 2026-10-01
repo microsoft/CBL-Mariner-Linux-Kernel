@@ -15,14 +15,9 @@
 #include <linux/hashtable.h>
 #include <linux/dev_printk.h>
 #include <linux/build_bug.h>
+#include <linux/mmu_notifier.h>
 #include <uapi/linux/mshv.h>
-
-/*
- * Hypervisor must be between these version numbers (inclusive)
- * to guarantee compatibility
- */
-#define MSHV_HV_MIN_VERSION		(27744)
-#define MSHV_HV_MAX_VERSION		(27751)
+#include "mshv_trace.h"
 
 static_assert(HV_HYP_PAGE_SIZE == MSHV_HV_PAGE_SIZE);
 
@@ -51,6 +46,9 @@ struct mshv_vp {
 		unsigned int kicked_by_hv;
 		wait_queue_head_t vp_suspend_queue;
 	} run;
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	struct dentry *vp_stats_dentry;
+#endif
 };
 
 #define vp_fmt(fmt) "p%lluvp%u: " fmt
@@ -70,19 +68,24 @@ do { \
 #define vp_info(v, fmt, ...)	vp_devprintk(info, v, fmt, ##__VA_ARGS__)
 #define vp_dbg(v, fmt, ...)	vp_devprintk(dbg, v, fmt, ##__VA_ARGS__)
 
+enum mshv_region_type {
+	MSHV_REGION_TYPE_MEM_PINNED,
+	MSHV_REGION_TYPE_MEM_MOVABLE,
+	MSHV_REGION_TYPE_MMIO
+};
+
 struct mshv_mem_region {
 	struct hlist_node hnode;
+	struct kref mreg_refcount;
 	u64 nr_pages;
 	u64 start_gfn;
 	u64 start_uaddr;
 	u32 hv_map_flags;
-	struct {
-		u64 large_pages:  1; /* 2MiB */
-		u64 range_pinned: 1;
-		u64 reserved:	 62;
-	} flags;
 	struct mshv_partition *partition;
-	struct page *pages[];
+	enum mshv_region_type mreg_type;
+	struct mmu_interval_notifier mreg_mni;
+	struct mutex mreg_mutex;	/* protects region pages remapping */
+	struct page *mreg_pages[];
 };
 
 struct mshv_irq_ack_notifier {
@@ -97,7 +100,10 @@ struct mshv_partition {
 	struct hlist_node pt_hnode;
 	u64 pt_id;
 	refcount_t pt_ref_count;
+	struct rcu_head pt_rcu;
 	struct mutex pt_mutex;
+
+	spinlock_t pt_mem_regions_lock;
 	struct hlist_head pt_mem_regions; // not ordered
 
 	u32 pt_vp_count;
@@ -126,8 +132,14 @@ struct mshv_partition {
 
 	struct mshv_girq_routing_table __rcu *pt_girq_tbl;
 	u64 isolation_type;
+	pid_t pt_vmm_tgid;
 	bool import_completed;
 	bool pt_initialized;
+	bool pt_regions_pinned;
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+	struct dentry *pt_stats_dentry;
+	struct dentry *pt_vp_dentry;
+#endif
 };
 
 #define pt_fmt(fmt) "p%llu: " fmt
@@ -175,9 +187,9 @@ struct hv_synic_pages {
 };
 
 struct mshv_root {
-	struct hv_synic_pages __percpu *synic_pages;
 	spinlock_t pt_ht_lock;
 	DECLARE_HASHTABLE(pt_htable, MSHV_PARTITIONS_HASH_BITS);
+	struct hv_partition_property_vmm_capabilities vmm_caps;
 };
 
 /*
@@ -210,6 +222,25 @@ struct port_table_info {
 	};
 };
 
+struct mshv_device {
+	const struct mshv_device_ops *device_ops;
+	struct mshv_partition *device_pt;
+	void *device_private;
+	struct hlist_node device_ptnode;
+};
+
+struct mshv_device_ops {
+	const char *device_name;
+	long (*device_create)(struct mshv_device *dev);
+	void (*device_release)(struct mshv_device *dev);
+	long (*device_set_attr)(struct mshv_device *dev,
+				struct mshv_device_attr *attr);
+	long (*device_has_attr)(struct mshv_device *dev,
+				struct mshv_device_attr *attr);
+};
+
+extern struct mshv_device_ops mshv_vfio_device_ops;
+
 int mshv_update_routing_table(struct mshv_partition *partition,
 			      const struct mshv_user_irq_entry *entries,
 			      unsigned int numents);
@@ -233,8 +264,8 @@ int mshv_register_doorbell(u64 partition_id, doorbell_cb_t doorbell_cb,
 void mshv_unregister_doorbell(u64 partition_id, int doorbell_portid);
 
 void mshv_isr(void);
-int mshv_synic_init(unsigned int cpu);
-int mshv_synic_cleanup(unsigned int cpu);
+int mshv_synic_init(struct device *dev);
+void mshv_synic_exit(void);
 
 static inline bool mshv_partition_encrypted(struct mshv_partition *partition)
 {
@@ -244,6 +275,16 @@ static inline bool mshv_partition_encrypted(struct mshv_partition *partition)
 struct mshv_partition *mshv_partition_get(struct mshv_partition *partition);
 void mshv_partition_put(struct mshv_partition *partition);
 struct mshv_partition *mshv_partition_find(u64 partition_id) __must_hold(RCU);
+
+static inline bool is_l1vh_parent(u64 partition_id)
+{
+	return hv_l1vh_partition() && (partition_id == HV_PARTITION_ID_SELF);
+}
+
+int mshv_vp_stats_map(u64 partition_id, u32 vp_index,
+		      struct hv_stats_page **stats_pages);
+void mshv_vp_stats_unmap(u64 partition_id, u32 vp_index,
+			 struct hv_stats_page **stats_pages);
 
 /* hypercalls */
 
@@ -255,7 +296,8 @@ int hv_call_create_partition(u64 flags,
 int hv_call_initialize_partition(u64 partition_id);
 int hv_call_finalize_partition(u64 partition_id);
 int hv_call_delete_partition(u64 partition_id);
-int hv_call_map_mmio_pages(u64 partition_id, u64 gfn, u64 mmio_spa, u64 numpgs);
+int hv_map_mmio_pages(u64 partition_id, struct mshv_mem_region *reg,
+		      u64 mmio_mfn);
 int hv_call_map_gpa_pages(u64 partition_id, u64 gpa_target, u64 page_count,
 			  u32 flags, struct page **pages);
 int hv_call_unmap_gpa_pages(u64 partition_id, u64 gpa_target, u64 page_count,
@@ -264,6 +306,9 @@ int hv_call_delete_vp(u64 partition_id, u32 vp_index);
 int hv_call_assert_virtual_interrupt(u64 partition_id, u32 vector,
 				     u64 dest_addr,
 				     union hv_interrupt_control control);
+int hv_call_translate_virtual_address_ex(u32 vp_index, u64 partition_id,
+					 u64 flags, u64 gva, u64 *gfn,
+					 struct hv_translate_gva_result_ex *result);
 int hv_call_clear_virtual_interrupt(u64 partition_id);
 int hv_call_get_gpa_access_states(u64 partition_id, u32 count, u64 gpa_base_pfn,
 				  union hv_gpa_page_access_state_flags state_flags,
@@ -278,11 +323,12 @@ int hv_call_set_vp_state(u32 vp_index, u64 partition_id,
 			 /* Choose between pages and bytes */
 			 struct hv_vp_state_data state_data, u64 page_count,
 			 struct page **pages, u32 num_bytes, u8 *bytes);
-int hv_call_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
-			      union hv_input_vtl input_vtl,
-			      struct page **state_page);
-int hv_call_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
-				union hv_input_vtl input_vtl);
+int hv_map_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
+			 union hv_input_vtl input_vtl,
+			 struct page **state_page);
+int hv_unmap_vp_state_page(u64 partition_id, u32 vp_index, u32 type,
+			   struct page *state_page,
+			   union hv_input_vtl input_vtl);
 int hv_call_create_port(u64 port_partition_id, union hv_port_id port_id,
 			u64 connection_partition_id, struct hv_port_info *port_info,
 			u8 port_vtl, u8 min_connection_vtl, int node);
@@ -295,17 +341,113 @@ int hv_call_connect_port(u64 port_partition_id, union hv_port_id port_id,
 int hv_call_disconnect_port(u64 connection_partition_id,
 			    union hv_connection_id connection_id);
 int hv_call_notify_port_ring_empty(u32 sint_index);
-int hv_call_map_stat_page(enum hv_stats_object_type type,
-			  const union hv_stats_object_identity *identity,
-			  void **addr);
-int hv_call_unmap_stat_page(enum hv_stats_object_type type,
-			    const union hv_stats_object_identity *identity);
+int hv_map_stats_page(enum hv_stats_object_type type,
+		      const union hv_stats_object_identity *identity,
+		      struct hv_stats_page **addr);
+int hv_unmap_stats_page(enum hv_stats_object_type type,
+			struct hv_stats_page *page_addr,
+			const union hv_stats_object_identity *identity);
 int hv_call_modify_spa_host_access(u64 partition_id, struct page **pages,
 				   u64 page_struct_count, u32 host_access,
 				   u32 flags, u8 acquire);
+int hv_call_get_partition_property_ex(u64 partition_id, u64 property_code, u64 arg,
+				      void *property_value, size_t property_value_sz);
+
+/* Deprecated hv_call wrappers - backward compat */
+int hv_call_install_intercept(u64 partition_id, u32 access_type,
+			      enum hv_intercept_type intercept_type,
+			      union hv_intercept_parameters intercept_parameter);
+int hv_call_set_partition_property(u64 partition_id, u64 property_code,
+				   u64 property_value,
+				   void (*completion_handler)(void *, u64 *),
+				   void *completion_data);
+#if IS_ENABLED(CONFIG_X86)
+int hv_call_register_intercept_result(u32 vp_index, u64 partition_id,
+				      enum hv_intercept_type intercept_type,
+				      union hv_register_intercept_result_parameters *params);
+#endif
+int hv_call_signal_event_direct(u32 vp_index, u64 partition_id,
+				u8 vtl, u8 sint, u16 flag_number,
+				u8 *newly_signaled);
+int hv_call_post_message_direct(u32 vp_index, u64 partition_id,
+				u8 vtl, u32 sint_index, u8 *message);
+int hv_call_get_vp_cpuid_values(u32 vp_index, u64 partition_id,
+				union hv_get_vp_cpuid_values_flags values_flags,
+				struct hv_cpuid_leaf_info *info,
+				union hv_output_get_vp_cpuid_values *result);
+int hv_call_read_gpa(u32 vp_index, u64 partition_id,
+		     union hv_access_gpa_control_flags control_flags,
+		     u64 gpa_base, u8 *data, u32 byte_count,
+		     union hv_access_gpa_result *result);
+int hv_call_write_gpa(u32 vp_index, u64 partition_id,
+		      union hv_access_gpa_control_flags control_flags,
+		      u64 gpa_base, u8 *data, u32 byte_count,
+		      union hv_access_gpa_result *result);
+
+#ifdef HV_SUPPORTS_SEV_SNP_GUESTS
+int hv_call_import_isolated_pages(u64 partition_id, u64 *pages,
+				  u64 num_pages,
+				  enum hv_isolated_page_type page_type,
+				  enum hv_isolated_page_size page_size,
+				  void (*completion_handler)(void *data,
+							     u64 *status),
+				  void *completion_data);
+int hv_call_complete_isolated_import(u64 partition_id,
+				     union hv_partition_complete_isolated_import_data *import_data,
+				     void (*completion_handler)(void *data,
+								u64 *status),
+				     void *completion_data);
+int hv_call_issue_psp_guest_request(u64 partition_id, u64 req_pfn,
+				    u64 rsp_pfn,
+				    void (*completion_handler)(void *data,
+							       u64 *status),
+				    void *completion_data);
+#endif
+
+#if IS_ENABLED(CONFIG_DEBUG_FS)
+int __init mshv_debugfs_init(void);
+void mshv_debugfs_exit(void);
+
+int mshv_debugfs_partition_create(struct mshv_partition *partition);
+void mshv_debugfs_partition_remove(struct mshv_partition *partition);
+int mshv_debugfs_vp_create(struct mshv_vp *vp);
+void mshv_debugfs_vp_remove(struct mshv_vp *vp);
+#else
+static inline int __init mshv_debugfs_init(void)
+{
+	return 0;
+}
+static inline void mshv_debugfs_exit(void) { }
+
+static inline int mshv_debugfs_partition_create(struct mshv_partition *partition)
+{
+	return 0;
+}
+static inline void mshv_debugfs_partition_remove(struct mshv_partition *partition) { }
+static inline int mshv_debugfs_vp_create(struct mshv_vp *vp)
+{
+	return 0;
+}
+static inline void mshv_debugfs_vp_remove(struct mshv_vp *vp) { }
+#endif
 
 extern struct mshv_root mshv_root;
 extern enum hv_scheduler_type hv_scheduler_type;
 extern u8 * __percpu *hv_synic_eventring_tail;
+
+struct mshv_mem_region *mshv_region_create(u64 guest_pfn, u64 nr_pages,
+					   u64 uaddr, u32 flags);
+int mshv_region_share(struct mshv_mem_region *region);
+int mshv_region_unshare(struct mshv_mem_region *region);
+int mshv_region_map(struct mshv_mem_region *region);
+int mshv_region_unmap(struct mshv_mem_region *region);
+void mshv_region_invalidate(struct mshv_mem_region *region);
+int mshv_region_pin(struct mshv_mem_region *region);
+void mshv_region_put(struct mshv_mem_region *region);
+int mshv_region_get(struct mshv_mem_region *region);
+bool mshv_region_handle_gfn_fault(struct mshv_mem_region *region, u64 gfn);
+int mshv_region_map_populated(struct mshv_mem_region *region);
+void mshv_region_movable_fini(struct mshv_mem_region *region);
+bool mshv_region_movable_init(struct mshv_mem_region *region);
 
 #endif /* _MSHV_ROOT_H_ */

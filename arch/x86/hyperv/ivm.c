@@ -298,7 +298,7 @@ int hv_snp_boot_ap(u32 apic_id, unsigned long start_ip, unsigned int cpu)
 	struct sev_es_save_area *cur_vmsa;
 	struct desc_ptr gdtr;
 	u64 ret, retry = 5;
-	struct hv_enable_vp_vtl *start_vp_input;
+	struct hv_input_start_vp *start_vp_input;
 	unsigned long flags;
 	int vp_index;
 
@@ -354,7 +354,7 @@ int hv_snp_boot_ap(u32 apic_id, unsigned long start_ip, unsigned int cpu)
 	}
 
 	local_irq_save(flags);
-	start_vp_input = (struct hv_enable_vp_vtl *)ap_start_input_arg;
+	start_vp_input = (struct hv_input_start_vp *)ap_start_input_arg;
 	memset(start_vp_input, 0, sizeof(*start_vp_input));
 	start_vp_input->partition_id = -1;
 	start_vp_input->vp_index = vp_index;
@@ -364,7 +364,7 @@ int hv_snp_boot_ap(u32 apic_id, unsigned long start_ip, unsigned int cpu)
 	do {
 		ret = hv_do_hypercall(HVCALL_START_VP,
 				      start_vp_input, NULL);
-	} while (hv_result(ret) == HV_STATUS_TIME_OUT && retry--);
+	} while (hv_result(ret) == HV_STATUS_TIMEOUT && retry--);
 
 	local_irq_restore(flags);
 
@@ -942,4 +942,9 @@ DEFINE_STATIC_KEY_FALSE(isolation_type_tdx);
 bool hv_isolation_type_tdx(void)
 {
 	return static_branch_unlikely(&isolation_type_tdx);
+}
+
+bool hv_isolation_hw_cvm(void)
+{
+	return hv_isolation_type_snp() || hv_isolation_type_tdx();
 }

@@ -68,6 +68,7 @@ enum pci_protocol_version_t {
 	PCI_PROTOCOL_VERSION_1_2 = PCI_MAKE_VERSION(1, 2),	/* RS1 */
 	PCI_PROTOCOL_VERSION_1_3 = PCI_MAKE_VERSION(1, 3),	/* Vibranium */
 	PCI_PROTOCOL_VERSION_1_4 = PCI_MAKE_VERSION(1, 4),	/* WS2022 */
+	PCI_PROTOCOL_VERSION_1_5 = PCI_MAKE_VERSION(1, 5),	/* GE, device reset */
 };
 
 #define CPU_AFFINITY_ALL	-1ULL
@@ -77,6 +78,7 @@ enum pci_protocol_version_t {
  * first.
  */
 static enum pci_protocol_version_t pci_protocol_versions[] = {
+	PCI_PROTOCOL_VERSION_1_5,
 	PCI_PROTOCOL_VERSION_1_4,
 	PCI_PROTOCOL_VERSION_1_3,
 	PCI_PROTOCOL_VERSION_1_2,
@@ -90,6 +92,7 @@ static enum pci_protocol_version_t pci_protocol_versions[] = {
 #define MAX_SUPPORTED_MSI_MESSAGES 0x400
 
 #define STATUS_REVISION_MISMATCH 0xC0000059
+#define STATUS_NOT_SUPPORTED     0xC00000BB
 
 /* space for 32bit serial number as string */
 #define SLOT_NAME_SIZE 11
@@ -136,6 +139,7 @@ enum pci_message_type {
 	PCI_BUS_RELATIONS2		= PCI_MESSAGE_BASE + 0x19,
 	PCI_RESOURCES_ASSIGNED3         = PCI_MESSAGE_BASE + 0x1A,
 	PCI_CREATE_INTERRUPT_MESSAGE3   = PCI_MESSAGE_BASE + 0x1B,
+	PCI_RESET_DEVICE                = PCI_MESSAGE_BASE + 0x1C,
 	PCI_MESSAGE_MAXIMUM
 };
 
@@ -282,6 +286,33 @@ struct tran_int_desc {
 	u32	data;
 	u64	address;
 } __packed;
+
+/*
+ * On a nested root partition a vPCI MSI is mapped in the hypervisor with a
+ * MAP_DEVICE_INTERRUPT hypercall in hv_arch_irq_unmask().  Keep the entry the
+ * hypervisor returns next to the per-interrupt transaction descriptor so the
+ * mapping can be removed again with UNMAP_DEVICE_INTERRUPT when the interrupt
+ * is torn down.  tran_int_desc stays first: chip_data is used as a struct
+ * tran_int_desc throughout this driver.
+ */
+struct hv_msi_int_entry {
+	struct tran_int_desc		int_desc;
+	struct hv_interrupt_entry	hv_entry;
+	unsigned int			mapped_vector;
+};
+
+static void hv_vmbus_unmap_msi_interrupt(struct pci_dev *pdev __maybe_unused,
+					 void *chip_data)
+{
+	struct hv_msi_int_entry *ie = chip_data;
+
+	if (!ie || !ie->hv_entry.source)
+		return;
+#ifdef CONFIG_X86
+	hv_unmap_msi_interrupt(pdev, &ie->hv_entry);
+#endif
+	memset(&ie->hv_entry, 0, sizeof(ie->hv_entry));
+}
 
 /*
  * A generic message format for virtual PCI.
@@ -574,6 +605,7 @@ struct hv_pci_compl {
 };
 
 static void hv_pci_onchannelcallback(void *context);
+static bool hv_vmbus_pci_device(struct pci_bus *pbus);
 
 #ifdef CONFIG_X86
 #define DELIVERY_MODE		APIC_DELIVERY_MODE_FIXED
@@ -714,18 +746,63 @@ out:
 			"%s() failed: %#llx", __func__, res);
 }
 
+static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg);
+
 static void hv_arch_irq_unmask(struct irq_data *data)
 {
-	if (hv_root_partition())
+	if (hv_root_partition()) {
 		/*
 		 * In case of the nested root partition, the nested hypervisor
 		 * is taking care of interrupt remapping and thus the
 		 * MAP_DEVICE_INTERRUPT hypercall is required instead of
 		 * RETARGET_INTERRUPT.
+		 *
+		 * Keep the returned entry so the mapping can be removed again
+		 * when the interrupt is re-targeted or torn down.
+		 *
+		 * This is also the re-target point.  The core calls us from
+		 * __irq_move_irq() with the interrupt masked once the new
+		 * vector has been assigned, so if the vector changed the vmbus
+		 * interrupt is re-composed for it first -- PCI_CREATE_INTERRUPT
+		 * carries the vector, so the device would otherwise keep
+		 * signalling the one it was created with.
 		 */
-		(void)hv_map_msi_interrupt(data, NULL);
-	else
+		struct hv_msi_int_entry *ie = data->chip_data;
+		unsigned int vec = hv_msi_get_int_vector(data);
+
+		/*
+		 * A NULL chip_data means hv_compose_msi_msg() failed and the
+		 * interrupt was never set up, so there is nothing to map.
+		 */
+		if (!ie)
+			return;
+
+		/* Already mapped for this vector, nothing changed. */
+		if (ie->mapped_vector == vec && ie->hv_entry.source)
+			return;
+
+		if (ie->mapped_vector && ie->mapped_vector != vec) {
+			struct msi_msg msg;
+
+			hv_compose_msi_msg(data, &msg);
+
+			ie = data->chip_data;
+			if (!ie)
+				return;
+
+			if (data->chip->irq_write_msi_msg)
+				data->chip->irq_write_msi_msg(data, &msg);
+		}
+
+		if (hv_map_msi_interrupt(data, &ie->hv_entry)) {
+			memset(&ie->hv_entry, 0, sizeof(ie->hv_entry));
+			ie->mapped_vector = 0;
+			return;
+		}
+		ie->mapped_vector = vec;
+	} else {
 		hv_irq_retarget_interrupt(data);
+	}
 }
 #elif defined(CONFIG_ARM64)
 /*
@@ -1006,6 +1083,24 @@ static struct irq_domain *hv_pci_get_root_domain(void)
 static void hv_arch_irq_unmask(struct irq_data *data) { }
 #endif /* CONFIG_ARM64 */
 
+u64 hv_pci_vmbus_device_id(struct pci_dev *pdev)
+{
+	struct hv_pcibus_device *hbus;
+	struct pci_bus *pbus = pdev->bus;
+
+	if (!hv_vmbus_pci_device(pbus))
+		return 0;
+
+	hbus = container_of(pbus->sysdata, struct hv_pcibus_device, sysdata);
+
+	return	(hbus->hdev->dev_instance.b[5] << 24) |
+		(hbus->hdev->dev_instance.b[4] << 16) |
+		(hbus->hdev->dev_instance.b[7] << 8) |
+		(hbus->hdev->dev_instance.b[6] & 0xf8) |
+		PCI_FUNC(pdev->devfn);
+}
+EXPORT_SYMBOL_GPL(hv_pci_vmbus_device_id);
+
 /**
  * hv_pci_generic_compl() - Invoked for a completion packet
  * @context:		Set up by the sender of the packet.
@@ -1240,7 +1335,18 @@ static void _hv_pcifront_read_config(struct hv_pci_dev *hpdev, int where,
 			 */
 			mb();
 		}
+
 		spin_unlock_irqrestore(&hbus->config_lock, flags);
+
+		/*
+		 * Make sure PCI_INTERRUPT_PIN is hard-wired to 0, since it
+		 * may be read using a 32bit read, which is skipped by the
+		 * above emulation.
+		 */
+		if ((PCI_INTERRUPT_PIN >= where) &&
+		    (PCI_INTERRUPT_PIN <= (where + size))) {
+			*((char *)val + PCI_INTERRUPT_PIN - where) = 0;
+		}
 	} else {
 		dev_err(dev, "Attempt to read beyond a function's config space.\n");
 	}
@@ -1398,11 +1504,72 @@ static int hv_pcifront_write_config(struct pci_bus *bus, unsigned int devfn,
 	return PCIBIOS_SUCCESSFUL;
 }
 
+static int hv_pcifront_reset(struct pci_dev *pdev, bool probe)
+{
+	struct hv_pcibus_device *hbus =
+		container_of(pdev->bus->sysdata, struct hv_pcibus_device, sysdata);
+	struct pci_child_message reset = {};
+	struct hv_pci_compl comp_pkt;
+	struct pci_packet pkt = {
+		.completion_func = hv_pci_generic_compl,
+		.compl_ctxt = &comp_pkt,
+	};
+	enum hv_pcibus_state state;
+	int ret;
+
+	/* Device reset was added in vPCI protocol version 1.5. */
+	if (hbus->protocol_version < PCI_PROTOCOL_VERSION_1_5)
+		return -ENOTTY;
+
+	/* Hyper-V exposes projected functions directly on the root bus. */
+	if (!pci_is_root_bus(pdev->bus))
+		return -ENOTTY;
+
+	if (probe)
+		return 0;
+
+	/* Do not take state_lock: eject holds it while removing/locking pdev. */
+	state = READ_ONCE(hbus->state);
+	if (state != hv_pcibus_probed && state != hv_pcibus_installed)
+		return -ENODEV;
+
+	init_completion(&comp_pkt.host_event);
+	reset.message_type.type = PCI_RESET_DEVICE;
+	reset.wslot.slot = devfn_to_wslot(pdev->devfn);
+
+	ret = vmbus_sendpacket(hbus->hdev->channel, &reset, sizeof(reset),
+			       (unsigned long)&pkt, VM_PKT_DATA_INBAND,
+			       VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED);
+	if (ret)
+		return ret;
+
+	ret = wait_for_response(hbus->hdev, &comp_pkt.host_event);
+	if (ret)
+		return ret;
+
+	if (comp_pkt.completion_status == STATUS_NOT_SUPPORTED)
+		return -ENOTTY;
+
+	if (comp_pkt.completion_status) {
+		pci_err(pdev, "Hyper-V device reset failed: %#x\n",
+			comp_pkt.completion_status);
+		return -EIO;
+	}
+
+	return 0;
+}
+
 /* PCIe operations */
 static struct pci_ops hv_pcifront_ops = {
 	.read  = hv_pcifront_read_config,
 	.write = hv_pcifront_write_config,
+	.reset = hv_pcifront_reset,
 };
+
+static bool hv_vmbus_pci_device(struct pci_bus *pbus)
+{
+	return pbus->ops == &hv_pcifront_ops;
+}
 
 /*
  * Paravirtual backchannel
@@ -1709,6 +1876,7 @@ static void hv_msi_free(struct irq_domain *domain, unsigned int irq)
 		return;
 	}
 
+	hv_vmbus_unmap_msi_interrupt(pdev, int_desc);
 	hv_int_desc_free(hpdev, int_desc);
 	put_pcichild(hpdev);
 }
@@ -1721,6 +1889,16 @@ static void hv_irq_mask(struct irq_data *data)
 
 static void hv_irq_unmask(struct irq_data *data)
 {
+	struct pci_dev *pdev;
+	struct msi_desc *msi_desc;
+
+	msi_desc = irq_data_get_msi_desc(data);
+	pdev = msi_desc_to_pci_dev(msi_desc);
+
+	/* Done during bypass setup in mshv_eventfd.c: mshv_irqfd_assign() */
+	if (hv_pcidev_is_pthru_dev(pdev))
+		return;
+
 	hv_arch_irq_unmask(data);
 
 	if (data->parent_data->chip->irq_unmask)
@@ -1930,10 +2108,15 @@ static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	if (data->chip_data && !multi_msi) {
 		int_desc = data->chip_data;
 		data->chip_data = NULL;
+		/*
+		 * The descriptor is about to be destroyed, so release the
+		 * hypervisor mapping that belongs to it first.
+		 */
+		hv_vmbus_unmap_msi_interrupt(pdev, int_desc);
 		hv_int_desc_free(hpdev, int_desc);
 	}
 
-	int_desc = kzalloc(sizeof(*int_desc), GFP_ATOMIC);
+	int_desc = kzalloc(sizeof(struct hv_msi_int_entry), GFP_ATOMIC);
 	if (!int_desc)
 		goto drop_reference;
 
@@ -1997,6 +2180,7 @@ static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 		break;
 
 	case PCI_PROTOCOL_VERSION_1_4:
+	case PCI_PROTOCOL_VERSION_1_5:
 		size = hv_compose_msi_req_v3(&ctxt.int_pkts.v3,
 					cpu,
 					hpdev->desc.win_slot.slot,
@@ -2185,9 +2369,34 @@ static void hv_pcie_domain_free(struct irq_domain *d, unsigned int virq, unsigne
 	irq_domain_free_irqs_top(d, virq, nr_irqs);
 }
 
+/*
+ * Runs from irq_domain_deactivate_irq() during irq_shutdown(), before the
+ * parent (x86 vector) domain is deactivated and the (cpu, vector) is returned
+ * to the matrix allocator, so a freed vector can never collide with a stale
+ * hypervisor entry when it is reused.
+ */
+static void hv_pcie_domain_deactivate(struct irq_domain *d,
+				      struct irq_data *data)
+{
+	struct msi_desc *msi_desc;
+	struct pci_dev *pdev;
+
+	if (!hv_root_partition())
+		return;
+
+	msi_desc = irq_data_get_msi_desc(data);
+	if (!msi_desc)
+		return;
+
+	pdev = msi_desc_to_pci_dev(msi_desc);
+	if (pdev)
+		hv_vmbus_unmap_msi_interrupt(pdev, data->chip_data);
+}
+
 static const struct irq_domain_ops hv_pcie_domain_ops = {
-	.alloc	= hv_pcie_domain_alloc,
-	.free	= hv_pcie_domain_free,
+	.alloc		= hv_pcie_domain_alloc,
+	.free		= hv_pcie_domain_free,
+	.deactivate	= hv_pcie_domain_deactivate,
 };
 
 /**

@@ -7,7 +7,6 @@
  *
  * All credits to kvm developers.
  */
-
 #include <linux/syscalls.h>
 #include <linux/wait.h>
 #include <linux/poll.h>
@@ -15,7 +14,9 @@
 #include <linux/list.h>
 #include <linux/workqueue.h>
 #include <linux/eventfd.h>
-
+#include <linux/pci.h>
+#include <linux/msi.h>
+#include <linux/vfio_pci_core.h>
 #if IS_ENABLED(CONFIG_X86_64)
 #include <asm/apic.h>
 #endif
@@ -26,6 +27,793 @@
 #include "mshv_root.h"
 
 static struct workqueue_struct *irqfd_cleanup_wq;
+
+#if IS_ENABLED(CONFIG_X86_64)
+
+static int mshv_parse_mshv_irqfd(struct mshv_irqfd *irqfd,
+				 struct pci_dev **out_pdev,
+				 struct irq_data **out_irqdata)
+{
+	struct irq_bypass_producer *prod;
+	struct msi_desc *msidesc;
+	struct irq_data *irqdata;
+
+	if (irqfd == NULL || irqfd->irqfd_bypass_prod == NULL)
+		return -ENODEV;
+
+	prod = irqfd->irqfd_bypass_prod;
+
+	irqdata = irq_get_irq_data(prod->irq);
+	if (irqdata == NULL) {
+		pr_err("Hyper-V: irqbypass fail, no irqdata. irq:0x%x\n",
+		       prod->irq);
+		return -EINVAL;
+	}
+	*out_irqdata = irqdata;
+
+	msidesc = irq_data_get_msi_desc(irqdata);
+	if (msidesc == NULL) {
+		pr_err("Hyper-V: irqbypass msi fail. irq:0x%x\n", prod->irq);
+		return -EINVAL;
+	}
+
+	*out_pdev = msi_desc_to_pci_dev(msidesc);
+	if (*out_pdev == NULL) {
+		pr_err("Hyper-V: mshv_irqfd parse fail. irq:0x%x\n", prod->irq);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/* Must be called with interrupts disabled */
+static int hv_vpset_from_hyp_disabled(
+			struct hv_input_get_vp_set_from_mda *input,
+			union hv_output_get_vp_set_from_mda *output,
+			struct mshv_lapic_irq *lapic_irq, u64 partid)
+{
+	u64 status;
+
+	memset(input, 0, sizeof(*input));
+	input->target_partid = partid;
+	input->dest_address = lapic_irq->lapic_apic_id;
+	input->input_vtl = 0;
+	input->destmode_logical = lapic_irq->lapic_control.logical_dest_mode;
+
+	status = hv_do_hypercall(HVCALL_GET_VPSET_FROM_MDA, input, output);
+	if (!hv_result_success(status)) {
+		hv_status_err(status, "apicid:0x%llx dest:0x%x\n",
+			      lapic_irq->lapic_apic_id,
+			      lapic_irq->lapic_control.logical_dest_mode);
+	}
+
+	return hv_result_to_errno(status);
+}
+
+/* Returns number of banks copied, -errno in case of error */
+static int hv_copy_vpset(struct hv_vpset *dest, struct hv_vpset *src)
+{
+	u64 bank_mask;
+	int banks, tot_banks = hv_max_vp_index / HV_VCPUS_PER_SPARSE_BANK;
+
+	if (tot_banks >= HV_MAX_SPARSE_VCPU_BANKS)
+		return -EINVAL;
+
+	dest->format = src->format;
+	dest->valid_bank_mask = src->valid_bank_mask;
+	bank_mask = src->valid_bank_mask;
+	for (banks = 0; banks <= tot_banks; banks++) {
+		if (bank_mask == 0)
+			break;
+
+		if (bank_mask & 1)
+			dest->bank_contents[banks] = src->bank_contents[banks];
+		bank_mask = bank_mask >> 1;
+	}
+
+	return banks;
+}
+
+static int mshv_map_device_interrupt(u64 ptid, union hv_device_id hv_devid,
+				     struct mshv_lapic_irq *ginfo,
+				     struct hv_interrupt_entry *ret_entry,
+				     u64 *ret_status)
+{
+	struct hv_input_map_device_interrupt *irq_input;
+	struct hv_output_map_device_interrupt *irq_output;
+	struct hv_device_interrupt_descriptor *intdesc;
+	struct hv_input_get_vp_set_from_mda *mda_input;
+	union hv_output_get_vp_set_from_mda *mda_output;
+	ulong flags;
+	u64 status;
+	int rc, var_size;
+
+	*ret_status = U64_MAX;
+	local_irq_save(flags);
+
+	mda_input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	mda_output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	/*
+	 * Map Device Interrupt hcall needs vp set based on vp indexes used
+	 * during vp creation. Here we have lapic-id of the vp only. Easiest
+	 * is to just ask the hypervisor for the vp set matching the lapic-id.
+	 */
+	rc = hv_vpset_from_hyp_disabled(mda_input, mda_output, ginfo, ptid);
+	if (rc)
+		goto out;	/* error already printed */
+
+	irq_input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	irq_output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+	memset(irq_input, 0, sizeof(*irq_input));
+
+	irq_input->partition_id = ptid;
+	irq_input->device_id = hv_devid.as_uint64;
+
+	intdesc = &irq_input->interrupt_descriptor;
+	intdesc->interrupt_type = HV_X64_INTERRUPT_TYPE_FIXED;
+	intdesc->vector_count = 1;
+	intdesc->target.vector = ginfo->lapic_vector;
+	intdesc->trigger_mode = HV_INTERRUPT_TRIGGER_MODE_EDGE;
+
+	intdesc->target.vp_set.valid_bank_mask = 0;
+	intdesc->target.vp_set.format = HV_GENERIC_SET_SPARSE_4K;
+	intdesc->target.flags = HV_DEVICE_INTERRUPT_TARGET_PROCESSOR_SET;
+	rc = hv_copy_vpset(&intdesc->target.vp_set, &mda_output->target_vpset);
+	if (rc <= 0) {
+		pr_err("Hyper-V: ptid %lld - (irq)vpset copy failed (%d)\n",
+		       ptid, rc);
+		goto out;
+	}
+
+	/*
+	 * var-sized hcall: var-size starts after vp_mask (thus vp_set.format
+	 * does not count, but vp_set.valid_bank_mask does).
+	 */
+	var_size = rc + 1;
+	status = hv_do_rep_hypercall(HVCALL_MAP_DEVICE_INTERRUPT, 0, var_size,
+				     irq_input, irq_output);
+	*ret_entry = irq_output->interrupt_entry;
+	local_irq_restore(flags);
+
+	rc = 0;
+	if (!hv_result_success(status)) {
+		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY)
+			hv_status_err(status, "pt:%lld vec:%d lapic-id:%lld\n",
+			      ptid, ginfo->lapic_vector, ginfo->lapic_apic_id);
+		*ret_status = status;
+		rc = hv_result_to_errno(status);
+	}
+
+	return rc;
+
+out:
+	local_irq_restore(flags);
+	return rc;
+
+}
+
+/* NOTE: caller does spin_lock_irq on pt_irqfds_lock, hence no disable here */
+static void mshv_do_guest_irq_retarget(u64 partid, struct mshv_irqfd *irqfd)
+{
+	int rc, var_size;
+	u64 status;
+	union hv_device_id hv_devid;
+	struct hv_input_get_vp_set_from_mda *mda_input;
+	union hv_output_get_vp_set_from_mda *mda_output;
+	struct hv_retarget_device_interrupt *remap_inp;
+	struct pci_dev *pdev;
+	struct irq_data *irqdata;
+	struct mshv_lapic_irq *lapic_irq = &irqfd->irqfd_lapic_irq;
+	struct hv_interrupt_entry *inte = NULL;
+
+	if (!irqfd->irqfd_girq_ent.girq_entry_valid ||
+	    irqfd->irqfd_bypass_prod == NULL)
+		return;
+
+	rc = mshv_parse_mshv_irqfd(irqfd, &pdev, &irqdata);
+	if (rc)
+		return;
+
+	inte = irqdata->chip_data;
+	if (inte == NULL)
+		return;
+
+	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
+
+
+	mda_input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	mda_output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+
+	rc = hv_vpset_from_hyp_disabled(mda_input, mda_output, lapic_irq,
+					partid);
+	if (rc)
+		return;
+
+	remap_inp = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(remap_inp, 0, sizeof(*remap_inp));
+
+	rc = hv_copy_vpset(&remap_inp->int_target.vp_set,
+			   &mda_output->target_vpset);
+	if (rc <= 0) {
+		pr_err("Hyper-V: ptid %lld - vpset copy failed (%d)\n",
+		       partid, rc);
+		return;
+	}
+
+	/*
+	 * var-sized hcall: var-size starts after vp_mask (thus vp_set.format
+	 * does not count, but vp_set.valid_bank_mask does).
+	 */
+	var_size = rc + 1;
+
+	remap_inp->partition_id = partid;
+	remap_inp->device_id = hv_devid.as_uint64;
+	remap_inp->int_target.vector = lapic_irq->lapic_vector;
+	remap_inp->int_target.flags = HV_DEVICE_INTERRUPT_TARGET_PROCESSOR_SET;
+
+	remap_inp->int_entry.source = inte->source;
+	remap_inp->int_entry.msi_entry.as_uint64 = inte->msi_entry.as_uint64;
+
+	status = hv_do_rep_hypercall(HVCALL_RETARGET_INTERRUPT, 0, var_size,
+				     remap_inp, NULL);
+
+	if (!hv_result_success(status))
+		hv_status_err(status, "pt:%lld vec:%d lapic-id:%lld\n",
+			      partid, lapic_irq->lapic_vector,
+			      lapic_irq->lapic_apic_id);
+}
+
+static int mshv_unmap_device_interrupt(union hv_device_id hv_devid,
+				       struct hv_interrupt_entry *irq_entry)
+{
+	unsigned long flags;
+	struct hv_input_unmap_device_interrupt *input;
+	u64 status;
+
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(input, 0, sizeof(*input));
+
+	if (hv_devid.device_type == HV_DEVICE_TYPE_LOGICAL)
+		input->partition_id = hv_get_current_partid();
+	else
+		input->partition_id = hv_current_partition_id;
+
+	input->device_id = hv_devid.as_uint64;
+	input->interrupt_entry = *irq_entry;
+
+	status = hv_do_hypercall(HVCALL_UNMAP_DEVICE_INTERRUPT, input, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status))
+		hv_status_err(status, "\n");
+
+	return hv_result_to_errno(status);
+}
+
+static int mshv_chk_unmap_irq(union hv_device_id hv_devid,
+			      struct irq_data *irqdata)
+{
+	int rc;
+
+	if (irqdata->chip_data == NULL)
+		return 0;
+
+	rc = mshv_unmap_device_interrupt(hv_devid, irqdata->chip_data);
+	if (rc)
+		return rc;
+
+	kfree(irqdata->chip_data);
+	irqdata->chip_data = NULL;
+
+	return 0;
+}
+
+/*
+ * Synchronize device update with VFIO.
+ *    See: vfio_pci_memory_lock_and_enable()
+ */
+static u16 mshv_pci_memory_lock_and_enable(struct vfio_pci_core_device *cdev)
+{
+	u16 cmd;
+
+	down_write(&cdev->memory_lock);
+	pci_read_config_word(cdev->pdev, PCI_COMMAND, &cmd);
+	if (!(cmd & PCI_COMMAND_MEMORY))
+		pci_write_config_word(cdev->pdev, PCI_COMMAND,
+				      cmd | PCI_COMMAND_MEMORY);
+	return cmd;
+}
+
+static void mshv_pci_memory_unlock_and_restore(
+					struct vfio_pci_core_device *cdev,
+					u16 cmd)
+{
+	pci_write_config_word(cdev->pdev, PCI_COMMAND, cmd);
+	up_write(&cdev->memory_lock);
+}
+
+static void mshv_make_device_usable(struct pci_dev *pdev, int vector,
+				    struct hv_interrupt_entry *hv_entry)
+{
+	int lirq;
+	struct msi_msg msimsg;
+	struct irq_data *irqdata, *parent;
+	u16 pcicmd;
+	struct vfio_pci_core_device *coredev = dev_get_drvdata(&pdev->dev);
+
+	/*
+	 * Accept vfio-pci and its variant drivers (e.g. nvgrace_gpu_vfio_pci),
+	 * which all embed a struct vfio_pci_core_device as drvdata.
+	 */
+	if (pdev->dev.driver == NULL ||
+	    (strstr(pdev->dev.driver->name, "vfio-pci") == NULL &&
+	     strstr(pdev->dev.driver->name, "vfio_pci") == NULL)) {
+		pr_err("Hyper-V: irqbypass: non vfio device %s\n",
+		       pci_name(pdev));
+		return;
+	}
+	if (coredev == NULL) {
+		pr_err("Hyper-V: irqbypass: null vfio device for %s\n",
+		       pci_name(pdev));
+		return;
+	}
+
+	if (hv_entry->source != HV_INTERRUPT_SOURCE_MSI) {
+		pr_err("Hyper-V: %s irq source not msi\n", pci_name(pdev));
+		return;
+	}
+
+	lirq = pci_irq_vector(pdev, vector);
+	irqdata = irq_get_irq_data(lirq);
+	if (irqdata == NULL) {
+		pr_err("Hyper-V: null irq_data for write msimsg. lirq:0x%x\n",
+		       lirq);
+		return;
+	}
+
+	msimsg.address_hi = 0;
+	msimsg.address_lo = hv_entry->msi_entry.address.as_uint32;
+	msimsg.data =  hv_entry->msi_entry.data.as_uint32;
+
+	pcicmd = mshv_pci_memory_lock_and_enable(coredev);
+	pci_write_msi_msg(lirq, &msimsg);
+	mshv_pci_memory_unlock_and_restore(coredev, pcicmd);
+
+	pci_msi_unmask_irq(irqdata);
+
+	parent = irqdata->parent_data;
+	if (parent && parent->chip && parent->chip->irq_unmask)
+		irq_chip_unmask_parent(irqdata);
+}
+
+/*
+ * This guest has a device passthru'd to it. VFIO did the initial setup of
+ * the device interrupts, but we left them unmapped in the hypervisor
+ * because we didn't have the guest target cpu and vector (required by
+ * hypervisor). We have them now, so do the map hypercall.
+ * Also, when here, it is expected that the device global mask is unset
+ * but individual MSI/x masks are set. Goal here is to map the interrupt in
+ * the hypervisor, update the corresponding device MSI/x entry, and enable it.
+ */
+static void mshv_pthru_dev_irq_remap(struct mshv_irqfd *irqfd)
+{
+	u64 ptid, status;
+	struct pci_dev *pdev;
+	int rc;
+	struct mshv_lapic_irq *ginfo = &irqfd->irqfd_lapic_irq;
+	union hv_device_id hv_devid;
+	struct hv_interrupt_entry *new_entry;
+	struct irq_data *irqdata;
+
+	if (!irqfd->irqfd_girq_ent.girq_entry_valid ||
+	    irqfd->irqfd_bypass_prod == NULL)
+		return;
+
+	rc = mshv_parse_mshv_irqfd(irqfd, &pdev, &irqdata);
+	if (rc)
+		return;
+
+	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
+
+	rc = mshv_chk_unmap_irq(hv_devid, irqdata);
+	if (rc)
+		return;
+
+	new_entry = kmalloc(sizeof(*new_entry), GFP_ATOMIC);
+	if (new_entry == NULL)
+		return;
+
+	ptid = irqfd->irqfd_partn->pt_id;
+
+	do {
+		rc = mshv_map_device_interrupt(ptid, hv_devid, ginfo, new_entry,
+					       &status);
+		if (rc == 0 || !hv_result_needs_memory(status))
+			break;
+
+		rc = hv_deposit_memory(ptid, status);
+	} while (hv_result_needs_memory(status) && rc == 0);
+
+	if (rc) {
+		kfree(new_entry);
+		return;
+	}
+
+	irqdata->chip_data = new_entry;
+
+	mshv_make_device_usable(pdev, irqdata->hwirq, new_entry);
+}
+
+static void mshv_pthru_dev_irq_undo(struct mshv_irqfd *irqfd)
+{
+	struct pci_dev *pdev;
+	union hv_device_id hv_devid;
+	struct irq_data *irqdata;
+	int rc;
+
+	if (!irqfd->irqfd_girq_ent.girq_entry_valid ||
+	    irqfd->irqfd_bypass_prod == NULL)
+		return;
+
+	rc = mshv_parse_mshv_irqfd(irqfd, &pdev, &irqdata);
+	if (rc)
+		return;
+
+	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
+	mshv_chk_unmap_irq(hv_devid, irqdata);
+}
+
+#elif IS_ENABLED(CONFIG_ARM64)	/* Microsoft Hypervisor ARM64 root partition */
+
+/*
+ * ARM64 root-partition passthrough MSI mapping.
+ *
+ * For a device passed through to a guest, the arm64 MSI irqdomain
+ * (drivers/irqchip/irq-mshv-gicv3-msi.c) deliberately leaves the interrupt
+ * unmapped in the hypervisor at VFIO MSI-X enable time, because the guest's
+ * target vCPU and vector are not known then (hv_irq_compose_msi_msg_stub()
+ * returns a zero message for an attached device). They become known at
+ * irqfd-assign time, when the code below maps the interrupt into the guest
+ * partition and programs the device's MSI-X entry. The mechanism mirrors the
+ * x86 path: the guest destination is translated into a target VP set via
+ * HVCALL_GET_VPSET_FROM_MDA, then HVCALL_MAP_DEVICE_INTERRUPT is issued against
+ * the guest partition id.
+ */
+
+static int mshv_parse_mshv_irqfd(struct mshv_irqfd *irqfd,
+				 struct pci_dev **out_pdev,
+				 struct irq_data **out_irqdata)
+{
+	struct irq_bypass_producer *prod;
+	struct msi_desc *msidesc;
+	struct irq_data *irqdata;
+
+	if (irqfd == NULL || irqfd->irqfd_bypass_prod == NULL)
+		return -ENODEV;
+
+	prod = irqfd->irqfd_bypass_prod;
+
+	irqdata = irq_get_irq_data(prod->irq);
+	if (irqdata == NULL) {
+		pr_err("Hyper-V: irqbypass fail, no irqdata. irq:0x%x\n",
+		       prod->irq);
+		return -EINVAL;
+	}
+	*out_irqdata = irqdata;
+
+	msidesc = irq_data_get_msi_desc(irqdata);
+	if (msidesc == NULL) {
+		pr_err("Hyper-V: irqbypass msi fail. irq:0x%x\n", prod->irq);
+		return -EINVAL;
+	}
+
+	*out_pdev = msi_desc_to_pci_dev(msidesc);
+	if (*out_pdev == NULL) {
+		pr_err("Hyper-V: mshv_irqfd parse fail. irq:0x%x\n", prod->irq);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+/*
+ * Build a sparse VP set targeting the single guest VP given by @vp, using the
+ * same bank encoding as __cpumask_to_vpset(). Returns the number of banks (for
+ * the variable-sized hypercall) or -errno.
+ *
+ * NB: On ARM64 the processor target in MAP_DEVICE_INTERRUPT is not meaningful
+ * for a guest passthrough interrupt -- the guest vGIC programs the actual
+ * target CPU. We therefore map against a default VP (0); the resulting MSI
+ * address/data is what the device must use, and delivery is steered by the
+ * guest's vGIC, not by this VP set.
+ */
+static int hv_vpset_set_single(struct hv_vpset *vpset, u64 vp)
+{
+	int bank = vp / HV_VCPUS_PER_SPARSE_BANK;
+	int offset = vp % HV_VCPUS_PER_SPARSE_BANK;
+	int i;
+
+	if (bank >= HV_MAX_SPARSE_VCPU_BANKS)
+		return -EINVAL;
+
+	vpset->format = HV_GENERIC_SET_SPARSE_4K;
+	for (i = 0; i <= bank; i++)
+		vpset->bank_contents[i] = 0;
+	__set_bit(offset, (unsigned long *)&vpset->bank_contents[bank]);
+	vpset->valid_bank_mask = GENMASK_ULL(bank, 0);
+
+	return bank + 1;
+}
+
+static int mshv_map_device_interrupt(u64 ptid, union hv_device_id hv_devid,
+				     struct mshv_lapic_irq *ginfo,
+				     struct hv_interrupt_entry *ret_entry,
+				     u64 *ret_status)
+{
+	struct hv_input_map_device_interrupt *irq_input;
+	struct hv_output_map_device_interrupt *irq_output;
+	struct hv_device_interrupt_descriptor *intdesc;
+	ulong flags;
+	u64 status;
+	int rc, var_size;
+
+	*ret_status = U64_MAX;
+	local_irq_save(flags);
+
+	irq_input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	irq_output = *this_cpu_ptr(hyperv_pcpu_output_arg);
+	memset(irq_input, 0, sizeof(*irq_input));
+
+	irq_input->partition_id = ptid;
+	irq_input->device_id = hv_devid.as_uint64;
+
+	intdesc = &irq_input->interrupt_descriptor;
+	intdesc->interrupt_type = HV_X64_INTERRUPT_TYPE_FIXED;
+	intdesc->vector_count = 1;
+	intdesc->target.vector = ginfo->lapic_vector;
+	intdesc->trigger_mode = HV_INTERRUPT_TRIGGER_MODE_EDGE;
+	intdesc->target.flags = HV_DEVICE_INTERRUPT_TARGET_PROCESSOR_SET;
+
+	/*
+	 * The real target CPU is programmed by the guest vGIC, so a default VP
+	 * target is sufficient here.
+	 */
+	rc = hv_vpset_set_single(&intdesc->target.vp_set, 0);
+	if (rc <= 0) {
+		pr_err("Hyper-V: ptid %lld - vpset build failed (%d)\n",
+		       ptid, rc);
+		goto out;
+	}
+
+	/*
+	 * var-sized hcall: var-size starts after vp_mask (thus vp_set.format
+	 * does not count, but vp_set.valid_bank_mask does).
+	 */
+	var_size = rc + 1;
+	status = hv_do_rep_hypercall(HVCALL_MAP_DEVICE_INTERRUPT, 0, var_size,
+				     irq_input, irq_output);
+	*ret_entry = irq_output->interrupt_entry;
+	local_irq_restore(flags);
+
+	rc = 0;
+	if (!hv_result_success(status)) {
+		if (hv_result(status) != HV_STATUS_INSUFFICIENT_MEMORY)
+			hv_status_err(status, "pt:%lld vec:%d lapic-id:%lld\n",
+				      ptid, ginfo->lapic_vector,
+				      ginfo->lapic_apic_id);
+		*ret_status = status;
+		rc = hv_result_to_errno(status);
+	}
+
+	return rc;
+
+out:
+	local_irq_restore(flags);
+	return rc;
+}
+
+static int mshv_unmap_device_interrupt(union hv_device_id hv_devid,
+				       struct hv_interrupt_entry *irq_entry,
+				       u64 ptid)
+{
+	unsigned long flags;
+	struct hv_input_unmap_device_interrupt *input;
+	u64 status;
+
+	local_irq_save(flags);
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(input, 0, sizeof(*input));
+
+	/*
+	 * Unmap against the same partition the MAP used (the guest pt_id stored
+	 * on the irqfd). This is robust against teardown running in a non-VMM
+	 * thread context (e.g. the shutdown kthread), where hv_get_current_partid()
+	 * would return HV_PARTITION_ID_INVALID.
+	 */
+	if (hv_devid.device_type == HV_DEVICE_TYPE_LOGICAL)
+		input->partition_id = (ptid == HV_PARTITION_ID_INVALID) ?
+				      hv_current_partition_id : ptid;
+	else
+		input->partition_id = hv_current_partition_id;
+
+	input->device_id = hv_devid.as_uint64;
+	input->interrupt_entry = *irq_entry;
+
+	status = hv_do_hypercall(HVCALL_UNMAP_DEVICE_INTERRUPT, input, NULL);
+	local_irq_restore(flags);
+
+	if (!hv_result_success(status))
+		hv_status_err(status, "\n");
+
+	return hv_result_to_errno(status);
+}
+
+/*
+ * Drop any active HVCALL_MAP_DEVICE_INTERRUPT mapping previously installed for
+ * this irqfd. The mapping state is kept on the irqfd itself (not in
+ * irq_data->chip_data), so it survives VFIO free_irq()/request_irq() cycles
+ * that rotate the bypass producer and would otherwise clear chip_data and leak
+ * the hypervisor mapping.
+ */
+static int mshv_irqfd_drop_hv_map(struct mshv_irqfd *irqfd)
+{
+	struct hv_interrupt_entry *entry = irqfd->irqfd_hv_entry;
+	union hv_device_id hv_devid;
+	int rc;
+
+	if (entry == NULL)
+		return 0;
+
+	hv_devid.as_uint64 = irqfd->irqfd_hv_devid;
+
+	rc = mshv_unmap_device_interrupt(hv_devid, entry, irqfd->irqfd_hv_ptid);
+	if (rc)
+		return rc;	/* keep state so a retry is possible */
+
+	kfree(entry);
+	irqfd->irqfd_hv_entry = NULL;
+	irqfd->irqfd_hv_devid = 0;
+	irqfd->irqfd_hv_ptid = 0;
+
+	return 0;
+}
+
+/*
+ * Program the passthru device's MSI-X entry with the hypervisor-provided
+ * address/data and unmask it. Synchronize the device update with VFIO; see
+ * vfio_pci_memory_lock_and_enable().
+ */
+static void mshv_arm_make_device_usable(struct pci_dev *pdev, unsigned int lirq,
+					struct irq_data *irqdata,
+					struct hv_interrupt_entry *hv_entry)
+{
+	struct vfio_pci_core_device *coredev = dev_get_drvdata(&pdev->dev);
+	struct msi_msg msimsg = {};
+	struct irq_data *parent;
+	u16 pcicmd;
+
+	/*
+	 * Accept vfio-pci and its variant drivers (e.g. nvgrace_gpu_vfio_pci),
+	 * which all embed a struct vfio_pci_core_device as drvdata.
+	 */
+	if (pdev->dev.driver == NULL ||
+	    (strstr(pdev->dev.driver->name, "vfio-pci") == NULL &&
+	     strstr(pdev->dev.driver->name, "vfio_pci") == NULL)) {
+		pr_err("Hyper-V: irqbypass: non vfio device %s\n",
+		       pci_name(pdev));
+		return;
+	}
+	if (coredev == NULL) {
+		pr_err("Hyper-V: irqbypass: null vfio device for %s\n",
+		       pci_name(pdev));
+		return;
+	}
+	if (hv_entry->source != HV_INTERRUPT_SOURCE_MSI) {
+		pr_err("Hyper-V: %s irq source not msi\n", pci_name(pdev));
+		return;
+	}
+
+	msimsg.address_hi = upper_32_bits(hv_entry->msi_entry.address);
+	msimsg.address_lo = lower_32_bits(hv_entry->msi_entry.address);
+	msimsg.data = hv_entry->msi_entry.data;
+
+	down_write(&coredev->memory_lock);
+	pci_read_config_word(pdev, PCI_COMMAND, &pcicmd);
+	if (!(pcicmd & PCI_COMMAND_MEMORY))
+		pci_write_config_word(pdev, PCI_COMMAND,
+				      pcicmd | PCI_COMMAND_MEMORY);
+	pci_write_msi_msg(lirq, &msimsg);
+	pci_write_config_word(pdev, PCI_COMMAND, pcicmd);
+	up_write(&coredev->memory_lock);
+
+	pci_msi_unmask_irq(irqdata);
+
+	parent = irqdata->parent_data;
+	if (parent && parent->chip && parent->chip->irq_unmask)
+		irq_chip_unmask_parent(irqdata);
+}
+
+/*
+ * This guest has a device passthru'd to it. VFIO did the initial setup of the
+ * device interrupts, but we left them unmapped in the hypervisor because we
+ * didn't have the guest target vp and vector. We have them now, so do the map
+ * hypercall and program the device.
+ */
+static void mshv_pthru_dev_irq_remap(struct mshv_irqfd *irqfd)
+{
+	u64 ptid, status;
+	struct pci_dev *pdev;
+	int rc, deposit_pgs = 16;
+	struct mshv_lapic_irq *ginfo = &irqfd->irqfd_lapic_irq;
+	union hv_device_id hv_devid;
+	struct hv_interrupt_entry *new_entry;
+	struct irq_data *irqdata;
+	unsigned int lirq;
+
+	if (!irqfd->irqfd_girq_ent.girq_entry_valid ||
+	    irqfd->irqfd_bypass_prod == NULL)
+		return;
+
+	rc = mshv_parse_mshv_irqfd(irqfd, &pdev, &irqdata);
+	if (rc)
+		return;
+	lirq = irqfd->irqfd_bypass_prod->irq;
+
+	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
+
+	/*
+	 * If we previously mapped an interrupt for this irqfd (e.g. VFIO is
+	 * re-registering its bypass producer after a free_irq()/request_irq()
+	 * cycle), tear that mapping down first so we don't leave a duplicate
+	 * (device_id, vector) entry in the hypervisor.
+	 */
+	rc = mshv_irqfd_drop_hv_map(irqfd);
+	if (rc)
+		return;
+
+	new_entry = kmalloc(sizeof(*new_entry), GFP_ATOMIC);
+	if (new_entry == NULL)
+		return;
+
+	ptid = irqfd->irqfd_partn->pt_id;
+
+	for (;;) {
+		rc = mshv_map_device_interrupt(ptid, hv_devid, ginfo, new_entry,
+					       &status);
+		if (rc == 0 || !hv_result_needs_memory(status))
+			break;
+		if (!deposit_pgs--)
+			break;
+
+		rc = hv_deposit_memory(ptid, status);
+		if (rc)
+			break;
+	}
+	if (rc) {
+		kfree(new_entry);
+		return;
+	}
+
+	irqfd->irqfd_hv_entry = new_entry;
+	irqfd->irqfd_hv_devid = hv_devid.as_uint64;
+	irqfd->irqfd_hv_ptid = ptid;
+
+	mshv_arm_make_device_usable(pdev, lirq, irqdata, new_entry);
+}
+
+static void mshv_pthru_dev_irq_undo(struct mshv_irqfd *irqfd)
+{
+	mshv_irqfd_drop_hv_map(irqfd);
+}
+
+#else  /* other architectures */
+
+static void mshv_pthru_dev_irq_remap(struct mshv_irqfd *irqfd) { }
+static void mshv_pthru_dev_irq_undo(struct mshv_irqfd *irqfd) { }
+
+#endif /* IS_ENABLED(CONFIG_X86_64) */
 
 void mshv_register_irq_ack_notifier(struct mshv_partition *partition,
 				    struct mshv_irq_ack_notifier *mian)
@@ -129,8 +917,8 @@ static int mshv_vp_irq_try_set_vector(struct mshv_vp *vp, u32 vector)
 
 	new_iv.vector[new_iv.vector_count++] = vector;
 
-	if (cmpxchg(&vp->vp_register_page->interrupt_vectors.as_uint64,
-		    iv.as_uint64, new_iv.as_uint64) != iv.as_uint64)
+	if (!try_cmpxchg(&vp->vp_register_page->interrupt_vectors.as_uint64,
+			 &iv.as_uint64, new_iv.as_uint64))
 		return -EAGAIN;
 
 	return 0;
@@ -151,10 +939,10 @@ static int mshv_vp_irq_set_vector(struct mshv_vp *vp, u32 vector)
  * Try to raise irq for guest via shared vector array. hyp does the actual
  * inject of the interrupt.
  */
-static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd)
+static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd,
+				    const struct mshv_lapic_irq *irq)
 {
 	struct mshv_partition *partition = irqfd->irqfd_partn;
-	struct mshv_lapic_irq *irq = &irqfd->irqfd_lapic_irq;
 	struct mshv_vp *vp;
 
 	if (!(ms_hyperv.ext_features &
@@ -164,10 +952,26 @@ static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd)
 	if (hv_scheduler_type != HV_SCHEDULER_TYPE_ROOT)
 		return -EOPNOTSUPP;
 
+#if IS_ENABLED(CONFIG_X86)
 	if (irq->lapic_control.logical_dest_mode)
 		return -EOPNOTSUPP;
+#endif
 
-	vp = partition->pt_vp_array[irq->lapic_apic_id];
+	/* The lapic id comes from userland, it could be anything */
+	if (irq->lapic_apic_id >= MSHV_MAX_VPS)
+		return -EINVAL;
+
+	/*
+	 * Pairs with smp_store_release() in mshv_partition_ioctl_create_vp().
+	 * MSHV_IRQFD does not require the target lapic_apic_id to refer to an
+	 * existing VP, so this read can race a concurrent VP creation; the
+	 * acquire ensures that a non-NULL pointer implies the VP's
+	 * initialising stores are visible.
+	 */
+	vp = smp_load_acquire(&partition->pt_vp_array[irq->lapic_apic_id]);
+	/* The lapic id could even refer to a VP that doesn't exist (yet). */
+	if (!vp)
+		return -EINVAL;
 
 	if (!vp->vp_register_page)
 		return -EOPNOTSUPP;
@@ -184,38 +988,30 @@ static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd)
 	return 0;
 }
 #else /* CONFIG_X86_64 */
-static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd)
+static int mshv_try_assert_irq_fast(struct mshv_irqfd *irqfd,
+				    const struct mshv_lapic_irq *irq)
 {
 	return -EOPNOTSUPP;
 }
 #endif
 
-static void mshv_assert_irq_slow(struct mshv_irqfd *irqfd)
+static void mshv_assert_irq_slow(struct mshv_irqfd *irqfd,
+				 const struct mshv_lapic_irq *irq,
+				 bool routing_valid)
 {
 	struct mshv_partition *partition = irqfd->irqfd_partn;
-	struct mshv_lapic_irq *irq = &irqfd->irqfd_lapic_irq;
-	unsigned int seq;
-	int idx;
 
+#if IS_ENABLED(CONFIG_X86)
 	WARN_ON(irqfd->irqfd_resampler &&
 		!irq->lapic_control.level_triggered);
+#endif
 
-	idx = srcu_read_lock(&partition->pt_irq_srcu);
-	if (irqfd->irqfd_girq_ent.guest_irq_num) {
-		if (!irqfd->irqfd_girq_ent.girq_entry_valid) {
-			srcu_read_unlock(&partition->pt_irq_srcu, idx);
-			return;
-		}
+	if (!routing_valid)
+		return;
 
-		do {
-			seq = read_seqcount_begin(&irqfd->irqfd_irqe_sc);
-		} while (read_seqcount_retry(&irqfd->irqfd_irqe_sc, seq));
-	}
-
-	hv_call_assert_virtual_interrupt(irqfd->irqfd_partn->pt_id,
+	hv_call_assert_virtual_interrupt(partition->pt_id,
 					 irq->lapic_vector, irq->lapic_apic_id,
 					 irq->lapic_control);
-	srcu_read_unlock(&partition->pt_irq_srcu, idx);
 }
 
 static void mshv_irqfd_resampler_shutdown(struct mshv_irqfd *irqfd)
@@ -260,6 +1056,16 @@ static void mshv_irqfd_shutdown(struct work_struct *work)
 	/*
 	 * It is now safe to release the object's resources
 	 */
+	irq_bypass_unregister_consumer(&irqfd->irqfd_bypass_cons);
+
+	/*
+	 * ARM64 keeps the mapping and partition id on the irqfd, so teardown is
+	 * deferred until producer callbacks have been serialized by unregister.
+	 * This is a no-op for x86, which cleaned up during deactivate while its
+	 * bypass producer was still available.
+	 */
+	mshv_pthru_dev_irq_undo(irqfd);
+
 	eventfd_ctx_put(irqfd->irqfd_eventfd_ctx);
 	kfree(irqfd);
 }
@@ -280,7 +1086,12 @@ static void mshv_irqfd_deactivate(struct mshv_irqfd *irqfd)
 	if (!mshv_irqfd_is_active(irqfd))
 		return;
 
-	hlist_del(&irqfd->irqfd_hnode);
+	hlist_del_init(&irqfd->irqfd_hnode);
+
+	/* X86 needs the producer and VMM thread context to release chip_data. */
+#if IS_ENABLED(CONFIG_X86_64)
+	mshv_pthru_dev_irq_undo(irqfd);
+#endif
 
 	queue_work(irqfd_cleanup_wq, &irqfd->irqfd_shutdown);
 }
@@ -293,32 +1104,38 @@ static int mshv_irqfd_wakeup(wait_queue_entry_t *wait, unsigned int mode,
 {
 	struct mshv_irqfd *irqfd = container_of(wait, struct mshv_irqfd,
 						irqfd_wait);
-	unsigned long flags = (unsigned long)key;
+	__poll_t flags = key_to_poll(key);
 	int idx;
 	unsigned int seq;
 	struct mshv_partition *pt = irqfd->irqfd_partn;
 	int ret = 0;
 
-	if (flags & POLLIN) {
+	if (flags & EPOLLIN) {
+		struct mshv_lapic_irq irq_snap;
+		bool routing_valid;
 		u64 cnt;
 
 		eventfd_ctx_do_read(irqfd->irqfd_eventfd_ctx, &cnt);
 		idx = srcu_read_lock(&pt->pt_irq_srcu);
+
 		do {
 			seq = read_seqcount_begin(&irqfd->irqfd_irqe_sc);
+			irq_snap = irqfd->irqfd_lapic_irq;
+			routing_valid = !irqfd->irqfd_girq_ent.guest_irq_num ||
+					irqfd->irqfd_girq_ent.girq_entry_valid;
 		} while (read_seqcount_retry(&irqfd->irqfd_irqe_sc, seq));
 
 		/* An event has been signaled, raise an interrupt */
-		ret = mshv_try_assert_irq_fast(irqfd);
+		ret = mshv_try_assert_irq_fast(irqfd, &irq_snap);
 		if (ret)
-			mshv_assert_irq_slow(irqfd);
+			mshv_assert_irq_slow(irqfd, &irq_snap, routing_valid);
 
 		srcu_read_unlock(&pt->pt_irq_srcu, idx);
 
 		ret = 1;
 	}
 
-	if (flags & POLLHUP) {
+	if (flags & EPOLLHUP) {
 		/* The eventfd is closing, detach from the partition */
 		unsigned long flags;
 
@@ -347,9 +1164,12 @@ static void mshv_irqfd_update(struct mshv_partition *pt,
 			      struct mshv_irqfd *irqfd)
 {
 	write_seqcount_begin(&irqfd->irqfd_irqe_sc);
-	irqfd->irqfd_girq_ent = mshv_ret_girq_entry(pt,
-						    irqfd->irqfd_irqnum);
+	irqfd->irqfd_girq_ent = mshv_ret_girq_entry(pt, irqfd->irqfd_irqnum);
 	mshv_copy_girq_info(&irqfd->irqfd_girq_ent, &irqfd->irqfd_lapic_irq);
+
+#if IS_ENABLED(CONFIG_X86_64)
+	mshv_do_guest_irq_retarget(pt->pt_id, irqfd);
+#endif
 	write_seqcount_end(&irqfd->irqfd_irqe_sc);
 }
 
@@ -379,12 +1199,51 @@ static void mshv_irqfd_queue_proc(struct file *file, wait_queue_head_t *wqh,
 	add_wait_queue_priority(wqh, &irqfd->irqfd_wait);
 }
 
+static int mshv_irq_bypass_add_producer(struct irq_bypass_consumer *cons,
+					struct irq_bypass_producer *prod)
+{
+	struct mshv_irqfd *irqfd;
+
+	irqfd = container_of(cons, struct mshv_irqfd, irqfd_bypass_cons);
+	irqfd->irqfd_bypass_prod = prod;
+
+	mshv_pthru_dev_irq_remap(irqfd);
+
+	return 0;
+}
+
+static void mshv_irq_bypass_del_producer(struct irq_bypass_consumer *cons,
+					 struct irq_bypass_producer *prod)
+{
+	struct mshv_irqfd *irqfd;
+
+	irqfd = container_of(cons, struct mshv_irqfd, irqfd_bypass_cons);
+
+	WARN_ON(irqfd->irqfd_bypass_prod != prod);
+	irqfd->irqfd_bypass_prod = NULL;
+
+}
+
+static void mshv_setup_irq_bypass(struct mshv_irqfd *irqfd,
+				  struct eventfd_ctx *eventfd)
+{
+	struct irq_bypass_consumer *consumer = &irqfd->irqfd_bypass_cons;
+	int rc;
+
+	consumer->add_producer = mshv_irq_bypass_add_producer;
+	consumer->del_producer = mshv_irq_bypass_del_producer;
+	rc = irq_bypass_register_consumer(&irqfd->irqfd_bypass_cons, eventfd);
+	if (rc)
+		pr_err("Hyper-V: irq bypass consumer registration failed: %d\n",
+		       rc);
+}
+
 static int mshv_irqfd_assign(struct mshv_partition *pt,
 			     struct mshv_user_irqfd *args)
 {
 	struct eventfd_ctx *eventfd = NULL, *resamplefd = NULL;
 	struct mshv_irqfd *irqfd, *tmp;
-	unsigned int events;
+	__poll_t events;
 	int ret;
 	int idx;
 
@@ -469,16 +1328,6 @@ static int mshv_irqfd_assign(struct mshv_partition *pt,
 	init_poll_funcptr(&irqfd->irqfd_polltbl, mshv_irqfd_queue_proc);
 
 	spin_lock_irq(&pt->pt_irqfds_lock);
-	if (args->flags & BIT(MSHV_IRQFD_BIT_RESAMPLE) &&
-	    !irqfd->irqfd_lapic_irq.lapic_control.level_triggered) {
-		/*
-		 * Resample Fd must be for level triggered interrupt
-		 * Otherwise return with failure
-		 */
-		spin_unlock_irq(&pt->pt_irqfds_lock);
-		ret = -EINVAL;
-		goto fail;
-	}
 	ret = 0;
 	hlist_for_each_entry(tmp, &pt->pt_irqfds_list, irqfd_hnode) {
 		if (irqfd->irqfd_eventfd_ctx != tmp->irqfd_eventfd_ctx)
@@ -491,6 +1340,21 @@ static int mshv_irqfd_assign(struct mshv_partition *pt,
 
 	idx = srcu_read_lock(&pt->pt_irq_srcu);
 	mshv_irqfd_update(pt, irqfd);
+
+#if IS_ENABLED(CONFIG_X86)
+	if (args->flags & BIT(MSHV_IRQFD_BIT_RESAMPLE) &&
+	    !irqfd->irqfd_lapic_irq.lapic_control.level_triggered) {
+		/*
+		 * Resample Fd must be for level triggered interrupt
+		 * Otherwise return with failure
+		 */
+		spin_unlock_irq(&pt->pt_irqfds_lock);
+		srcu_read_unlock(&pt->pt_irq_srcu, idx);
+		ret = -EINVAL;
+		goto fail;
+	}
+#endif
+
 	hlist_add_head(&irqfd->irqfd_hnode, &pt->pt_irqfds_list);
 	spin_unlock_irq(&pt->pt_irqfds_lock);
 
@@ -500,8 +1364,22 @@ static int mshv_irqfd_assign(struct mshv_partition *pt,
 	 */
 	events = vfs_poll(fd_file(f), &irqfd->irqfd_polltbl);
 
-	if (events & POLLIN)
-		mshv_assert_irq_slow(irqfd);
+	if (events & EPOLLIN) {
+		struct mshv_lapic_irq irq_snap;
+		bool routing_valid;
+		unsigned int seq;
+
+		do {
+			seq = read_seqcount_begin(&irqfd->irqfd_irqe_sc);
+			irq_snap = irqfd->irqfd_lapic_irq;
+			routing_valid = !irqfd->irqfd_girq_ent.guest_irq_num ||
+					irqfd->irqfd_girq_ent.girq_entry_valid;
+		} while (read_seqcount_retry(&irqfd->irqfd_irqe_sc, seq));
+
+		mshv_assert_irq_slow(irqfd, &irq_snap, routing_valid);
+	}
+
+	mshv_setup_irq_bypass(irqfd, eventfd);
 
 	srcu_read_unlock(&pt->pt_irq_srcu, idx);
 	return 0;
@@ -535,13 +1413,14 @@ static int mshv_irqfd_deassign(struct mshv_partition *pt,
 	if (IS_ERR(eventfd))
 		return PTR_ERR(eventfd);
 
+	spin_lock_irq(&pt->pt_irqfds_lock);
 	hlist_for_each_entry_safe(irqfd, n, &pt->pt_irqfds_list,
 				  irqfd_hnode) {
 		if (irqfd->irqfd_eventfd_ctx == eventfd &&
 		    irqfd->irqfd_irqnum == args->gsi)
-
 			mshv_irqfd_deactivate(irqfd);
 	}
+	spin_unlock_irq(&pt->pt_irqfds_lock);
 
 	eventfd_ctx_put(eventfd);
 
@@ -592,7 +1471,7 @@ static void mshv_irqfd_release(struct mshv_partition *pt)
 
 int mshv_irqfd_wq_init(void)
 {
-	irqfd_cleanup_wq = alloc_workqueue("mshv-irqfd-cleanup", 0, 0);
+	irqfd_cleanup_wq = alloc_workqueue("mshv-irqfd-cleanup", WQ_PERCPU, 0);
 	if (!irqfd_cleanup_wq)
 		return -ENOMEM;
 
@@ -618,7 +1497,7 @@ static void ioeventfd_release(struct mshv_ioeventfd *p, u64 partition_id)
 	if (p->iovntfd_doorbell_id > 0)
 		mshv_unregister_doorbell(partition_id, p->iovntfd_doorbell_id);
 	eventfd_ctx_put(p->iovntfd_eventfd);
-	kfree(p);
+	kfree_rcu(p, iovntfd_rcu);
 }
 
 /* MMIO writes trigger an event if the addr/val match */
@@ -727,6 +1606,14 @@ static int mshv_assign_ioeventfd(struct mshv_partition *pt,
 	ret = mshv_register_doorbell(pt->pt_id, ioeventfd_mmio_write,
 				     (void *)pt, p->iovntfd_addr,
 				     p->iovntfd_datamatch, doorbell_flags);
+
+	trace_mshv_assign_ioeventfd(pt->pt_id, p->iovntfd_addr,
+				    p->iovntfd_length,
+				    p->iovntfd_datamatch,
+				    p->iovntfd_wildcard,
+				    p->iovntfd_eventfd,
+				    ret);
+
 	if (ret < 0)
 		goto unlock_fail;
 
@@ -773,6 +1660,12 @@ static int mshv_deassign_ioeventfd(struct mshv_partition *pt,
 		if (!p->iovntfd_wildcard &&
 		    p->iovntfd_datamatch != args->datamatch)
 			continue;
+
+		trace_mshv_deassign_ioeventfd(pt->pt_id, p->iovntfd_addr,
+					      p->iovntfd_length,
+					      p->iovntfd_datamatch,
+					      p->iovntfd_wildcard,
+					      p->iovntfd_eventfd);
 
 		hlist_del_rcu(&p->iovntfd_hnode);
 		synchronize_rcu();
@@ -821,8 +1714,9 @@ void mshv_eventfd_release(struct mshv_partition *pt)
 	struct hlist_node *n;
 	struct mshv_ioeventfd *p;
 
+	mutex_lock(&pt->pt_mutex);
 	hlist_move_list(&pt->ioeventfds_list, &items);
-	synchronize_rcu();
+	mutex_unlock(&pt->pt_mutex);
 
 	hlist_for_each_entry_safe(p, n, &items, iovntfd_hnode) {
 		hlist_del(&p->iovntfd_hnode);

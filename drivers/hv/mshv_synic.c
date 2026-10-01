@@ -10,12 +10,24 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/mm.h>
+#include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/random.h>
+#include <linux/cpuhotplug.h>
+#include <linux/reboot.h>
 #include <asm/mshyperv.h>
+#include <linux/acpi.h>
 
 #include "mshv_eventfd.h"
 #include "mshv.h"
+
+static int synic_cpuhp_online;
+static struct hv_synic_pages __percpu *synic_pages;
+static int mshv_sint_vector = -1; /* hwirq for the SynIC SINTs */
+static int mshv_sint_irq = -1; /* Linux IRQ for mshv_sint_vector */
+
+static void (*mshv_trcbuf_complete_cb)(
+                                const struct hv_eventlog_message_payload *msg);
 
 static u32 synic_event_ring_get_queued_port(u32 sint_index)
 {
@@ -26,7 +38,7 @@ static u32 synic_event_ring_get_queued_port(u32 sint_index)
 	u32 message;
 	u8 tail;
 
-	spages = this_cpu_ptr(mshv_root.synic_pages);
+	spages = this_cpu_ptr(synic_pages);
 	event_ring_page = &spages->synic_event_ring_page;
 	synic_eventring_tail = (u8 **)this_cpu_ptr(hv_synic_eventring_tail);
 
@@ -333,6 +345,7 @@ mshv_intercept_isr(struct hv_message *msg)
 		goto unlock_out;
 	}
 
+#if defined(__x86_64__)
 	if (msg->header.message_type == HVMSG_X64_APIC_EOI) {
 		/*
 		 * Check if this gsi is registered in the
@@ -353,6 +366,7 @@ mshv_intercept_isr(struct hv_message *msg)
 			goto unlock_out;
 		}
 	}
+#endif
 
 	/*
 	 * We should get an opaque intercept message here for all intercept
@@ -391,9 +405,30 @@ unlock_out:
 	return handled;
 }
 
+#if IS_ENABLED(CONFIG_MSHV_DIAG)
+void register_mshv_trcbuf_complete_cb(void (*cb)(const struct hv_eventlog_message_payload *msg))
+{
+	mshv_trcbuf_complete_cb = cb;
+}
+EXPORT_SYMBOL_GPL(register_mshv_trcbuf_complete_cb);
+#endif
+
+static bool mshv_eventlog_buffer_completion_isr(struct hv_message *msg)
+{
+	if (msg->header.message_type != HVMSG_EVENTLOG_BUFFERCOMPLETE)
+		return false;
+
+	if (mshv_trcbuf_complete_cb)
+		mshv_trcbuf_complete_cb((void *)msg->u.payload);
+	else
+		pr_warn_once("%s: Handler for eventlog buffer complete ISR has not been registered\n", __func__);
+
+	return true;
+}
+
 void mshv_isr(void)
 {
-	struct hv_synic_pages *spages = this_cpu_ptr(mshv_root.synic_pages);
+	struct hv_synic_pages *spages = this_cpu_ptr(synic_pages);
 	struct hv_message_page **msg_page = &spages->synic_message_page;
 	struct hv_message *msg;
 	bool handled;
@@ -418,6 +453,9 @@ void mshv_isr(void)
 		handled = mshv_scheduler_isr(msg);
 
 	if (!handled)
+		handled = mshv_eventlog_buffer_completion_isr(msg);
+
+	if (!handled)
 		handled = mshv_async_call_completion_isr(msg);
 
 	if (!handled)
@@ -437,25 +475,21 @@ void mshv_isr(void)
 		if (msg->header.message_flags.msg_pending)
 			hv_set_non_nested_msr(HV_MSR_EOM, 0);
 
-#ifdef HYPERVISOR_CALLBACK_VECTOR
-		add_interrupt_randomness(HYPERVISOR_CALLBACK_VECTOR);
-#endif
+		add_interrupt_randomness(mshv_sint_vector);
 	} else {
 		pr_warn_once("%s: unknown message type 0x%x\n", __func__,
 			     msg->header.message_type);
 	}
 }
 
-int mshv_synic_init(unsigned int cpu)
+static int mshv_synic_cpu_init(unsigned int cpu)
 {
 	union hv_synic_simp simp;
 	union hv_synic_siefp siefp;
 	union hv_synic_sirbp sirbp;
-#ifdef HYPERVISOR_CALLBACK_VECTOR
 	union hv_synic_sint sint;
-#endif
 	union hv_synic_scontrol sctrl;
-	struct hv_synic_pages *spages = this_cpu_ptr(mshv_root.synic_pages);
+	struct hv_synic_pages *spages = this_cpu_ptr(synic_pages);
 	struct hv_message_page **msg_page = &spages->synic_message_page;
 	struct hv_synic_event_flags_page **event_flags_page =
 			&spages->synic_event_flags_page;
@@ -487,19 +521,37 @@ int mshv_synic_init(unsigned int cpu)
 
 	/* Setup the Synic's event ring page */
 	sirbp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIRBP);
+
+	if (hv_root_partition()) {
+		*event_ring_page = memremap(sirbp.base_sirbp_gpa << HV_HYP_PAGE_SHIFT,
+					    HV_HYP_PAGE_SIZE, MEMREMAP_WB);
+
+		if (!(*event_ring_page))
+			goto cleanup;
+	} else {
+		/*
+		 * On L1VH the hypervisor does not provide a SIRB page.
+		 * Allocate one and program its GPA into the MSR.
+		 */
+		*event_ring_page = (struct hv_synic_event_ring_page *)
+			get_zeroed_page(GFP_KERNEL);
+
+		if (!(*event_ring_page))
+			goto cleanup;
+
+		sirbp.base_sirbp_gpa = virt_to_phys(*event_ring_page)
+				>> HV_HYP_PAGE_SHIFT;
+	}
+
 	sirbp.sirbp_enabled = true;
-	*event_ring_page = memremap(sirbp.base_sirbp_gpa << PAGE_SHIFT,
-				    PAGE_SIZE, MEMREMAP_WB);
-
-	if (!(*event_ring_page))
-		goto cleanup;
-
 	hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
 
-#ifdef HYPERVISOR_CALLBACK_VECTOR
+	if (mshv_sint_irq != -1)
+		enable_percpu_irq(mshv_sint_irq, 0);
+
 	/* Enable intercepts */
 	sint.as_uint64 = 0;
-	sint.vector = HYPERVISOR_CALLBACK_VECTOR;
+	sint.vector = mshv_sint_vector;
 	sint.masked = false;
 	sint.auto_eoi = hv_recommend_using_aeoi();
 	hv_set_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_INTERCEPTION_SINT_INDEX,
@@ -507,13 +559,12 @@ int mshv_synic_init(unsigned int cpu)
 
 	/* Doorbell SINT */
 	sint.as_uint64 = 0;
-	sint.vector = HYPERVISOR_CALLBACK_VECTOR;
+	sint.vector = mshv_sint_vector;
 	sint.masked = false;
 	sint.as_intercept = 1;
 	sint.auto_eoi = hv_recommend_using_aeoi();
 	hv_set_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_DOORBELL_SINT_INDEX,
 			      sint.as_uint64);
-#endif
 
 	/* Enable global synic bit */
 	sctrl.as_uint64 = hv_get_non_nested_msr(HV_MSR_SCONTROL);
@@ -526,7 +577,10 @@ cleanup:
 	if (*event_ring_page) {
 		sirbp.sirbp_enabled = false;
 		hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
-		memunmap(*event_ring_page);
+		if (hv_root_partition())
+			memunmap(*event_ring_page);
+		else
+			free_page((unsigned long)*event_ring_page);
 	}
 	if (*event_flags_page) {
 		siefp.siefp_enabled = false;
@@ -542,14 +596,14 @@ cleanup:
 	return -EFAULT;
 }
 
-int mshv_synic_cleanup(unsigned int cpu)
+static int mshv_synic_cpu_exit(unsigned int cpu)
 {
 	union hv_synic_sint sint;
 	union hv_synic_simp simp;
 	union hv_synic_siefp siefp;
 	union hv_synic_sirbp sirbp;
 	union hv_synic_scontrol sctrl;
-	struct hv_synic_pages *spages = this_cpu_ptr(mshv_root.synic_pages);
+	struct hv_synic_pages *spages = this_cpu_ptr(synic_pages);
 	struct hv_message_page **msg_page = &spages->synic_message_page;
 	struct hv_synic_event_flags_page **event_flags_page =
 		&spages->synic_event_flags_page;
@@ -568,11 +622,21 @@ int mshv_synic_cleanup(unsigned int cpu)
 	hv_set_non_nested_msr(HV_MSR_SINT0 + HV_SYNIC_DOORBELL_SINT_INDEX,
 			      sint.as_uint64);
 
+	if (mshv_sint_irq != -1)
+		disable_percpu_irq(mshv_sint_irq);
+
 	/* Disable Synic's event ring page */
 	sirbp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIRBP);
 	sirbp.sirbp_enabled = false;
-	hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
-	memunmap(*event_ring_page);
+
+	if (hv_root_partition()) {
+		hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
+		memunmap(*event_ring_page);
+	} else {
+		sirbp.base_sirbp_gpa = 0;
+		hv_set_non_nested_msr(HV_MSR_SIRBP, sirbp.as_uint64);
+		free_page((unsigned long)*event_ring_page);
+	}
 
 	/* Disable Synic's event flags page */
 	siefp.as_uint64 = hv_get_non_nested_msr(HV_MSR_SIEFP);
@@ -662,4 +726,169 @@ mshv_unregister_doorbell(u64 partition_id, int doorbell_portid)
 	hv_call_delete_port(hv_current_partition_id, port_id);
 
 	mshv_portid_free(doorbell_portid);
+}
+
+static int mshv_synic_reboot_notify(struct notifier_block *nb,
+			     unsigned long code, void *unused)
+{
+	if (!hv_root_partition())
+		return 0;
+
+	cpuhp_remove_state(synic_cpuhp_online);
+	return 0;
+}
+
+static struct notifier_block mshv_synic_reboot_nb = {
+	.notifier_call = mshv_synic_reboot_notify,
+};
+
+#ifndef HYPERVISOR_CALLBACK_VECTOR
+#define MSHV_ROOT_FIXED_SINT_VECTOR 31
+
+static DEFINE_PER_CPU(long, mshv_evt);
+
+static irqreturn_t mshv_percpu_isr(int irq, void *dev_id)
+{
+	mshv_isr();
+	return IRQ_HANDLED;
+}
+
+#ifdef CONFIG_ACPI
+static int __init mshv_acpi_setup_sint_irq(void)
+{
+	return acpi_register_gsi(NULL, mshv_sint_vector, ACPI_EDGE_SENSITIVE,
+					ACPI_ACTIVE_HIGH);
+}
+
+static void mshv_acpi_cleanup_sint_irq(void)
+{
+	acpi_unregister_gsi(mshv_sint_vector);
+}
+#else
+static int __init mshv_acpi_setup_sint_irq(void)
+{
+	return -ENODEV;
+}
+
+static void mshv_acpi_cleanup_sint_irq(void)
+{
+}
+#endif
+
+static int __init mshv_sint_vector_setup(void)
+{
+	int ret;
+	struct hv_register_assoc reg = {
+		.name = HV_ARM64_REGISTER_SINT_RESERVED_INTERRUPT_ID,
+	};
+	union hv_input_vtl input_vtl = { 0 };
+
+	if (acpi_disabled)
+		return -ENODEV;
+
+	if (hv_root_partition()) {
+		/*
+		 * Use a fixed vector because the hypervisor doesn't yet support
+		 * the HV_ARM64_REGISTER_SINT_RESERVED_INTERRUPT_ID register for
+		 * root partitions. This is a temporary workaround until the
+		 * hypervisor supports this register for root partitions.
+		 */
+		mshv_sint_vector = MSHV_ROOT_FIXED_SINT_VECTOR;
+		goto setup_irq;
+	}
+
+	ret = hv_call_get_vp_registers(HV_VP_INDEX_SELF, HV_PARTITION_ID_SELF,
+				1, input_vtl, &reg);
+
+	if (ret || !reg.value.reg64)
+		return -ENODEV;
+
+	mshv_sint_vector = reg.value.reg64;
+
+setup_irq:
+	ret = mshv_acpi_setup_sint_irq();
+	if (ret < 0) {
+		pr_err("Failed to setup IRQ for MSHV SINT vector %d: %d\n",
+			mshv_sint_vector, ret);
+		goto out_fail;
+	}
+
+	mshv_sint_irq = ret;
+
+	ret = request_percpu_irq(mshv_sint_irq, mshv_percpu_isr, "MSHV",
+		&mshv_evt);
+	if (ret)
+		goto out_unregister;
+
+	return 0;
+
+out_unregister:
+	mshv_acpi_cleanup_sint_irq();
+out_fail:
+	return ret;
+}
+
+static void mshv_sint_vector_cleanup(void)
+{
+	free_percpu_irq(mshv_sint_irq, &mshv_evt);
+	mshv_acpi_cleanup_sint_irq();
+}
+#else /* !HYPERVISOR_CALLBACK_VECTOR */
+static int __init mshv_sint_vector_setup(void)
+{
+	mshv_sint_vector = HYPERVISOR_CALLBACK_VECTOR;
+	return 0;
+}
+
+static void mshv_sint_vector_cleanup(void)
+{
+}
+#endif /* HYPERVISOR_CALLBACK_VECTOR */
+
+int __init mshv_synic_init(struct device *dev)
+{
+	int ret = 0;
+
+	ret = mshv_sint_vector_setup();
+	if (ret)
+		return ret;
+
+	synic_pages = alloc_percpu(struct hv_synic_pages);
+	if (!synic_pages) {
+		dev_err(dev, "Failed to allocate percpu synic page\n");
+		ret = -ENOMEM;
+		goto sint_vector_cleanup;
+	}
+
+	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "mshv_synic",
+				mshv_synic_cpu_init,
+				mshv_synic_cpu_exit);
+	if (ret < 0) {
+		dev_err(dev, "Failed to setup cpu hotplug state: %i\n", ret);
+		goto free_synic_pages;
+	}
+
+	synic_cpuhp_online = ret;
+
+	ret = register_reboot_notifier(&mshv_synic_reboot_nb);
+	if (ret)
+		goto remove_cpuhp_state;
+
+	return 0;
+
+remove_cpuhp_state:
+	cpuhp_remove_state(synic_cpuhp_online);
+free_synic_pages:
+	free_percpu(synic_pages);
+sint_vector_cleanup:
+	mshv_sint_vector_cleanup();
+	return ret;
+}
+
+void mshv_synic_exit(void)
+{
+	unregister_reboot_notifier(&mshv_synic_reboot_nb);
+	cpuhp_remove_state(synic_cpuhp_online);
+	free_percpu(synic_pages);
+	mshv_sint_vector_cleanup();
 }

@@ -547,12 +547,19 @@ void __init hyperv_init(void)
 		memunmap(src);
 
 		hv_remap_tsc_clocksource();
+		hv_sleep_notifiers_register();
+
+		/* mark ram reserved for hypervisor as owned by hypervisor */
+		hv_mark_resources();
 	} else {
 		hypercall_msr.guest_physical_address = vmalloc_to_pfn(hv_hypercall_pg);
 		wrmsrq(HV_X64_MSR_HYPERCALL, hypercall_msr.as_uint64);
 	}
 
 	hv_set_hypercall_pg(hv_hypercall_pg);
+
+	if (hv_root_partition())        /* after set hypercall pg */
+		hv_root_crash_init();
 
 skip_hypercall_pg_init:
 	/*

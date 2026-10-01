@@ -18,6 +18,7 @@
 #include <asm/mshyperv.h>
 
 static bool hyperv_initialized;
+static bool hyperv_present;
 
 int hv_get_hypervisor_version(union hv_hypervisor_version_info *info)
 {
@@ -70,20 +71,22 @@ static bool __init hyperv_detect_via_smccc(void)
 	return arm_smccc_hypervisor_has_uuid(&hyperv_uuid);
 }
 
-static int __init hyperv_init(void)
+/*
+ * Detect Hyper-V and determine partition type that other early code
+ * (e.g. arch_timer_acpi_init()) depends on. The remainder of Hyper-V setup
+ * runs later in hyperv_init().
+ */
+void __init hyperv_early_init(void)
 {
 	struct hv_get_vp_registers_output	result;
 	u64	guest_id;
-	int	ret;
 
 	/*
 	 * Allow for a kernel built with CONFIG_HYPERV to be running in
-	 * a non-Hyper-V environment.
-	 *
-	 * In such cases, do nothing and return success.
+	 * a non-Hyper-V environment. In such cases, do nothing.
 	 */
 	if (!hyperv_detect_via_acpi() && !hyperv_detect_via_smccc())
-		return 0;
+		return;
 
 	/* Setup the guest ID */
 	guest_id = hv_generate_guest_id(LINUX_VERSION_CODE);
@@ -103,6 +106,27 @@ static int __init hyperv_init(void)
 		ms_hyperv.misc_features);
 
 	hv_identify_partition_type();
+
+	/*
+	 * Must run before irqchip_init() so that the GICv3 driver knows to
+	 * set up the LPI tables even though the hypervisor exposes no ITS.
+	 */
+	hv_pci_msi_early_init();
+
+	hyperv_present = true;
+}
+
+int __init hyperv_init(void)
+{
+	int	ret;
+
+	if (!hyperv_present)
+		return 0;
+
+	if (hv_root_partition()) {
+		hv_dump_mshv_memory();
+		hv_mark_resources();
+	}
 
 	ret = hv_common_init();
 	if (ret)
@@ -127,7 +151,53 @@ static int __init hyperv_init(void)
 	return 0;
 }
 
-early_initcall(hyperv_init);
+void __init hv_smp_prepare_cpus(unsigned int max_cpus)
+{
+	int cpu, ccpu = smp_processor_id();
+
+	if (!hv_root_partition())
+		return;
+
+	for_each_present_cpu(cpu) {
+		if (cpu == ccpu)
+			continue;
+
+		hv_call_add_logical_proc(early_cpu_to_node(cpu), cpu,
+				cpu_physical_id(cpu));
+	}
+
+	hv_call_notify_all_processors_started();
+
+	for_each_present_cpu(cpu) {
+		if (cpu == ccpu)
+			continue;
+
+		hv_call_create_vp(NUMA_NO_NODE, hv_current_partition_id, cpu,
+				cpu);
+	}
+}
+
+int hv_cpu_on(unsigned int cpu, phys_addr_t entry_point)
+{
+	struct hv_input_start_vp *input;
+	u64 status;
+
+	input = *this_cpu_ptr(hyperv_pcpu_input_arg);
+	memset(input, 0, sizeof(*input));
+
+	input->partition_id = hv_current_partition_id;
+	input->vp_index = cpu;
+	input->target_vtl.target_vtl = 0;
+	input->vp_context.pc = entry_point;
+
+	status = hv_do_hypercall(HVCALL_START_VP, input, NULL);
+
+	if (!hv_result_success(status))
+		pr_err("Failed to start VP %d, status: %s\n", cpu,
+		       hv_result_to_string(status));
+
+	return hv_result_to_errno(status);
+}
 
 bool hv_is_hyperv_initialized(void)
 {

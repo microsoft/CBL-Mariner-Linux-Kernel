@@ -51,6 +51,7 @@ extern union hv_ghcb * __percpu *hv_ghcb_pg;
 
 bool hv_isolation_type_snp(void);
 bool hv_isolation_type_tdx(void);
+bool hv_isolation_hw_cvm(void);
 
 #ifdef CONFIG_X86_64
 DECLARE_STATIC_CALL(hv_hypercall, hv_std_hypercall);
@@ -118,9 +119,9 @@ static inline u64 _hv_do_fast_hypercall8(u64 control, u64 input1)
 #endif
 }
 
-static inline u64 hv_do_fast_hypercall8(u16 code, u64 input1)
+static inline u64 hv_do_fast_hypercall8(u64 code, u64 input1)
 {
-	u64 control = (u64)code | HV_HYPERCALL_FAST_BIT;
+	u64 control = code | HV_HYPERCALL_FAST_BIT;
 
 	return _hv_do_fast_hypercall8(control, input1);
 }
@@ -148,7 +149,7 @@ static inline u64 _hv_do_fast_hypercall16(u64 control, u64 input1, u64 input2)
 #endif
 }
 
-static inline u64 hv_do_fast_hypercall16(u16 code, u64 input1, u64 input2)
+static inline u64 hv_do_fast_hypercall16(u64 code, u64 input1, u64 input2)
 {
 	u64 control = (u64)code | HV_HYPERCALL_FAST_BIT;
 
@@ -176,6 +177,8 @@ int hyperv_flush_guest_mapping_range(u64 as,
 int hyperv_fill_flush_guest_mapping_list(
 		struct hv_guest_mapping_flush_list *flush,
 		u64 start_gfn, u64 end_gfn);
+void hv_sleep_notifiers_register(void);
+void hv_machine_power_off(void);
 
 #ifdef CONFIG_X86_64
 void hv_apic_init(void);
@@ -189,6 +192,8 @@ struct irq_domain *hv_create_pci_msi_domain(void);
 
 int hv_map_msi_interrupt(struct irq_data *data,
 			 struct hv_interrupt_entry *out_entry);
+int hv_unmap_msi_interrupt(struct pci_dev *dev,
+			   struct hv_interrupt_entry *hvirqe);
 int hv_map_ioapic_interrupt(int ioapic_id, bool level, int vcpu, int vector,
 		struct hv_interrupt_entry *entry);
 int hv_unmap_ioapic_interrupt(int ioapic_id, struct hv_interrupt_entry *entry);
@@ -236,6 +241,22 @@ static __always_inline u64 hv_raw_get_msr(unsigned int reg)
 	return native_rdmsrq(reg);
 }
 int hv_apicid_to_vp_index(u32 apic_id);
+
+#if IS_ENABLED(CONFIG_HYPERV_IOMMU)
+u64 hv_build_devid_type_pci(struct pci_dev *pdev);
+#else
+static inline u64 hv_build_devid_type_pci(struct pci_dev *pdev) { return 0; }
+#endif /* IS_ENABLED(CONFIG_HYPERV_IOMMU) */
+
+#if IS_ENABLED(CONFIG_MSHV_ROOT) && IS_ENABLED(CONFIG_CRASH_DUMP)
+extern bool hv_crash_enabled;
+void hv_root_crash_init(void);
+void hv_crash_asm32(void);
+void hv_crash_asm64(void);
+void hv_crash_asm_end(void);
+#else	/* CONFIG_MSHV_ROOT && CONFIG_CRASH_DUMP */
+static inline void hv_root_crash_init(void) {}
+#endif	/* CONFIG_MSHV_ROOT && CONFIG_CRASH_DUMP */
 
 #else /* CONFIG_HYPERV */
 static inline void hyperv_init(void) {}

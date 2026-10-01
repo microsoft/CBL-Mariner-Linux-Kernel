@@ -8,39 +8,46 @@
 #include <linux/types.h>
 #include <linux/bits.h>
 
+typedef u64 hv_nano100_time_t;	/* HV_NANO100_TIME */
+
 struct hv_u128 {
 	u64 low_part;
 	u64 high_part;
 } __packed;
 
 /* NOTE: when adding below, update hv_result_to_string() */
-#define HV_STATUS_SUCCESS			    0x0
-#define HV_STATUS_INVALID_HYPERCALL_CODE	    0x2
-#define HV_STATUS_INVALID_HYPERCALL_INPUT	    0x3
-#define HV_STATUS_INVALID_ALIGNMENT		    0x4
-#define HV_STATUS_INVALID_PARAMETER		    0x5
-#define HV_STATUS_ACCESS_DENIED			    0x6
-#define HV_STATUS_INVALID_PARTITION_STATE	    0x7
-#define HV_STATUS_OPERATION_DENIED		    0x8
-#define HV_STATUS_UNKNOWN_PROPERTY		    0x9
-#define HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE	    0xA
-#define HV_STATUS_INSUFFICIENT_MEMORY		    0xB
-#define HV_STATUS_INVALID_PARTITION_ID		    0xD
-#define HV_STATUS_INVALID_VP_INDEX		    0xE
-#define HV_STATUS_NOT_FOUND			    0x10
-#define HV_STATUS_INVALID_PORT_ID		    0x11
-#define HV_STATUS_INVALID_CONNECTION_ID		    0x12
-#define HV_STATUS_INSUFFICIENT_BUFFERS		    0x13
-#define HV_STATUS_NOT_ACKNOWLEDGED		    0x14
-#define HV_STATUS_INVALID_VP_STATE		    0x15
-#define HV_STATUS_NO_RESOURCES			    0x1D
-#define HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED   0x20
-#define HV_STATUS_INVALID_LP_INDEX		    0x41
-#define HV_STATUS_INVALID_REGISTER_VALUE	    0x50
-#define HV_STATUS_OPERATION_FAILED		    0x71
-#define HV_STATUS_TIME_OUT			    0x78
-#define HV_STATUS_CALL_PENDING			    0x79
-#define HV_STATUS_VTL_ALREADY_ENABLED		    0x86
+#define HV_STATUS_SUCCESS				0x0
+#define HV_STATUS_INVALID_HYPERCALL_CODE		0x2
+#define HV_STATUS_INVALID_HYPERCALL_INPUT		0x3
+#define HV_STATUS_INVALID_ALIGNMENT			0x4
+#define HV_STATUS_INVALID_PARAMETER			0x5
+#define HV_STATUS_ACCESS_DENIED				0x6
+#define HV_STATUS_INVALID_PARTITION_STATE		0x7
+#define HV_STATUS_OPERATION_DENIED			0x8
+#define HV_STATUS_UNKNOWN_PROPERTY			0x9
+#define HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE		0xA
+#define HV_STATUS_INSUFFICIENT_MEMORY			0xB
+#define HV_STATUS_INVALID_PARTITION_ID			0xD
+#define HV_STATUS_INVALID_VP_INDEX			0xE
+#define HV_STATUS_NOT_FOUND				0x10
+#define HV_STATUS_INVALID_PORT_ID			0x11
+#define HV_STATUS_INVALID_CONNECTION_ID			0x12
+#define HV_STATUS_INSUFFICIENT_BUFFERS			0x13
+#define HV_STATUS_NOT_ACKNOWLEDGED			0x14
+#define HV_STATUS_INVALID_VP_STATE			0x15
+#define HV_STATUS_OBJECT_IN_USE				0x19
+#define HV_STATUS_NO_RESOURCES				0x1D
+#define HV_STATUS_FEATURE_UNAVAILABLE			0x1E
+#define HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED	0x20
+#define HV_STATUS_INVALID_LP_INDEX			0x41
+#define HV_STATUS_INVALID_REGISTER_VALUE		0x50
+#define HV_STATUS_OPERATION_FAILED			0x71
+#define HV_STATUS_INSUFFICIENT_ROOT_MEMORY		0x73
+#define HV_STATUS_INSUFFICIENT_CONTIGUOUS_MEMORY	0x75
+#define HV_STATUS_TIMEOUT				0x78
+#define HV_STATUS_CALL_PENDING				0x79
+#define HV_STATUS_INSUFFICIENT_CONTIGUOUS_ROOT_MEMORY	0x83
+#define HV_STATUS_VTL_ALREADY_ENABLED			0x86
 
 /*
  * The Hyper-V TimeRefCount register and the TSC
@@ -55,6 +62,8 @@ struct hv_u128 {
 
 #define HV_PARTITION_ID_INVALID		((u64)0)
 #define HV_PARTITION_ID_SELF		((u64)-1)
+
+#define HV_MAX_VPS    256               /* HV_MAXIMUM_PROCESSORS */
 
 /* Hyper-V specific model specific registers (MSRs) */
 
@@ -322,6 +331,9 @@ union hv_hypervisor_version_info {
 /* stimer Direct Mode is available */
 #define HV_STIMER_DIRECT_MODE_AVAILABLE			BIT(19)
 
+#define HV_DEVICE_DOMAIN_AVAILABLE			BIT(24)
+#define HV_S1_DEVICE_DOMAIN_AVAILABLE			BIT(25)
+
 /*
  * Implementation recommendations. Indicates which behaviors the hypervisor
  * recommends the OS implement for optimal performance.
@@ -340,6 +352,8 @@ union hv_hypervisor_version_info {
 #define HV_X64_HYPERV_NESTED				BIT(12)
 #define HV_X64_ENLIGHTENED_VMCS_RECOMMENDED		BIT(14)
 #define HV_X64_USE_MMIO_HYPERCALLS			BIT(21)
+#define HV_X64_USE_M MIO_HYPERCALLS			BIT(21)
+#define HV_MAP_PARTITION_EVENT_LOG_BUFFER		BIT(26)
 
 /*
  * CPU management features identification.
@@ -406,6 +420,10 @@ union hv_x64_msr_hypercall_contents {
 #if defined(CONFIG_ARM64)
 #define HV_FEATURE_GUEST_CRASH_MSR_AVAILABLE	BIT(8)
 #define HV_STIMER_DIRECT_MODE_AVAILABLE		BIT(13)
+
+/* HV_ARM64_ENLIGHTENMENT_INFORMATION */
+#define HV_MAP_PARTITION_EVENT_LOG_BUFFER		BIT(26)
+
 #endif /* CONFIG_ARM64 */
 
 #if defined(CONFIG_X86)
@@ -431,6 +449,7 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 /* HV_CALL_CODE */
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_SPACE		0x0002
 #define HVCALL_FLUSH_VIRTUAL_ADDRESS_LIST		0x0003
+#define HVCALL_GET_LOGICAL_PROCESSOR_RUN_TIME		0x0004
 #define HVCALL_NOTIFY_LONG_SPIN_WAIT			0x0008
 #define HVCALL_SEND_IPI					0x000b
 #define HVCALL_ENABLE_VP_VTL				0x000f
@@ -454,34 +473,59 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_GET_VP_REGISTERS				0x0050
 #define HVCALL_SET_VP_REGISTERS				0x0051
 #define HVCALL_TRANSLATE_VIRTUAL_ADDRESS		0x0052
+#define HVCALL_READ_GPA				0x0053
+#define HVCALL_WRITE_GPA				0x0054
 #define HVCALL_CLEAR_VIRTUAL_INTERRUPT			0x0056
 #define HVCALL_DELETE_PORT				0x0058
 #define HVCALL_DISCONNECT_PORT				0x005b
 #define HVCALL_POST_MESSAGE				0x005c
 #define HVCALL_SIGNAL_EVENT				0x005d
+#define HVCALL_INITIALIZE_EVENT_LOG_BUFFER_GROUP	0x0060
+#define HVCALL_FINALIZE_EVENT_LOG_BUFFER_GROUP		0x0061
+#define HVCALL_CREATE_EVENT_LOG_BUFFER			0x0062
+#define HVCALL_DELETE_EVENT_LOG_BUFFER			0x0063
+#define HVCALL_MAP_EVENT_LOG_BUFFER			0x0064
+#define HVCALL_UNMAP_EVENT_LOG_BUFFER			0x0065
+#define HVCALL_SET_EVENT_LOG_GROUP_SOURCES		0x0066
+#define HVCALL_RELEASE_EVENT_LOG_BUFFER			0x0067
+#define HVCALL_FLUSH_EVENT_LOG_BUFFER			0x0068
 #define HVCALL_POST_DEBUG_DATA				0x0069
 #define HVCALL_RETRIEVE_DEBUG_DATA			0x006a
 #define HVCALL_RESET_DEBUG_SESSION			0x006b
 #define HVCALL_MAP_STATS_PAGE				0x006c
 #define HVCALL_UNMAP_STATS_PAGE				0x006d
+#define HVCALL_SET_SYSTEM_PROPERTY			0x006f
 #define HVCALL_ADD_LOGICAL_PROCESSOR			0x0076
 #define HVCALL_GET_SYSTEM_PROPERTY			0x007b
 #define HVCALL_MAP_DEVICE_INTERRUPT			0x007c
 #define HVCALL_UNMAP_DEVICE_INTERRUPT			0x007d
 #define HVCALL_RETARGET_INTERRUPT			0x007e
+#define HVCALL_ATTACH_DEVICE				0x0082
+#define HVCALL_DETACH_DEVICE				0x0083
+#define HVCALL_ENTER_SLEEP_STATE			0x0084
+#define HVCALL_NOTIFY_PARTITION_EVENT			0x0087
 #define HVCALL_NOTIFY_PORT_RING_EMPTY			0x008b
 #define HVCALL_REGISTER_INTERCEPT_RESULT		0x0091
 #define HVCALL_ASSERT_VIRTUAL_INTERRUPT			0x0094
 #define HVCALL_CREATE_PORT				0x0095
 #define HVCALL_CONNECT_PORT				0x0096
 #define HVCALL_START_VP					0x0099
-#define HVCALL_GET_VP_INDEX_FROM_APIC_ID			0x009a
+#define HVCALL_GET_VP_INDEX_FROM_APIC_ID		0x009a
+#define HVCALL_TRANSLATE_VIRTUAL_ADDRESS_EX		0x00ac
 #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_SPACE	0x00af
 #define HVCALL_FLUSH_GUEST_PHYSICAL_ADDRESS_LIST	0x00b0
+#define HVCALL_CREATE_DEVICE_DOMAIN			0x00b1
+#define HVCALL_ATTACH_DEVICE_DOMAIN			0x00b2
+#define HVCALL_MAP_DEVICE_GPA_PAGES			0x00b3
+#define HVCALL_UNMAP_DEVICE_GPA_PAGES			0x00b4
+#define HVCALL_PRECOMMIT_GPA_PAGES			0x00be
 #define HVCALL_SIGNAL_EVENT_DIRECT			0x00c0
 #define HVCALL_POST_MESSAGE_DIRECT			0x00c1
 #define HVCALL_DISPATCH_VP				0x00c2
+#define HVCALL_DETACH_DEVICE_DOMAIN			0x00c4
+#define HVCALL_DELETE_DEVICE_DOMAIN			0x00c5
 #define HVCALL_GET_GPA_PAGES_ACCESS_STATES		0x00c9
+#define HVCALL_INVOKE_TEST_FRAMEWORK			0x00cb
 #define HVCALL_ACQUIRE_SPARSE_SPA_PAGE_HOST_ACCESS	0x00d7
 #define HVCALL_RELEASE_SPARSE_SPA_PAGE_HOST_ACCESS	0x00d8
 #define HVCALL_MODIFY_SPARSE_GPA_PAGE_HOST_VISIBILITY	0x00db
@@ -489,9 +533,18 @@ union hv_vp_assist_msr_contents {	 /* HV_REGISTER_VP_ASSIST_PAGE */
 #define HVCALL_UNMAP_VP_STATE_PAGE			0x00e2
 #define HVCALL_GET_VP_STATE				0x00e3
 #define HVCALL_SET_VP_STATE				0x00e4
+#define HVCALL_GET_VPSET_FROM_MDA                       0x00e5
+#define HVCALL_IMPORT_ISOLATED_PAGES			0x00ef
+#define HVCALL_COMPLETE_ISOLATED_IMPORT			0x00f1
+#define HVCALL_ISSUE_SNP_PSP_GUEST_REQUEST		0x00f2
 #define HVCALL_GET_VP_CPUID_VALUES			0x00f4
+#define HVCALL_LOG_HYPERVISOR_SYSTEM_CONFIG		0x00f8
+#define HVCALL_GET_PARTITION_PROPERTY_EX		0x0101
 #define HVCALL_MMIO_READ				0x0106
 #define HVCALL_MMIO_WRITE				0x0107
+#define HVCALL_DISABLE_HYP_EX				0x010f
+#define HVCALL_MAP_PARTITION_EVENT_LOG_BUFFER		0x0116
+#define HVCALL_MAP_STATS_PAGE2				0x0131
 
 /* HV_HYPERCALL_INPUT */
 #define HV_HYPERCALL_RESULT_MASK	GENMASK_ULL(15, 0)
@@ -571,9 +624,12 @@ struct hv_tlb_flush {	 /* HV_INPUT_FLUSH_VIRTUAL_ADDRESS_LIST */
 struct hv_tlb_flush_ex {
 	u64 address_space;
 	u64 flags;
-	struct hv_vpset hv_vp_set;
-	u64 gva_list[];
+	__TRAILING_OVERLAP(struct hv_vpset, hv_vp_set, bank_contents, __packed,
+		u64 gva_list[];
+	);
 } __packed;
+static_assert(offsetof(struct hv_tlb_flush_ex, hv_vp_set.bank_contents) ==
+	      offsetof(struct hv_tlb_flush_ex, gva_list));
 
 struct ms_hyperv_tsc_page {	 /* HV_REFERENCE_TSC_PAGE */
 	volatile u32 tsc_sequence;
@@ -604,7 +660,7 @@ struct ms_hyperv_tsc_page {	 /* HV_REFERENCE_TSC_PAGE */
 #define HV_SYNIC_FIRST_UNUSED_SINT_INDEX 0x00000005
 
 /* mshv assigned SINT for doorbell */
-#define HV_SYNIC_DOORBELL_SINT_INDEX     HV_SYNIC_FIRST_UNUSED_SINT_INDEX
+#define HV_SYNIC_DOORBELL_SINT_INDEX	 HV_SYNIC_FIRST_UNUSED_SINT_INDEX
 
 enum hv_interrupt_type {
 	HV_X64_INTERRUPT_TYPE_FIXED		= 0x0000,
@@ -732,7 +788,7 @@ enum hv_message_type {
 	/* Root scheduler messages */
 	HVMSG_SCHEDULER_VP_SIGNAL_BITSET	= 0x80000100,
 	HVMSG_SCHEDULER_VP_SIGNAL_PAIR		= 0x80000101,
-
+#if defined(CONFIG_X86_64)
 	/* Platform-specific processor intercept messages. */
 	HVMSG_X64_IO_PORT_INTERCEPT		= 0x80010000,
 	HVMSG_X64_MSR_INTERCEPT			= 0x80010001,
@@ -744,6 +800,20 @@ enum hv_message_type {
 	HVMSG_X64_HALT				= 0x80010007,
 	HVMSG_X64_INTERRUPTION_DELIVERABLE	= 0x80010008,
 	HVMSG_X64_SIPI_INTERCEPT		= 0x80010009,
+	HVMSG_X64_RDTSC_INTERCEPT		= 0x8001000A,
+	HVMSG_X64_APIC_SMI_INTERCEPT		= 0x8001000B,
+	HVMSG_X64_APIC_INIT_SIPI_INTERCEPT	= 0x8001000D,
+	HVMSG_X64_APIC_WRITE_INTERCEPT		= 0x8001000E,
+	HVMSG_X64_PROXY_INTERRUPT_INTERCEPT	= 0x8001000F,
+	HVMSG_X64_ISOLATION_CTRL_REG_INTERCEPT	= 0x80010010,
+	HVMSG_X64_SNP_GUEST_REQUEST_INTERCEPT	= 0x80010011,
+	HVMSG_X64_EXCEPTION_TRAP_INTERCEPT	= 0x80010012,
+	HVMSG_X64_SEV_VMGEXIT_INTERCEPT		= 0x80010013,
+#endif /* CONFIG_X86_64 */
+#if defined(CONFIG_ARM64)
+	/* Platform-specific processor intercept messages. */
+	HVMSG_ARM64_RESET_INTERCEPT = 0x8001000C,
+#endif /* CONFIG_ARM64 */
 };
 
 /* Define the format of the SIMP register */
@@ -841,6 +911,17 @@ union hv_input_vtl {
 } __packed;
 
 struct hv_init_vp_context {
+#if defined(CONFIG_ARM64)
+	u64 pc;
+	u64 sp_elh;
+	u64 sctlr_el1;
+	u64 mair_el1;
+	u64 tcr_el1;
+	u64 vbar_el1;
+	u64 ttbr0_el1;
+	u64 ttbr1_el1;
+	u64 x18;
+#else /* CONFIG_ARM64 */
 	u64 rip;
 	u64 rsp;
 	u64 rflags;
@@ -862,9 +943,10 @@ struct hv_init_vp_context {
 	u64 cr3;
 	u64 cr4;
 	u64 msr_cr_pat;
+#endif /* !CONFIG_ARM64 */
 } __packed;
 
-struct hv_enable_vp_vtl {
+struct hv_input_start_vp { /* HV_INPUT_START_VIRTUAL_PROCESSOR */
 	u64				partition_id;
 	u32				vp_index;
 	union hv_input_vtl		target_vtl;
@@ -916,6 +998,7 @@ enum hv_register_name {
 	HV_REGISTER_EXPLICIT_SUSPEND				= 0x00000000,
 	HV_REGISTER_INTERCEPT_SUSPEND				= 0x00000001,
 	HV_REGISTER_DISPATCH_SUSPEND				= 0x00000003,
+	HV_REGISTER_INTERNAL_ACTIVITY_STATE			= 0x00000004,
 
 	/* Version - 128-bit result same as CPUID 0x40000002 */
 	HV_REGISTER_HYPERVISOR_VERSION				= 0x00000100,
@@ -1002,6 +1085,21 @@ enum hv_register_name {
 
 	/* VSM */
 	HV_REGISTER_VSM_VP_STATUS				= 0x000D0003,
+
+	/* AMD SEV-SNP configuration register */
+	HV_X64_REGISTER_SEV_CONTROL				= 0x00090040,
+
+	/* X64 Intermediate Control Registers */
+	HV_X64_REGISTER_INTERMEDIATE_CR0			= 0x00041000,
+	HV_X64_REGISTER_INTERMEDIATE_CR3			= 0x00041002,
+	HV_X64_REGISTER_INTERMEDIATE_CR4			= 0x00041003,
+	HV_X64_REGISTER_INTERMEDIATE_CR8			= 0x00041004,
+
+	/* Intercept Registers */
+	HV_X64_REGISTER_DELIVERABILITY_NOTIFICATIONS		= 0x00010006,
+#if defined(CONFIG_ARM64)
+	HV_ARM64_REGISTER_SINT_RESERVED_INTERRUPT_ID		= 0x00070001,
+#endif
 };
 
 /*
@@ -1122,6 +1220,16 @@ union hv_arm64_pending_synthetic_exception_event {
 	} __packed;
 };
 
+union hv_internal_activity_register {
+	u64 as_uint64;
+	struct {
+		u64 startup_suspend : 1;
+		u64 halt_suspend : 1;
+		u64 idle_suspend : 1;
+		u64 rsvd_z : 61;
+	} __packed;
+};
+
 union hv_x64_interrupt_state_register {
 	u64 as_uint64;
 	struct {
@@ -1145,6 +1253,19 @@ union hv_x64_pending_interruption_register {
 	} __packed;
 };
 
+#ifdef CONFIG_X86
+#define HV_SUPPORTS_SEV_SNP_GUESTS
+
+union hv_x64_register_sev_control {
+	u64 as_uint64;
+	struct {
+		u64 enable_encrypted_state : 1;
+		u64 reserved_z : 11;
+		u64 vmsa_gpa_page_number : 52;
+	} __packed;
+};
+#endif
+
 union hv_register_value {
 	struct hv_u128 reg128;
 	u64 reg64;
@@ -1157,6 +1278,7 @@ union hv_register_value {
 	union hv_explicit_suspend_register explicit_suspend;
 	union hv_intercept_suspend_register intercept_suspend;
 	union hv_dispatch_suspend_register dispatch_suspend;
+	union hv_internal_activity_register internal_activity;
 #ifdef CONFIG_ARM64
 	union hv_arm64_interrupt_state_register interrupt_state;
 	union hv_arm64_pending_interruption_register pending_interruption;
@@ -1164,6 +1286,7 @@ union hv_register_value {
 #ifdef CONFIG_X86
 	union hv_x64_interrupt_state_register interrupt_state;
 	union hv_x64_pending_interruption_register pending_interruption;
+	union hv_x64_register_sev_control sev_control;
 #endif
 	union hv_arm64_pending_synthetic_exception_event pending_synthetic_exception_event;
 };
@@ -1392,6 +1515,13 @@ union hv_intercept_parameters {
 	/* N.B. Other intercept types do not have any parameters. */
 };
 
+struct hv_input_install_intercept {
+	u64 partition_id;
+	u32 access_type;	/* mask */
+	u32 intercept_type;	/* hv_intercept_type */
+	union hv_intercept_parameters intercept_parameter;
+} __packed;
+
 /* Data structures for HVCALL_MMIO_READ and HVCALL_MMIO_WRITE */
 #define HV_HYPERCALL_MMIO_MAX_DATA_LENGTH 64
 
@@ -1411,5 +1541,17 @@ struct hv_mmio_write_input {
 	u32 reserved;
 	u8 data[HV_HYPERCALL_MMIO_MAX_DATA_LENGTH];
 } __packed;
+
+enum hv_intercept_access_type {
+	HV_INTERCEPT_ACCESS_READ	= 0,
+	HV_INTERCEPT_ACCESS_WRITE	= 1,
+	HV_INTERCEPT_ACCESS_EXECUTE	= 2
+};
+
+enum hv_eventlog_type { /* HV_EVENTLOG_TYPE */
+	HV_EVENT_LOG_TYPE_GLOBAL_SYSTEM_EVENTS	= 0x00000000,
+	HV_EVENT_LOG_TYPE_LOCAL_DIAGNOSTICS	= 0x00000001,
+	HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS	= 0x00000002,
+};
 
 #endif /* _HV_HVGDK_MINI_H */

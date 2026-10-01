@@ -17,6 +17,8 @@
 #include <linux/irq.h>
 #include <linux/kexec.h>
 #include <linux/random.h>
+#include <linux/memblock.h>
+#include <linux/crash_dump.h>
 #include <asm/processor.h>
 #include <asm/hypervisor.h>
 #include <hyperv/hvhdk.h>
@@ -33,10 +35,12 @@
 #include <asm/msr.h>
 #include <asm/numa.h>
 #include <asm/svm.h>
+#include <asm/e820/api.h>
 
 /* Is Linux running on nested Microsoft Hypervisor */
 bool hv_nested;
 struct ms_hyperv_info ms_hyperv;
+bool mshv_loader_new = true;
 
 #if IS_ENABLED(CONFIG_HYPERV)
 static inline unsigned int hv_get_nested_msr(unsigned int reg)
@@ -118,6 +122,20 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_hyperv_callback)
 	if (mshv_handler)
 		mshv_handler();
 
+	if (vmbus_handler)
+		vmbus_handler();
+
+	if (ms_hyperv.hints & HV_DEPRECATING_AEOI_RECOMMENDED)
+		apic_eoi();
+
+	set_irq_regs(old_regs);
+}
+
+DEFINE_IDTENTRY_SYSVEC(sysvec_hyperv_nested_vmbus_intr)
+{
+	struct pt_regs *old_regs = set_irq_regs(regs);
+
+	inc_irq_stat(irq_hv_callback_count);
 	if (vmbus_handler)
 		vmbus_handler();
 
@@ -215,7 +233,7 @@ static void hv_machine_shutdown(void)
 #endif /* CONFIG_KEXEC_CORE */
 
 #ifdef CONFIG_CRASH_DUMP
-static void hv_machine_crash_shutdown(struct pt_regs *regs)
+static void hv_guest_crash_shutdown(struct pt_regs *regs)
 {
 	if (hv_crash_handler)
 		hv_crash_handler(regs);
@@ -366,13 +384,50 @@ static void __init hv_smp_prepare_boot_cpu(void)
 #endif
 }
 
+static int apicids[NR_CPUS] __initdata;
+
+/* find the next smallest apicid in the unsorted array of size NR_CPUS */
+static int __init next_smallest_apicid(int apicids[], int curr)
+{
+	int i, found = INT_MAX;
+
+	for (i = 0; i < NR_CPUS; i++) {
+		if (apicids[i] <= curr)
+			continue;
+
+		if (apicids[i] < found)
+			found = apicids[i];
+	}
+
+	return found;
+}
+
+/*  
+ * On a 4 core, single node, with HT, linux numbers cpus as: 
+ *     [0]c0 ht0   [1]c1 ht0   [2]c2 ht0   [3]c3 ht0
+ *     [4]c0 ht1   [5]c1 ht1   [6]c2 ht1   [7]c3 ht1
+ *
+ * On a 4 core, two nodes, with HT, linux numbers cpus as: 
+ *     [0]n0 c0 h0    [1]n1 c0 ht0  [2]n0 c3 ht0 ......
+ *
+ * MSHV wants vcpus/vpidxs: [0]c0 ht0, [1]c0 ht1, [2]c1 ht0, [3]c1 ht1 ....
+ * for the default core scheduler. classic scheduler doesn't care.
+ * The requirement means linux cpu numbers and vcpu index won't
+ * match. The driver uses hv_vp_index[] for that indirection.
+ *
+ * Other requirements are:
+ *  - LPs must be added in only lpindex order, with any lapic ids for any lp
+ *  - VPs can be created in any vp index order as long as the HT siblings 
+ *    match.
+ *
+ * To achieve above, we add LPs in order of apic ids.
+ */
 static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 {
 #ifdef CONFIG_X86_64
-	int i;
-	int ret;
+	s16 node;
+	int i, lpidx, ret, ccpu = raw_smp_processor_id();
 #endif
-
 	native_smp_prepare_cpus(max_cpus);
 
 	/*
@@ -385,22 +440,63 @@ static void __init hv_smp_prepare_cpus(unsigned int max_cpus)
 	}
 
 #ifdef CONFIG_X86_64
-	for_each_present_cpu(i) {
-		if (i == 0)
-			continue;
-		ret = hv_call_add_logical_proc(numa_cpu_node(i), i, cpu_physical_id(i));
-		BUG_ON(ret);
-	}
+	/*
+	 * If AP LPs already exist, we are running in a kexec'd kernel and
+	 * the VPs were created by the previous kernel. Skip readding them;
+	 * doing so would return HV_STATUS_INVALID_PARAMETER and BUG().
+	 */
+	if (hv_lp_exists(1))
+		return;
+
+	BUG_ON(ccpu != 0);
+
+	for (i = 0; i < NR_CPUS; i++)
+		apicids[i] = INT_MAX;
 
 	for_each_present_cpu(i) {
 		if (i == 0)
 			continue;
-		ret = hv_call_create_vp(numa_cpu_node(i), hv_current_partition_id, i, i);
-		BUG_ON(ret);
+
+		BUG_ON(cpu_physical_id(i) == INT_MAX);
+		apicids[i] = cpu_physical_id(i);
 	}
-#endif
+
+	i = next_smallest_apicid(apicids, 0);
+	for (lpidx = 1; i != INT_MAX; lpidx++) {
+		node = __apicid_to_node[i];
+		if (node == NUMA_NO_NODE)
+			node = 0;
+
+		/* params: node num, lp index, apic id */
+		ret = hv_call_add_logical_proc(node, lpidx, i);
+		BUG_ON(ret);
+
+		i = next_smallest_apicid(apicids, i);
+	}
+
+	/*
+	 * Notify MSHV after all logical processors have been added to the
+	 * root partition. Hyper-V exposes SEV-SNP guest launch support only
+	 * after this event.
+	 */
+	ret = hv_call_notify_all_processors_started();
+	WARN_ON(ret);
+
+	lpidx = 1;	   /* skip BSP cpu 0 */
+	for_each_present_cpu(i) {
+		if (i == 0)
+			continue;
+
+		/* params: node num, domid, vp index, lp index */
+		ret = hv_call_create_vp(numa_cpu_node(i), 
+					hv_current_partition_id, lpidx, lpidx);
+		BUG_ON(ret);
+		lpidx++;
+	}
+
+#endif /* #ifdef CONFIG_X86_64 */
 }
-#endif
+#endif /* #if defined(CONFIG_SMP) && IS_ENABLED(CONFIG_HYPERV) */
 
 /*
  * When a fully enlightened TDX VM runs on Hyper-V, the firmware sets the
@@ -438,6 +534,104 @@ int hv_get_hypervisor_version(union hv_hypervisor_version_info *info)
 }
 EXPORT_SYMBOL_GPL(hv_get_hypervisor_version);
 
+static int hv_resvd_ranges[HV_MAX_RESVD_RANGES] = {
+					[0 ... HV_MAX_RESVD_RANGES-1] = -1};
+
+/*
+ * Parse eg "hyperv_resvd=3,7,20" where 3, 7, and 20 are indexes into the e820
+ * table for ranges that are reserved by the loader for the hypervisor
+ */
+static int __init hv_parse_hyperv_resvd(char *arg)
+{
+	int idx, max = ARRAY_SIZE(hv_resvd_ranges);
+	int i = 0;
+
+	mshv_loader_new = false;
+
+	if (is_kdump_kernel())
+		return 0;
+
+	if (hv_resvd_ranges[0] != -1) {
+		pr_err("Hyper-V: multile hyperv_resvd not supported\n");
+		return 0;
+	}
+
+	while (get_option(&arg, &idx)) {
+		if (i >= max) {
+			pr_err("Hyper-V: resvd ranges tbl full %d\n", idx);
+			break;
+		}
+
+		hv_resvd_ranges[i++] = idx;
+	}
+
+	return 0;
+}
+early_param("hyperv_resvd", hv_parse_hyperv_resvd);
+
+/*
+ * Reserve memory that the hypervisor is using early on. The ranges are marked
+ * reserved by a custom bootloader, change that to usable and reserve that
+ * range. Note, the bootloader sanitizes the e820 before passing on here.
+ */
+static void __init hv_resv_mshv_memory(void)
+{
+	u64 start, end, size;
+	int i, idx, max = ARRAY_SIZE(hv_resvd_ranges);
+
+	for (i = 0; i < max && hv_resvd_ranges[i] != -1; i++) {
+
+		idx = hv_resvd_ranges[i];
+		if (idx < 0 || idx >= e820_table->nr_entries) {
+			pr_info("Hyper-V: invalid resvd idx %d\n", idx);
+			continue;
+		}
+
+		start = e820_table->entries[idx].addr;
+		size = e820_table->entries[idx].size;
+		end = start + size - 1;
+
+		memblock_reserve(start, size);
+		e820_table->entries[idx].type = E820_TYPE_RAM;
+		pr_info("Hyper-V reserve [mem %#018Lx-%#018Lx]\n", start, end);
+
+		hv_mshv_res[i].name = "Hypervisor Code and Data";
+		hv_mshv_res[i].flags = IORESOURCE_BUSY | IORESOURCE_SYSTEM_RAM;
+		hv_mshv_res[i].start = start;
+		hv_mshv_res[i].end = end;
+	}
+}
+
+static void hv_reserve_irq_vectors(void)
+{
+	#define HYPERV_DBG_FASTFAIL_VECTOR	0x29
+	#define HYPERV_DBG_ASSERT_VECTOR	0x2C
+	#define HYPERV_DBG_SERVICE_VECTOR	0x2D
+
+	if (test_and_set_bit(HYPERV_DBG_ASSERT_VECTOR, system_vectors) ||
+	    test_and_set_bit(HYPERV_DBG_SERVICE_VECTOR, system_vectors) ||
+	    test_and_set_bit(HYPERV_DBG_FASTFAIL_VECTOR, system_vectors))
+		BUG();
+
+	pr_info("Hyper-V:reserve vectors: %d %d %d\n", HYPERV_DBG_ASSERT_VECTOR,
+		HYPERV_DBG_SERVICE_VECTOR, HYPERV_DBG_FASTFAIL_VECTOR);
+}
+
+static void __init __maybe_unused hv_preset_lpj(void)
+{
+	unsigned long khz;
+	u64 lpj;
+
+	if (!x86_platform.calibrate_tsc)
+		return;
+
+	khz = x86_platform.calibrate_tsc();
+
+	lpj = ((u64)khz * 1000);
+	do_div(lpj, HZ);
+	preset_lpj = lpj;
+}
+
 static void __init ms_hyperv_init_platform(void)
 {
 	int hv_max_functions_eax;
@@ -457,6 +651,16 @@ static void __init ms_hyperv_init_platform(void)
 
 	hv_max_functions_eax = cpuid_eax(HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS);
 
+	/*
+	 * FIXME: remove this change once VP stats page layout is fixed.
+	 * New (27xxx+) MSHV versions ABI isn't backward compatible with
+	 * the previous versions, and therefore fast interruption check
+	 * starts racing with the hypervisor state machine.
+	 * Disable this feature for now until support for the new ABI has
+	 * integrated.
+	 */
+	ms_hyperv.ext_features &= ~HV_VP_DISPATCH_INTERRUPT_INJECTION_AVAILABLE;
+
 	pr_info("Hyper-V: privilege flags low %#x, high %#x, ext %#x, hints %#x, misc %#x\n",
 		ms_hyperv.features, ms_hyperv.priv_high,
 		ms_hyperv.ext_features, ms_hyperv.hints,
@@ -469,6 +673,14 @@ static void __init ms_hyperv_init_platform(void)
 		 ms_hyperv.max_vp_index, ms_hyperv.max_lp_index);
 
 	hv_identify_partition_type();
+	if (hv_root_partition()) {
+		/* very first thing, reserve/log exclusive hypervisor memory */
+		if (mshv_loader_new)
+			hv_dump_mshv_memory();
+		else
+			hv_resv_mshv_memory();
+		hv_reserve_irq_vectors();
+	}
 
 	if (ms_hyperv.hints & HV_X64_HYPERV_NESTED) {
 		hv_nested = true;
@@ -565,11 +777,14 @@ static void __init ms_hyperv_init_platform(void)
 #endif
 
 #if IS_ENABLED(CONFIG_HYPERV)
+	if (hv_root_partition())
+		machine_ops.power_off = hv_machine_power_off;
 #if defined(CONFIG_KEXEC_CORE)
 	machine_ops.shutdown = hv_machine_shutdown;
 #endif
 #if defined(CONFIG_CRASH_DUMP)
-	machine_ops.crash_shutdown = hv_machine_crash_shutdown;
+	if (!hv_root_partition())
+		machine_ops.crash_shutdown = hv_guest_crash_shutdown;
 #endif
 #endif
 	/*

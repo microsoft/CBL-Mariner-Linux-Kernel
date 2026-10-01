@@ -559,6 +559,38 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
 #define __constraint_read_8	__constraint_read_7, "r" (arg6)
 #define __constraint_read_9	__constraint_read_8, "r" (arg7)
 
+/*
+ * Hyper-V on arm64 unconditionally clobbers x7 across HVC/SMC, violating the
+ * SMCCC v1.1 guarantee that x4-x17 are preserved by the callee. Add x7 to the
+ * inline asm clobber list so the compiler never keeps a live value in x7 across
+ * the call; otherwise a hoisted value (e.g. the address of an __ro_after_init
+ * global in arm_smccc_version_init()) is corrupted on return, causing a fault.
+ *
+ * x7 carries the a7 argument only in the 9-operand form (__declare_arg_9),
+ * where it is an input operand and therefore cannot also be listed as a
+ * clobber, so __constraint_write_9 is empty. Apply the fix only for 64-bit ARM
+ * for now.
+ */
+#ifdef CONFIG_ARM64
+#define __constraint_write_2	, "x7"
+#define __constraint_write_3	, "x7"
+#define __constraint_write_4	, "x7"
+#define __constraint_write_5	, "x7"
+#define __constraint_write_6	, "x7"
+#define __constraint_write_7	, "x7"
+#define __constraint_write_8	, "x7"
+#define __constraint_write_9
+#else
+#define __constraint_write_2
+#define __constraint_write_3
+#define __constraint_write_4
+#define __constraint_write_5
+#define __constraint_write_6
+#define __constraint_write_7
+#define __constraint_write_8
+#define __constraint_write_9
+#endif
+
 #define __declare_arg_2(a0, res)					\
 	struct arm_smccc_res   *___res = res;				\
 	register unsigned long arg0 asm("r0") = (u32)a0
@@ -624,7 +656,9 @@ asmlinkage void __arm_smccc_hvc(unsigned long a0, unsigned long a1,
 			     "=r" (r0), "=r" (r1), "=r" (r2), "=r" (r3)	\
 			     : CONCATENATE(__constraint_read_,		\
 					   COUNT_ARGS(__VA_ARGS__))	\
-			     : "memory");				\
+			     : "memory"					\
+			       CONCATENATE(__constraint_write_,		\
+					   COUNT_ARGS(__VA_ARGS__)));	\
 		if (___res)						\
 			*___res = (typeof(*___res)){r0, r1, r2, r3};	\
 	} while (0)

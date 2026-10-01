@@ -518,11 +518,15 @@ void vmbus_set_event(struct vmbus_channel *channel)
 					 channel->sig_event, 0);
 		else
 			WARN_ON_ONCE(1);
+#if defined(CONFIG_X86_64)
+	} else if (hv_nested) {
+		u64 control = HVCALL_SIGNAL_EVENT | HV_HYPERCALL_FAST_BIT |
+			      HV_HYPERCALL_NESTED;
+		_hv_do_fast_hypercall8(control, channel->sig_event);
+#endif
 	} else {
-		u64 control = HVCALL_SIGNAL_EVENT;
-
-		control |= hv_nested ? HV_HYPERCALL_NESTED : 0;
-		hv_do_fast_hypercall8(control, channel->sig_event);
+		hv_do_fast_hypercall8(HVCALL_SIGNAL_EVENT,
+				      channel->sig_event);
 	}
 }
 EXPORT_SYMBOL_GPL(vmbus_set_event);

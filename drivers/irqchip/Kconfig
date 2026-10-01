@@ -58,6 +58,12 @@ config ARM_GIC_V3_ITS_FSL_MC
 	depends on FSL_MC_BUS
 	default ARM_GIC_V3_ITS
 
+config MSHV_GICV3_MSI
+	bool
+	depends on ARM64 && MSHV_ROOT && ARM_GIC_V3_ITS
+	depends on PCI_MSI
+	default y
+
 config ARM_GIC_V5
 	bool
 	select IRQ_DOMAIN_HIERARCHY

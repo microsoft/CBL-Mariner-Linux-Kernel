@@ -26,6 +26,9 @@ enum {
 	MSHV_PT_BIT_LAPIC,
 	MSHV_PT_BIT_X2APIC,
 	MSHV_PT_BIT_GPA_SUPER_PAGES,
+	MSHV_PT_BIT_CPU_AND_XSAVE_FEATURES,
+	MSHV_PT_BIT_NESTED_VIRTUALIZATION,
+	MSHV_PT_BIT_SMT_ENABLED_GUEST,
 	MSHV_PT_BIT_COUNT,
 };
 
@@ -33,6 +36,7 @@ enum {
 
 enum {
 	MSHV_PT_ISOLATION_NONE,
+	MSHV_PT_ISOLATION_SNP,
 	MSHV_PT_ISOLATION_COUNT,
 };
 
@@ -40,6 +44,8 @@ enum {
  * struct mshv_create_partition - arguments for MSHV_CREATE_PARTITION
  * @pt_flags: Bitmask of 1 << MSHV_PT_BIT_*
  * @pt_isolation: MSHV_PT_ISOLATION_*
+ *
+ * This is the initial/v1 version for backward compatibility.
  *
  * Returns a file descriptor to act as a handle to a guest partition.
  * At this point the partition is not yet initialized in the hypervisor.
@@ -51,6 +57,38 @@ struct mshv_create_partition {
 	__u64 pt_flags;
 	__u64 pt_isolation;
 };
+
+#define MSHV_NUM_CPU_FEATURES_BANKS 2
+
+/**
+ * struct mshv_create_partition_v2
+ *
+ * This is extended version of the above initial MSHV_CREATE_PARTITION
+ * ioctl and allows for following additional parameters:
+ *
+ * @pt_num_cpu_fbanks: Number of processor feature banks provided. Must not
+ *                     exceed MSHV_NUM_CPU_FEATURES_BANKS.
+ * @pt_cpu_fbanks: Disabled processor feature banks array.
+ * @pt_disabled_xsave: Disabled xsave feature bits.
+ *
+ * pt_cpu_fbanks and pt_disabled_xsave are passed through as-is to the create
+ * partition hypercall.
+ *
+ * Returns : same as above original mshv_create_partition
+ */
+struct mshv_create_partition_v2 {
+	__u64 pt_flags;
+	__u64 pt_isolation;
+	__u16 pt_num_cpu_fbanks;
+	__u8  pt_rsvd[6];		/* MBZ */
+	__u64 pt_cpu_fbanks[MSHV_NUM_CPU_FEATURES_BANKS];
+	__u64 pt_rsvd1[2];		/* MBZ */
+#if defined(__x86_64__)
+	__u64 pt_disabled_xsave;
+#else
+	__u64 pt_rsvd2;			/* MBZ */
+#endif
+} __packed;
 
 /* /dev/mshv */
 #define MSHV_CREATE_PARTITION	_IOW(MSHV_IOCTL, 0x00, struct mshv_create_partition)
@@ -89,7 +127,7 @@ enum {
  * @rsvd: MBZ
  *
  * Map or unmap a region of userspace memory to Guest Physical Addresses (GPA).
- * Mappings can't overlap in GPA space or userspace.
+ * Mappings can't overlap in GPA space.
  * To unmap, these fields must match an existing mapping.
  */
 struct mshv_user_mem_region {
@@ -183,6 +221,56 @@ struct mshv_gpap_access_bitmap {
 	__u64 bitmap_ptr;
 };
 
+enum {
+	MSHV_GPA_HOST_ACCESS_BIT_ACQUIRE,
+	MSHV_GPA_HOST_ACCESS_BIT_READABLE,
+	MSHV_GPA_HOST_ACCESS_BIT_WRITABLE,
+	MSHV_GPA_HOST_ACCESS_BIT_LARGE_PAGE,
+	MSHV_GPA_HOST_ACCESS_BIT_COUNT
+};
+
+#define MSHV_GPA_HOST_ACCESS_FLAGS_MASK \
+	((1 << MSHV_GPA_HOST_ACCESS_BIT_COUNT) - 1)
+
+struct mshv_modify_gpa_host_access {
+	__u8 flags;
+	__u8 rsvd[7];
+	__u64 page_count;
+	__u64 guest_pfns[];
+};
+
+enum {
+	MSHV_ISOLATED_PAGE_NORMAL,
+	MSHV_ISOLATED_PAGE_VMSA,
+	MSHV_ISOLATED_PAGE_ZERO,
+	MSHV_ISOLATED_PAGE_UNMEASURED,
+	MSHV_ISOLATED_PAGE_SECRETS,
+	MSHV_ISOLATED_PAGE_CPUID,
+	MSHV_ISOLATED_PAGE_COUNT
+};
+
+struct mshv_import_isolated_pages {
+	__u8 page_type;
+	__u8 rsvd[7];
+	__u64 page_count;
+	__u64 guest_pfns[];
+};
+
+struct mshv_issue_psp_guest_request {
+	__u64 req_gpa;
+	__u64 rsp_gpa;
+};
+
+struct mshv_sev_snp_ap_create {
+	__u64 vp_id;
+	__u64 vmsa_gpa;
+};
+
+
+struct mshv_complete_isolated_import {
+	union hv_partition_complete_isolated_import_data import_data;
+};
+
 /**
  * struct mshv_root_hvcall - arguments for MSHV_ROOT_HVCALL
  * @code: Hypercall code (HVCALL_*)
@@ -218,6 +306,67 @@ struct mshv_root_hvcall {
 #define MSHV_GET_GPAP_ACCESS_BITMAP	_IOWR(MSHV_IOCTL, 0x06, struct mshv_gpap_access_bitmap)
 /* Generic hypercall */
 #define MSHV_ROOT_HVCALL		_IOWR(MSHV_IOCTL, 0x07, struct mshv_root_hvcall)
+#define MSHV_CREATE_DEVICE             _IOWR(MSHV_IOCTL, 0x08, struct mshv_create_device)
+#define MSHV_MODIFY_GPA_HOST_ACCESS	_IOW(MSHV_IOCTL, 0x09, struct mshv_modify_gpa_host_access)
+#define MSHV_IMPORT_ISOLATED_PAGES	_IOW(MSHV_IOCTL, 0x0A, struct mshv_import_isolated_pages)
+
+/*
+ * Deprecated partition ioctls - backward compat with older userspace mshv crate v0.3.0
+ * Superseded by MSHV_ROOT_HVCALL
+ */
+
+struct mshv_install_intercept {
+	__u32 access_type_mask;
+	__u32 intercept_type;
+	__u64 intercept_parameter;
+};
+
+struct mshv_assert_interrupt {
+	__u64 control;
+	__u64 dest_addr;
+	__u32 vector;
+	__u32 rsvd;
+};
+
+struct mshv_partition_property {
+	__u64 property_code;
+	__u64 property_value;
+};
+
+struct mshv_signal_event_direct {
+	__u32 vp;
+	__u8 vtl;
+	__u8 sint;
+	__u16 flag;
+	/* output */
+	__u8 newly_signaled;
+};
+
+struct mshv_post_message_direct {
+	__u32 vp;
+	__u8 vtl;
+	__u8 sint;
+	__u16 length;
+	__u8 __user const *message;
+};
+
+struct mshv_register_deliverabilty_notifications {
+	__u32 vp;
+	__u32 pad;
+	__u64 flag;
+};
+
+#define MSHV_INSTALL_INTERCEPT		_IOW(MSHV_IOCTL, 0xF0, struct mshv_install_intercept)
+#define MSHV_ASSERT_INTERRUPT		_IOW(MSHV_IOCTL, 0xF1, struct mshv_assert_interrupt)
+#define MSHV_SET_PARTITION_PROPERTY	_IOW(MSHV_IOCTL, 0xF2, struct mshv_partition_property)
+#define MSHV_GET_PARTITION_PROPERTY	_IOWR(MSHV_IOCTL, 0xF3, struct mshv_partition_property)
+#define MSHV_COMPLETE_ISOLATED_IMPORT	_IOW(MSHV_IOCTL, 0xF4, struct mshv_complete_isolated_import)
+#define MSHV_ISSUE_PSP_GUEST_REQUEST	_IOW(MSHV_IOCTL, 0xF5, struct mshv_issue_psp_guest_request)
+#define MSHV_SEV_SNP_AP_CREATE		_IOW(MSHV_IOCTL, 0xF6, struct mshv_sev_snp_ap_create)
+#define MSHV_SIGNAL_EVENT_DIRECT	_IOWR(MSHV_IOCTL, 0xF7, struct mshv_signal_event_direct)
+#define MSHV_POST_MESSAGE_DIRECT	_IOW(MSHV_IOCTL, 0xF8, struct mshv_post_message_direct)
+#define MSHV_REGISTER_DELIVERABILITY_NOTIFICATIONS \
+	_IOW(MSHV_IOCTL, 0xF9, struct mshv_register_deliverabilty_notifications)
 
 /*
  ********************************
@@ -282,10 +431,137 @@ struct mshv_get_set_vp_state {
 #define MSHV_RUN_VP			_IOR(MSHV_IOCTL, 0x00, struct mshv_run_vp)
 #define MSHV_GET_VP_STATE		_IOWR(MSHV_IOCTL, 0x01, struct mshv_get_set_vp_state)
 #define MSHV_SET_VP_STATE		_IOWR(MSHV_IOCTL, 0x02, struct mshv_get_set_vp_state)
+
+struct mshv_translate_gva {
+	__u64 gva;
+	__u64 flags;
+	enum hv_translate_gva_result_code *result;
+	__u64 *gpa;
+};
+
+#define MSHV_TRANSLATE_GVA		_IOWR(MSHV_IOCTL, 0xF2, struct mshv_translate_gva)
+
+/*
+ * Deprecated VP ioctls - backward compat with older userspace mshv crate v0.3.0
+ * Superseded by MSHV_ROOT_HVCALL
+ */
+
+#define MSHV_VP_MAX_REGISTERS	128
+
+struct mshv_vp_registers {
+	__u32 count;
+	__u32 padding;
+	struct hv_register_assoc __user *regs;
+};
+
+struct mshv_register_intercept_result {
+	__u32 intercept_type;
+	__u32 padding;
+	/*
+	 * This has different size on different archs.
+	 * On x86 it's union hv_register_intercept_result_parameters.
+	 * Pass as raw bytes for portability.
+	 */
+	__u8 parameters[48];
+};
+
+struct mshv_get_vp_cpuid_values {
+	__u32 function;
+	__u32 index;
+	__u64 xfem;
+	__u64 xss;
+	/* output */
+	__u32 eax;
+	__u32 ebx;
+	__u32 ecx;
+	__u32 edx;
+};
+
+struct mshv_read_write_gpa {
+	__u64 base_gpa;
+	__u32 byte_count;
+	__u32 flags;
+	__u8 data[16]; /* HV_READ_WRITE_GPA_MAX_SIZE */
+};
+
+#define MSHV_GET_VP_REGISTERS		_IOWR(MSHV_IOCTL, 0xF0, struct mshv_vp_registers)
+#define MSHV_SET_VP_REGISTERS		_IOW(MSHV_IOCTL, 0xF1, struct mshv_vp_registers)
+#define MSHV_VP_REGISTER_INTERCEPT_RESULT \
+	_IOW(MSHV_IOCTL, 0xF3, struct mshv_register_intercept_result)
+#define MSHV_GET_VP_CPUID_VALUES	_IOWR(MSHV_IOCTL, 0xF4, struct mshv_get_vp_cpuid_values)
+#define MSHV_READ_GPA			_IOWR(MSHV_IOCTL, 0xF5, struct mshv_read_write_gpa)
+#define MSHV_WRITE_GPA			_IOW(MSHV_IOCTL, 0xF6, struct mshv_read_write_gpa)
+
 /*
  * Generic hypercall
  * Defined above in partition IOCTLs, avoid redefining it here
  * #define MSHV_ROOT_HVCALL			_IOWR(MSHV_IOCTL, 0x07, struct mshv_root_hvcall)
  */
+
+/*
+ ***********************
+ * Diag and trace APIs *
+ ***********************
+ */
+
+/* TODO: remove and use MSHV_IOCTL */
+#define MSHV_DIAG_IOCTL         0xB9
+/* TODO: remove and use MSHV_IOCTL */
+#define MSHV_TRACE_IOCTL        0xBA
+
+struct mshv_trace_config {
+	__u32 mode; /* enum hv_eventlog_mode */
+	__u32 max_buffers_count;
+	__u32 pages_per_buffer;
+	__u32 buffers_threshold;
+	__u32 time_basis; /* enum hv_eventlog_entry_time_basis */
+	__u64 system_time;
+};
+
+/* /dev/mshv_diag device */
+#define MSHV_GET_TRACE_FD                               \
+		_IO(MSHV_DIAG_IOCTL, HV_EVENT_LOG_TYPE_LOCAL_DIAGNOSTICS)
+#define MSHV_GET_DIAGLOG_FD                             \
+		_IO(MSHV_DIAG_IOCTL, HV_EVENT_LOG_TYPE_SYSTEM_DIAGNOSTICS)
+
+/* Trace fd created with MSHV_GET_TRACE_FD */
+#define MSHV_TRACE_STATE_CREATE		_IOW(MSHV_TRACE_IOCTL, 0x0, \
+		struct mshv_trace_config)
+#define MSHV_TRACE_STATE_INFO		_IOR(MSHV_TRACE_IOCTL, 0x1, \
+		struct mshv_trace_config)
+#define MSHV_TRACE_STATE_DESTROY	_IO(MSHV_TRACE_IOCTL, 0x2)
+#define MSHV_TRACE_STATE_ATTACH		_IO(MSHV_TRACE_IOCTL, 0x3)
+#define MSHV_TRACE_STATE_DETACH		_IO(MSHV_TRACE_IOCTL, 0x4)
+#define MSHV_TRACE_START		_IO(MSHV_TRACE_IOCTL, 0x5)
+#define MSHV_TRACE_STOP			_IO(MSHV_TRACE_IOCTL, 0x6)
+
+/* Device passhthru */
+#define MSHV_CREATE_DEVICE_TEST		1
+
+enum {
+	MSHV_DEV_TYPE_VFIO,
+	MSHV_DEV_TYPE_MAX,
+};
+
+struct mshv_create_device {
+	__u32	type;	     /* in: MSHV_DEV_TYPE_xxx */
+	__u32	fd;	     /* out: device handle */
+	__u32	flags;	     /* in: MSHV_CREATE_DEVICE_xxx */
+};
+
+#define MSHV_DEV_VFIO_FILE      1
+#define MSHV_DEV_VFIO_FILE_ADD	1
+#define MSHV_DEV_VFIO_FILE_DEL	2
+
+struct mshv_device_attr {
+	__u32	flags;		/* no flags currently defined */
+	__u32	group;		/* device-defined */
+	__u64	attr;		/* group-defined */
+	__u64	addr;		/* userspace address of attr data */
+};
+
+/* Device fds created with MSHV_CREATE_DEVICE */
+#define MSHV_SET_DEVICE_ATTR	_IOW(MSHV_IOCTL, 0x00, struct mshv_device_attr)
+#define MSHV_HAS_DEVICE_ATTR	_IOW(MSHV_IOCTL, 0x01, struct mshv_device_attr)
 
 #endif

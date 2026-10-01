@@ -10,6 +10,13 @@
 #include "hvhdk_mini.h"
 #include "hvgdk.h"
 
+/*
+ * Hypervisor statistics page format
+ */
+struct hv_stats_page {
+	u64 data[HV_HYP_PAGE_SIZE / sizeof(u64)];
+} __packed;
+
 /* Bits for dirty mask of hv_vp_register_page */
 #define HV_X64_REGISTER_CLASS_GENERAL	0
 #define HV_X64_REGISTER_CLASS_IP	1
@@ -223,7 +230,47 @@ union hv_partition_processor_features {
 		u64 fzlrep_movsb : 1;
 		u64 fsrep_stosb : 1;
 		u64 fsrep_cmpsb : 1;
-		u64 reserved_bank1 : 42;
+		u64 tsx_ld_trk_support : 1;
+		u64 vmx_ins_outs_exit_info_support : 1;
+		u64 hlat_support : 1;
+		u64 sbdr_ssdp_no_support : 1;
+		u64 fbsdp_no_support : 1;
+		u64 psdp_no_support : 1;
+		u64 fb_clear_support : 1;
+		u64 btc_no_support : 1;
+		u64 ibpb_rsb_flush_support : 1;
+		u64 stibp_always_on_support : 1;
+		u64 perf_global_ctrl_support : 1;
+		u64 npt_execute_only_support : 1;
+		u64 npt_ad_flags_support : 1;
+		u64 npt1_gb_page_support : 1;
+		u64 amd_processor_topology_node_id_support : 1;
+		u64 local_machine_check_support : 1;
+		u64 extended_topology_leaf_fp256_amd_support : 1;
+		u64 gds_no_support : 1;
+		u64 cmpccxadd_support : 1;
+		u64 tsc_aux_virtualization_support : 1;
+		u64 rmp_query_support : 1;
+		u64 bhi_no_support : 1;
+		u64 bhi_dis_support : 1;
+		u64 prefetch_i_support : 1;
+		u64 sha512_support : 1;
+		u64 mitigation_ctrl_support : 1;
+		u64 rfds_no_support : 1;
+		u64 rfds_clear_support : 1;
+		u64 sm3_support : 1;
+		u64 sm4_support : 1;
+		u64 secure_avic_support : 1;
+		u64 guest_intercept_ctrl_support : 1;
+		u64 sbpb_supported : 1;
+		u64 ibpb_br_type_supported : 1;
+		u64 srso_no_supported : 1;
+		u64 srso_user_kernel_no_supported : 1;
+		u64 vrew_clear_supported : 1;
+		u64 tsa_l1_no_supported : 1;
+		u64 tsa_sq_no_supported : 1;
+		u64 lass_support : 1;
+		u64 reserved_bank1 : 2;
 	} __packed;
 };
 
@@ -232,7 +279,42 @@ union hv_partition_processor_xsave_features {
 		u64 xsave_support : 1;
 		u64 xsaveopt_support : 1;
 		u64 avx_support : 1;
-		u64 reserved1 : 61;
+		u64 avx2_support : 1;
+		u64 fma_support : 1;
+		u64 mpx_support : 1;
+		u64 avx512_support : 1;
+		u64 avx512_dq_support : 1;
+		u64 avx512_cd_support : 1;
+		u64 avx512_bw_support : 1;
+		u64 avx512_vl_support : 1;
+		u64 xsave_comp_support : 1;
+		u64 xsave_supervisor_support : 1;
+		u64 xcr1_support : 1;
+		u64 avx512_bitalg_support : 1;
+		u64 avx512_i_fma_support : 1;
+		u64 avx512_v_bmi_support : 1;
+		u64 avx512_v_bmi2_support : 1;
+		u64 avx512_vnni_support : 1;
+		u64 gfni_support : 1;
+		u64 vaes_support : 1;
+		u64 avx512_v_popcntdq_support : 1;
+		u64 vpclmulqdq_support : 1;
+		u64 avx512_bf16_support : 1;
+		u64 avx512_vp2_intersect_support : 1;
+		u64 avx512_fp16_support : 1;
+		u64 xfd_support : 1;
+		u64 amx_tile_support : 1;
+		u64 amx_bf16_support : 1;
+		u64 amx_int8_support : 1;
+		u64 avx_vnni_support : 1;
+		u64 avx_ifma_support : 1;
+		u64 avx_ne_convert_support : 1;
+		u64 avx_vnni_int8_support : 1;
+		u64 avx_vnni_int16_support : 1;
+		u64 avx10_1_256_support : 1;
+		u64 avx10_1_512_support : 1;
+		u64 amx_fp16_support : 1;
+		u64 reserved1 : 26;
 	} __packed;
 	u64 as_uint64;
 };
@@ -328,6 +410,8 @@ union hv_partition_isolation_properties {
 #define HV_PARTITION_ISOLATION_HOST_TYPE_RESERVED   0x2
 
 /* Note: Exo partition is enabled by default */
+#define HV_PARTITION_CREATION_FLAG_SMT_ENABLED_GUEST			BIT(0)
+#define HV_PARTITION_CREATION_FLAG_NESTED_VIRTUALIZATION_CAPABLE	BIT(1)
 #define HV_PARTITION_CREATION_FLAG_GPA_SUPER_PAGES_ENABLED		BIT(4)
 #define HV_PARTITION_CREATION_FLAG_EXO_PARTITION			BIT(8)
 #define HV_PARTITION_CREATION_FLAG_LAPIC_ENABLED			BIT(13)
@@ -374,6 +458,46 @@ struct hv_input_set_partition_property {
 	u32 property_code; /* enum hv_partition_property_code */
 	u32 padding;
 	u64 property_value;
+} __packed;
+
+union hv_partition_property_arg {
+	u64 as_uint64;
+	struct {
+		union {
+			u32 arg;
+			u32 vp_index;
+		};
+		u16 reserved0;
+		u8 reserved1;
+		u8 object_type;
+	} __packed;
+};
+
+struct hv_input_get_partition_property_ex {
+	u64 partition_id;
+	u32 property_code; /* enum hv_partition_property_code */
+	u32 padding;
+	union {
+		union hv_partition_property_arg arg_data;
+		u64 arg;
+	};
+} __packed;
+
+/*
+ * NOTE: Should use hv_input_set_partition_property_ex_header to compute this
+ * size, but hv_input_get_partition_property_ex is identical so it suffices
+ */
+#define HV_PARTITION_PROPERTY_EX_MAX_VAR_SIZE \
+	(HV_HYP_PAGE_SIZE - sizeof(struct hv_input_get_partition_property_ex))
+
+union hv_partition_property_ex {
+	u8 buffer[HV_PARTITION_PROPERTY_EX_MAX_VAR_SIZE];
+	struct hv_partition_property_vmm_capabilities vmm_capabilities;
+	/* More fields to be filled in when needed */
+};
+
+struct hv_output_get_partition_property_ex {
+	union hv_partition_property_ex property_value;
 } __packed;
 
 enum hv_vp_state_page_type {
@@ -539,9 +663,15 @@ union hv_interrupt_control {
 	u64 as_uint64;
 	struct {
 		u32 interrupt_type; /* enum hv_interrupt_type */
+#if IS_ENABLED(CONFIG_X86)
 		u32 level_triggered : 1;
 		u32 logical_dest_mode : 1;
 		u32 rsvd : 30;
+#elif IS_ENABLED(CONFIG_ARM64)
+		u32 rsvd1 : 2;
+		u32 asserted : 1;
+		u32 rsvd2 : 29;
+#endif
 	} __packed;
 };
 
@@ -724,7 +854,7 @@ struct hv_x64_intercept_message_header {
 	u32 vp_index;
 	u8 instruction_length:4;
 	u8 cr8:4; /* Only set for exo partitions */
-	u8 intercept_access_type;
+	u8 intercept_access_type; /* enum hv_intercept_access_type */
 	union hv_x64_vp_execution_state execution_state;
 	struct hv_x64_segment_register cs_segment;
 	u64 rip;
@@ -753,6 +883,53 @@ struct hv_x64_memory_intercept_message {
 	u64 guest_physical_address;
 	u8 instruction_bytes[16];
 } __packed;
+
+#if IS_ENABLED(CONFIG_ARM64)
+union hv_arm64_vp_execution_state {
+	u16 as_uint16;
+	struct {
+		u16 cpl:2; /* Exception Level (EL) */
+		u16 debug_active:1;
+		u16 interruption_pending:1;
+		u16 vtl:4;
+		u16 virtualization_fault_active:1;
+		u16 reserved:7;
+	} __packed;
+};
+
+struct hv_arm64_intercept_message_header {
+	u32 vp_index;
+	u8 instruction_length;
+	u8 intercept_access_type; /* enum hv_intercept_access_type */
+	union hv_arm64_vp_execution_state execution_state;
+	u64 pc;
+	u64 cpsr;
+} __packed;
+
+union hv_arm64_memory_access_info {
+	u8 as_uint8;
+	struct {
+		u8 gva_valid:1;
+		u8 gva_gpa_valid:1;
+		u8 hypercall_output_pending:1;
+		u8 reserved:5;
+	} __packed;
+};
+
+struct hv_arm64_memory_intercept_message {
+	struct hv_arm64_intercept_message_header header;
+	u32 cache_type; /* enum hv_cache_type */
+	u8 instruction_byte_count;
+	union hv_arm64_memory_access_info memory_access_info;
+	u16 reserved1;
+	u8 instruction_bytes[4];
+	u32 reserved2;
+	u64 guest_virtual_address;
+	u64 guest_physical_address;
+	u64 syndrome;
+} __packed;
+
+#endif /* CONFIG_ARM64 */
 
 /*
  * Dispatch state for the VP communicated by the hypervisor to the
@@ -850,4 +1027,270 @@ struct hv_input_modify_sparse_spa_page_host_access {
 #define HV_MODIFY_SPA_PAGE_HOST_ACCESS_LARGE_PAGE      0x4
 #define HV_MODIFY_SPA_PAGE_HOST_ACCESS_HUGE_PAGE       0x8
 
+enum hv_translate_gva_result_code {
+	HV_TRANSLATE_GVA_SUCCESS			= 0,
+
+	/* Translation failures */
+	HV_TRANSLATE_GVA_PAGE_NOT_PRESENT		= 1,
+	HV_TRANSLATE_GVA_PRIVILEGE_VIOLATION		= 2,
+	HV_TRANSLATE_GVA_INVALID_PAGE_TABLE_FLAGS	= 3,
+
+	/* GPA access failures */
+	HV_TRANSLATE_GVA_GPA_UNMAPPED			= 4,
+	HV_TRANSLATE_GVA_GPA_NO_READ_ACCESS		= 5,
+	HV_TRANSLATE_GVA_GPA_NO_WRITE_ACCESS		= 6,
+	HV_TRANSLATE_GVA_GPA_ILLEGAL_OVERLAY_ACCESS	= 7,
+
+	HV_TRANSLATE_GVA_INTERCEPT			= 8,
+	HV_TRANSLATE_GVA_GPA_UNACCEPTED			= 9,
+};
+
+struct hv_input_translate_virtual_address {
+	u64 partition_id;
+	u32 vp_index;
+	u32 padding;
+	u64 control_flags;
+	u64 gva_page;
+} __packed;
+
+struct hv_translate_gva_result_ex {
+	u32 result_code; /* enum hv_translate_gva_result_code */
+	u32 cache_type : 8;
+	u32 overlay_page : 1;
+	u32 reserved : 23;
+#if IS_ENABLED(CONFIG_X86)
+	char event_info[40]; /* HV_X64_PENDING_EVENT */
+#endif
+} __packed;
+
+struct hv_output_translate_virtual_address_ex {
+	struct hv_translate_gva_result_ex translation_result;
+	u64 gpa_page;
+} __packed;
+
+#define HV_EVENTLOG_BUFFER_INDEX_NONE                   0xffffffff
+
+struct hv_eventlog_message_payload {
+        u32 type;
+        u32 buffer_index;
+} __packed;
+
+/*
+ * Deprecated hypercall input/output structs - needed for backward compat
+ * with older userspace mshv crate v0.3.0
+ */
+
+#if IS_ENABLED(CONFIG_X86)
+
+struct hv_register_x64_cpuid_result_parameters {
+	struct {
+		u32 eax;
+		u32 ecx;
+		u8 subleaf_specific;
+		u8 always_override;
+		u16 padding;
+	} __packed input;
+	struct {
+		u32 eax;
+		u32 eax_mask;
+		u32 ebx;
+		u32 ebx_mask;
+		u32 ecx;
+		u32 ecx_mask;
+		u32 edx;
+		u32 edx_mask;
+	} __packed result;
+} __packed;
+
+struct hv_register_x64_msr_result_parameters {
+	u32 msr_index;
+	u32 access_type;
+	u32 action; /* enum hv_unimplemented_msr_action */
+} __packed;
+
+union hv_register_intercept_result_parameters {
+	struct hv_register_x64_cpuid_result_parameters cpuid;
+	struct hv_register_x64_msr_result_parameters msr;
+} __packed;
+
+struct hv_input_register_intercept_result {
+	u64 partition_id;
+	u32 vp_index;
+	u32 intercept_type; /* enum hv_intercept_type */
+	union hv_register_intercept_result_parameters parameters;
+} __packed;
+
+#endif /* CONFIG_X86 */
+
+struct hv_cpuid_leaf_info {
+	u32 eax;
+	u32 ecx;
+	u64 xfem;
+	u64 xss;
+} __packed;
+
+union hv_get_vp_cpuid_values_flags {
+	u32 as_uint32;
+	struct {
+		u32 use_vp_xfem_xss: 1;
+		u32 apply_registered_values: 1;
+		u32 reserved: 30;
+	} __packed;
+} __packed;
+
+struct hv_input_get_vp_cpuid_values {
+	u64 partition_id;
+	u32 vp_index;
+	union hv_get_vp_cpuid_values_flags flags;
+	u32 reserved;
+	u32 padding;
+	struct hv_cpuid_leaf_info cpuid_leaf_info[];
+} __packed;
+
+union hv_output_get_vp_cpuid_values {
+	u32 as_uint32[4];
+	struct {
+		u32 eax;
+		u32 ebx;
+		u32 ecx;
+		u32 edx;
+	} __packed;
+};
+
+struct hv_input_precommit_gpa_pages {	/* HV_INPUT_PRECOMMIT_GPA_PAGES */
+	u64 partition_id;
+	u32 flags;
+	u32 reserved;
+	u64 target_gpa_base;
+} __packed;
+
+struct hv_input_signal_event_direct {
+	u64 target_partition;
+	u32 target_vp;
+	u8  target_vtl;
+	u8  target_sint;
+	u16 flag_number;
+} __packed;
+
+struct hv_output_signal_event_direct {
+	u8	newly_signaled;
+	u8	reserved[7];
+} __packed;
+
+struct hv_input_post_message_direct {
+	u64 partition_id;
+	u32 vp_index;
+	u8  vtl;
+	u8  padding[3];
+	u32 sint_index;
+	u8  message[HV_MESSAGE_SIZE];
+	u32 padding2;
+} __packed;
+
+union hv_access_gpa_result {
+	u64 as_uint64;
+	struct {
+		u32 result_code; /* enum hv_access_gpa_result_code */
+		u32 reserved;
+	} __packed;
+};
+
+union hv_access_gpa_control_flags {
+	u64 as_uint64;
+	struct {
+		u64 cache_type: 8; /* enum hv_cache_type */
+		u64 reserved: 56;
+	} __packed;
+};
+
+struct hv_input_read_gpa {
+	u64 partition_id;
+	u32 vp_index;
+	u32 byte_count;
+	u64 base_gpa;
+	union hv_access_gpa_control_flags control_flags;
+} __packed;
+
+#define HV_READ_WRITE_GPA_MAX_SIZE 16
+
+struct hv_output_read_gpa {
+	union hv_access_gpa_result access_result;
+	u8 data[HV_READ_WRITE_GPA_MAX_SIZE];
+} __packed;
+
+struct hv_input_write_gpa {
+	u64 partition_id;
+	u32 vp_index;
+	u32 byte_count;
+	u64 base_gpa;
+	union hv_access_gpa_control_flags control_flags;
+	u8 data[HV_READ_WRITE_GPA_MAX_SIZE];
+} __packed;
+
+struct hv_output_write_gpa {
+	union hv_access_gpa_result access_result;
+} __packed;
+
+enum hv_isolated_page_type {
+	HV_ISOLATED_PAGE_TYPE_NORMAL,
+	HV_ISOLATED_PAGE_TYPE_VMSA,
+	HV_ISOLATED_PAGE_TYPE_ZERO,
+	HV_ISOLATED_PAGE_TYPE_UNMEASURED,
+	HV_ISOLATED_PAGE_TYPE_SECRETS,
+	HV_ISOLATED_PAGE_TYPE_CPUID,
+	HV_ISOLATED_PAGE_TYPE_COUNT
+};
+
+enum hv_isolated_page_size {
+	HV_ISOLATED_PAGE_SIZE_4KB,
+	HV_ISOLATED_PAGE_SIZE_2MB
+};
+
+struct hv_input_import_isolated_pages {
+	u64 partition_id;
+	u32 page_type;
+	u32 page_size;
+	u64 page_number[];
+} __packed;
+
+struct hv_input_issue_psp_guest_request {
+	u64 partition_id;
+	u64 request_page;
+	u64 response_page;
+} __packed;
+
+enum hv_partition_isolation_state {
+	HV_PARTITION_ISOLATION_INVALID,
+	HV_PARTITION_ISOLATION_INSECURE_CLEAN,
+	HV_PARTITION_ISOLATION_INSECURE_DIRTY,
+	HV_PARTITION_ISOLATION_SECURE,
+	HV_PARTITION_ISOLATION_SECURE_DIRTY,
+	HV_PARTITION_ISOLATION_SECURE_TERMINATING,
+};
+
+union hv_partition_isolation_control {
+	u64 as_uint64;
+	struct {
+		u64 runnable : 1;
+		u64 reserved_z : 63;
+	} __packed;
+};
+
+#ifdef CONFIG_X86
+
+struct hv_input_get_vp_set_from_mda {   /* HV_OUTPUT_GET_VP_SET_FROM_MDA */
+	u64 target_partid;
+	u64 dest_address;
+	u8  input_vtl;
+	u8  destmode_logical;         /* true => mode is logical */
+	u16 reserved0;                /* mbz */
+	u32 reserved1;                /* mbz */
+} __packed;
+
+union hv_output_get_vp_set_from_mda {  /* HV_OUTPUT_GET_VP_SET_FROM_MDA */
+	struct hv_vpset target_vpset;
+	u64 bitset_buffer[HV_GENERIC_SET_QWORD_COUNT(HV_MAX_VPS)];
+} __packed;
+
+#endif /* CONFIG_X86 */
 #endif /* _HV_HVHDK_H */

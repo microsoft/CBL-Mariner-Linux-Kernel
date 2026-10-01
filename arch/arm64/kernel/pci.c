@@ -8,6 +8,8 @@
 
 #include <linux/pci.h>
 
+#include <asm/mshyperv.h>
+
 /*
  * raw_pci_read/write - Platform-specific PCI config space access.
  */
@@ -40,3 +42,12 @@ int pcibus_to_node(struct pci_bus *bus)
 EXPORT_SYMBOL(pcibus_to_node);
 
 #endif
+
+int pcibios_device_add(struct pci_dev *dev)
+{
+	struct irq_domain *d = hv_pci_get_msi_domain();
+
+	if (d)
+		dev_set_msi_domain(&dev->dev, d);
+	return 0;
+}

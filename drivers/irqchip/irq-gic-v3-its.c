@@ -57,6 +57,29 @@
 static u32 lpi_id_bits;
 
 /*
+ * Set once an LPI producer has been found, and the LPI configuration and
+ * pending tables have been allocated.
+ */
+static bool lpis_enabled;
+
+/*
+ * Set when LPIs are produced by something other than an ITS. A hypervisor may
+ * translate MSIs onto LPIs on the OS's behalf without exposing an ITS, in
+ * which case the redistributors still need their LPI tables programmed.
+ */
+static bool lpis_without_its __initdata;
+
+/*
+ * Declare that LPIs are used by something other than an ITS. Must be called
+ * before irqchip_init(), as its_init() consults this to decide whether to
+ * set up the LPI tables when no ITS is enumerated.
+ */
+void __init gic_request_lpis_without_its(void)
+{
+	lpis_without_its = true;
+}
+
+/*
  * We allocate memory for PROPBASE to cover 2 ^ lpi_id_bits LPIs to
  * deal with (one configuration byte per interrupt). PENDBASE has to
  * be 64kB aligned (one bit per LPI, plus 8192 bits for SPI/PPI/SGI).
@@ -5419,7 +5442,7 @@ static int redist_disable_lpis(void)
 
 int its_cpu_init(void)
 {
-	if (!list_empty(&its_nodes)) {
+	if (lpis_enabled) {
 		int ret;
 
 		ret = redist_disable_lpis();
@@ -5427,6 +5450,7 @@ int its_cpu_init(void)
 			return ret;
 
 		its_cpu_init_lpis();
+		/* No-op when LPIs are used without an ITS */
 		its_cpu_init_collections();
 	}
 
@@ -5796,7 +5820,7 @@ int __init its_lpi_memreserve_init(void)
 	if (!efi_enabled(EFI_CONFIG_TABLES))
 		return 0;
 
-	if (list_empty(&its_nodes))
+	if (!lpis_enabled)
 		return 0;
 
 	gic_rdists->cpuhp_memreserve_state = CPUHP_INVALID;
@@ -5835,7 +5859,7 @@ int __init its_init(struct fwnode_handle *handle, struct rdists *rdists,
 	else
 		its_acpi_probe();
 
-	if (list_empty(&its_nodes)) {
+	if (list_empty(&its_nodes) && !lpis_without_its) {
 		pr_warn("ITS: No ITS available, not enabling LPIs\n");
 		return -ENXIO;
 	}
@@ -5843,6 +5867,16 @@ int __init its_init(struct fwnode_handle *handle, struct rdists *rdists,
 	err = allocate_lpi_tables();
 	if (err)
 		return err;
+
+	lpis_enabled = true;
+
+	/*
+	 * Nothing else to do when LPIs are produced by something other than
+	 * an ITS: the redistributor setup in its_cpu_init() is all that is
+	 * required.
+	 */
+	if (list_empty(&its_nodes))
+		return 0;
 
 	list_for_each_entry(its, &its_nodes, entry) {
 		has_v4 |= is_v4(its);

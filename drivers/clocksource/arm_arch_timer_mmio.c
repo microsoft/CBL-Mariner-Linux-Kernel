@@ -19,6 +19,10 @@
 
 #include <clocksource/arm_arch_timer.h>
 
+#if IS_ENABLED(CONFIG_HYPERV)
+#include <asm/mshyperv.h>
+#endif
+
 #define CNTTIDR		0x08
 #define CNTTIDR_VIRT(n)	(BIT(1) << ((n) * 4))
 
@@ -377,6 +381,17 @@ static int arch_timer_mmio_probe(struct platform_device *pdev)
 	struct arch_timer *at;
 	struct device_node *np;
 	int ret;
+
+#if IS_ENABLED(CONFIG_HYPERV)
+	/*
+	 * MSHV doesn't allow the root partition to access the memory-mapped
+	 * timers exposed via ACPI GTDT; probing them panics the kernel. The
+	 * per-CPU architected timer is unaffected, so just skip the
+	 * memory-mapped timer init when running as the MSHV root partition.
+	 */
+	if (hv_root_partition())
+		return -ENODEV;
+#endif
 
 	np = pdev->dev.of_node;
 

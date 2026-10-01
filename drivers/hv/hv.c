@@ -165,8 +165,7 @@ int hv_synic_alloc(void)
 			}
 		}
 
-		if (!ms_hyperv.paravisor_present &&
-		    (hv_isolation_type_snp() || hv_isolation_type_tdx())) {
+		if (!ms_hyperv.paravisor_present && hv_isolation_hw_cvm()) {
 			ret = set_memory_decrypted((unsigned long)
 				hv_cpu->synic_message_page, 1);
 			if (ret) {

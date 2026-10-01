@@ -252,6 +252,11 @@ enum gic_intid_range {
 	__INVALID_RANGE__
 };
 
+struct rdists *gic_get_rdists(void)
+{
+	return &gic_data.rdists;
+}
+
 static enum gic_intid_range __get_intid_range(irq_hw_number_t hwirq)
 {
 	switch (hwirq) {
@@ -1032,20 +1037,23 @@ static void __init gic_dist_init(void)
 
 static int gic_iterate_rdists(int (*fn)(struct redist_region *, void __iomem *))
 {
+	u32 reg;
 	int ret = -ENODEV;
 	int i;
+	bool gicv4;
+
+	/*
+	 * MSHV does not allow the root partition to access GICR_PIDR2 until
+	 * secondary CPU boot, and masks GICR_TYPER.VLPIS. Use the distributor's
+	 * architecture revision instead to determine the redistributor layout.
+	 */
+	reg = readl_relaxed(gic_data.dist_base + GICD_PIDR2);
+	reg &= GIC_PIDR2_ARCH_MASK;
+	gicv4 = reg == GIC_PIDR2_ARCH_GICv4;
 
 	for (i = 0; i < gic_data.nr_redist_regions; i++) {
 		void __iomem *ptr = gic_data.redist_regions[i].redist_base;
 		u64 typer;
-		u32 reg;
-
-		reg = readl_relaxed(ptr + GICR_PIDR2) & GIC_PIDR2_ARCH_MASK;
-		if (reg != GIC_PIDR2_ARCH_GICv3 &&
-		    reg != GIC_PIDR2_ARCH_GICv4) { /* We're in trouble... */
-			pr_warn("No redistributor present @%p\n", ptr);
-			break;
-		}
 
 		do {
 			typer = gic_read_typer(ptr + GICR_TYPER);
@@ -1060,7 +1068,7 @@ static int gic_iterate_rdists(int (*fn)(struct redist_region *, void __iomem *))
 				ptr += gic_data.redist_stride;
 			} else {
 				ptr += SZ_64K * 2; /* Skip RD_base + SGI_base */
-				if (typer & GICR_TYPER_VLPIS)
+				if (gicv4)
 					ptr += SZ_64K * 2; /* Skip VLPI_base + reserved page */
 			}
 		} while (!(typer & GICR_TYPER_LAST));

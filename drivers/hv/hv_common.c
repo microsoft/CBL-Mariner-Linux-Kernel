@@ -28,6 +28,10 @@
 #include <linux/slab.h>
 #include <linux/dma-map-ops.h>
 #include <linux/set_memory.h>
+#include <linux/reboot.h>
+#include <linux/notifier.h>
+#include <linux/crash_dump.h>
+#include <linux/memblock.h>
 #include <hyperv/hvhdk.h>
 #include <asm/mshyperv.h>
 
@@ -317,9 +321,9 @@ int __init hv_common_init(void)
 	int i;
 	union hv_hypervisor_version_info version;
 
-	/* Get information about the Hyper-V host version */
+	/* Get information about the Microsoft Hypervisor version */
 	if (!hv_get_hypervisor_version(&version))
-		pr_info("Hyper-V: Host Build %d.%d.%d.%d-%d-%d\n",
+		pr_info("Hyper-V: Hypervisor Build %d.%d.%d.%d-%d-%d\n",
 			version.major_version, version.minor_version,
 			version.build_number, version.service_number,
 			version.service_pack, version.service_branch);
@@ -489,7 +493,7 @@ int hv_common_cpu_init(unsigned int cpu)
 	 * online and then taken offline
 	 */
 	if (!*inputarg) {
-		mem = kmalloc(pgcount * HV_HYP_PAGE_SIZE, flags);
+		mem = kmalloc_array(pgcount, HV_HYP_PAGE_SIZE, flags);
 		if (!mem)
 			return -ENOMEM;
 
@@ -498,8 +502,7 @@ int hv_common_cpu_init(unsigned int cpu)
 			*outputarg = (char *)mem + HV_HYP_PAGE_SIZE;
 		}
 
-		if (!ms_hyperv.paravisor_present &&
-		    (hv_isolation_type_snp() || hv_isolation_type_tdx())) {
+		if (!ms_hyperv.paravisor_present && hv_isolation_hw_cvm()) {
 			ret = set_memory_decrypted((unsigned long)mem, pgcount);
 			if (ret) {
 				/* It may be unsafe to free 'mem' */
@@ -666,6 +669,12 @@ bool __weak hv_isolation_type_tdx(void)
 }
 EXPORT_SYMBOL_GPL(hv_isolation_type_tdx);
 
+bool __weak hv_isolation_hw_cvm(void)
+{
+	return false;
+}
+EXPORT_SYMBOL_GPL(hv_isolation_hw_cvm);
+
 void __weak hv_setup_vmbus_handler(void (*handler)(void))
 {
 }
@@ -772,6 +781,9 @@ static const struct hv_status_info hv_status_infos[] = {
 	_STATUS_INFO(HV_STATUS_UNKNOWN_PROPERTY,		-EIO),
 	_STATUS_INFO(HV_STATUS_PROPERTY_VALUE_OUT_OF_RANGE,	-EIO),
 	_STATUS_INFO(HV_STATUS_INSUFFICIENT_MEMORY,		-ENOMEM),
+	_STATUS_INFO(HV_STATUS_INSUFFICIENT_CONTIGUOUS_MEMORY,	-ENOMEM),
+	_STATUS_INFO(HV_STATUS_INSUFFICIENT_ROOT_MEMORY,	-ENOMEM),
+	_STATUS_INFO(HV_STATUS_INSUFFICIENT_CONTIGUOUS_ROOT_MEMORY,	-ENOMEM),
 	_STATUS_INFO(HV_STATUS_INVALID_PARTITION_ID,		-EINVAL),
 	_STATUS_INFO(HV_STATUS_INVALID_VP_INDEX,		-EINVAL),
 	_STATUS_INFO(HV_STATUS_NOT_FOUND,			-EIO),
@@ -780,6 +792,7 @@ static const struct hv_status_info hv_status_infos[] = {
 	_STATUS_INFO(HV_STATUS_INSUFFICIENT_BUFFERS,		-EIO),
 	_STATUS_INFO(HV_STATUS_NOT_ACKNOWLEDGED,		-EIO),
 	_STATUS_INFO(HV_STATUS_INVALID_VP_STATE,		-EIO),
+	_STATUS_INFO(HV_STATUS_OBJECT_IN_USE,			-EBUSY),
 	_STATUS_INFO(HV_STATUS_NO_RESOURCES,			-EIO),
 	_STATUS_INFO(HV_STATUS_PROCESSOR_FEATURE_NOT_SUPPORTED,	-EIO),
 	_STATUS_INFO(HV_STATUS_INVALID_LP_INDEX,		-EINVAL),
@@ -787,7 +800,7 @@ static const struct hv_status_info hv_status_infos[] = {
 	_STATUS_INFO(HV_STATUS_INVALID_LP_INDEX,		-EIO),
 	_STATUS_INFO(HV_STATUS_INVALID_REGISTER_VALUE,		-EIO),
 	_STATUS_INFO(HV_STATUS_OPERATION_FAILED,		-EIO),
-	_STATUS_INFO(HV_STATUS_TIME_OUT,			-EIO),
+	_STATUS_INFO(HV_STATUS_TIMEOUT,				-EIO),
 	_STATUS_INFO(HV_STATUS_CALL_PENDING,			-EIO),
 	_STATUS_INFO(HV_STATUS_VTL_ALREADY_ENABLED,		-EIO),
 #undef _STATUS_INFO
@@ -839,3 +852,87 @@ const char *hv_result_to_string(u64 status)
 	return "Unknown";
 }
 EXPORT_SYMBOL_GPL(hv_result_to_string);
+
+struct resource hv_mshv_res[HV_MAX_RESVD_RANGES];
+u32 ranges_nr;
+
+/*
+ * Parse "hyperv_resvd_new=<size>!<address>,<size>!<address>,...", specifying a
+ * list of memory ranges that are reserved by the loader for the hypervisor.
+ */
+static int __init hv_parse_hyperv_resvd_new(char *arg)
+{
+	unsigned long long region_start, region_sz;
+	int i = 0;
+	char *curr = arg;
+
+	if (is_kdump_kernel())
+		return 0;
+
+	while (*curr != 0) {
+		if (i >= HV_MAX_RESVD_RANGES) {
+			pr_err("Hyper-V: too many hyperv_resvd_new ranges specified: %s\n", arg);
+			BUG();
+		}
+
+		region_sz = simple_strtoull(curr, &curr, 16);
+		if (!region_sz) {
+			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
+			BUG();
+		}
+
+		if (*curr != '!') {
+			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
+			BUG();
+		}
+
+		++curr;
+
+		region_start = simple_strtoull(curr, &curr, 16);
+		if (region_start == 0) {
+			pr_err("Hyper-V: invalid format for hyperv_resvd_new: %s\n", arg);
+			BUG();
+		}
+
+		memblock_reserve(region_start, region_sz);
+
+		hv_mshv_res[i].name = "Hypervisor Code and Data";
+		hv_mshv_res[i].flags = IORESOURCE_BUSY | IORESOURCE_SYSTEM_RAM;
+		hv_mshv_res[i].start = region_start;
+		hv_mshv_res[i].end = region_start + region_sz - 1;
+
+		if (*curr == ',')
+			++curr;
+
+		++i;
+	}
+
+	ranges_nr = i;
+
+	return 0;
+}
+early_param("hyperv_resvd_new", hv_parse_hyperv_resvd_new);
+
+/*
+ * Log memory ranges that the hypervisor uses. The ranges are marked
+ * by a custom bootloader.
+ */
+void __init hv_dump_mshv_memory(void)
+{
+	u64 start, end;
+	int i;
+
+	for (i = 0; i < ranges_nr; i++) {
+		start = hv_mshv_res[i].start;
+		end = hv_mshv_res[i].end;
+		pr_info("Hyper-V reserve [mem %#018Lx-%#018Lx]\n", start, end);
+	}
+}
+
+void __init hv_mark_resources(void)
+{
+	int i, max = ARRAY_SIZE(hv_mshv_res);
+
+	for (i = 0; i < max && hv_mshv_res[i].end; i++)
+		insert_resource(&iomem_resource, &hv_mshv_res[i]);
+}
