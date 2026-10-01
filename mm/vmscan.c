@@ -2102,6 +2102,17 @@ static unsigned long shrink_inactive_list(unsigned long nr_to_scan,
 			reclaim_throttle(pgdat, VMSCAN_THROTTLE_WRITEBACK);
 	}
 
+	/*
+	 * Filesystem writeback is no longer submitted from direct reclaim.  If
+	 * memcg reclaim finds that every writeback folio has already cycled
+	 * through reclaim once, let IO completion make progress instead of
+	 * immediately cycling the batch again.
+	 */
+	if (cgroup_reclaim(sc) && writeback_throttling_sane(sc) &&
+	    stat.nr_writeback && stat.nr_congested == stat.nr_writeback &&
+	    current_may_throttle())
+		reclaim_throttle(pgdat, VMSCAN_THROTTLE_WRITEBACK);
+
 	sc->nr.dirty += stat.nr_dirty;
 	sc->nr.congested += stat.nr_congested;
 	sc->nr.unqueued_dirty += stat.nr_unqueued_dirty;
