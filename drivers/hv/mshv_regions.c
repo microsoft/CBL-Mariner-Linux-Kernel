@@ -357,6 +357,17 @@ static void mshv_region_destroy(struct kref *ref)
 	if (region->mreg_type == MSHV_REGION_TYPE_MEM_MOVABLE)
 		mshv_region_movable_fini(region);
 
+	/* Finalizing the partition already removes its GPA mappings. */
+	if (partition->pt_initialized) {
+		ret = mshv_region_unmap(region);
+		if (ret) {
+			pt_err(partition,
+			       "Failed to unmap memory region (guest_pfn: %llu): %d\n",
+			       region->start_gfn, ret);
+			return;
+		}
+	}
+
 	if (mshv_partition_encrypted(partition)) {
 		ret = mshv_region_share(region);
 		if (ret) {
@@ -366,8 +377,6 @@ static void mshv_region_destroy(struct kref *ref)
 			return;
 		}
 	}
-
-	mshv_region_unmap(region);
 
 	mshv_region_invalidate(region);
 
