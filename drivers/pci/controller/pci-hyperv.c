@@ -288,33 +288,6 @@ struct tran_int_desc {
 } __packed;
 
 /*
- * On a nested root partition a vPCI MSI is mapped in the hypervisor with a
- * MAP_DEVICE_INTERRUPT hypercall in hv_arch_irq_unmask().  Keep the entry the
- * hypervisor returns next to the per-interrupt transaction descriptor so the
- * mapping can be removed again with UNMAP_DEVICE_INTERRUPT when the interrupt
- * is torn down.  tran_int_desc stays first: chip_data is used as a struct
- * tran_int_desc throughout this driver.
- */
-struct hv_msi_int_entry {
-	struct tran_int_desc		int_desc;
-	struct hv_interrupt_entry	hv_entry;
-	unsigned int			mapped_vector;
-};
-
-static void hv_vmbus_unmap_msi_interrupt(struct pci_dev *pdev __maybe_unused,
-					 void *chip_data)
-{
-	struct hv_msi_int_entry *ie = chip_data;
-
-	if (!ie || !ie->hv_entry.source)
-		return;
-#ifdef CONFIG_X86
-	hv_unmap_msi_interrupt(pdev, &ie->hv_entry);
-#endif
-	memset(&ie->hv_entry, 0, sizeof(ie->hv_entry));
-}
-
-/*
  * A generic message format for virtual PCI.
  * Specific message formats are defined later in the file.
  */
@@ -746,63 +719,18 @@ out:
 			"%s() failed: %#llx", __func__, res);
 }
 
-static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg);
-
 static void hv_arch_irq_unmask(struct irq_data *data)
 {
-	if (hv_root_partition()) {
+	if (hv_root_partition())
 		/*
 		 * In case of the nested root partition, the nested hypervisor
 		 * is taking care of interrupt remapping and thus the
 		 * MAP_DEVICE_INTERRUPT hypercall is required instead of
 		 * RETARGET_INTERRUPT.
-		 *
-		 * Keep the returned entry so the mapping can be removed again
-		 * when the interrupt is re-targeted or torn down.
-		 *
-		 * This is also the re-target point.  The core calls us from
-		 * __irq_move_irq() with the interrupt masked once the new
-		 * vector has been assigned, so if the vector changed the vmbus
-		 * interrupt is re-composed for it first -- PCI_CREATE_INTERRUPT
-		 * carries the vector, so the device would otherwise keep
-		 * signalling the one it was created with.
 		 */
-		struct hv_msi_int_entry *ie = data->chip_data;
-		unsigned int vec = hv_msi_get_int_vector(data);
-
-		/*
-		 * A NULL chip_data means hv_compose_msi_msg() failed and the
-		 * interrupt was never set up, so there is nothing to map.
-		 */
-		if (!ie)
-			return;
-
-		/* Already mapped for this vector, nothing changed. */
-		if (ie->mapped_vector == vec && ie->hv_entry.source)
-			return;
-
-		if (ie->mapped_vector && ie->mapped_vector != vec) {
-			struct msi_msg msg;
-
-			hv_compose_msi_msg(data, &msg);
-
-			ie = data->chip_data;
-			if (!ie)
-				return;
-
-			if (data->chip->irq_write_msi_msg)
-				data->chip->irq_write_msi_msg(data, &msg);
-		}
-
-		if (hv_map_msi_interrupt(data, &ie->hv_entry)) {
-			memset(&ie->hv_entry, 0, sizeof(ie->hv_entry));
-			ie->mapped_vector = 0;
-			return;
-		}
-		ie->mapped_vector = vec;
-	} else {
+		(void)hv_map_msi_interrupt(data, NULL);
+	else
 		hv_irq_retarget_interrupt(data);
-	}
 }
 #elif defined(CONFIG_ARM64)
 /*
@@ -1335,18 +1263,7 @@ static void _hv_pcifront_read_config(struct hv_pci_dev *hpdev, int where,
 			 */
 			mb();
 		}
-
 		spin_unlock_irqrestore(&hbus->config_lock, flags);
-
-		/*
-		 * Make sure PCI_INTERRUPT_PIN is hard-wired to 0, since it
-		 * may be read using a 32bit read, which is skipped by the
-		 * above emulation.
-		 */
-		if ((PCI_INTERRUPT_PIN >= where) &&
-		    (PCI_INTERRUPT_PIN <= (where + size))) {
-			*((char *)val + PCI_INTERRUPT_PIN - where) = 0;
-		}
 	} else {
 		dev_err(dev, "Attempt to read beyond a function's config space.\n");
 	}
@@ -1876,7 +1793,6 @@ static void hv_msi_free(struct irq_domain *domain, unsigned int irq)
 		return;
 	}
 
-	hv_vmbus_unmap_msi_interrupt(pdev, int_desc);
 	hv_int_desc_free(hpdev, int_desc);
 	put_pcichild(hpdev);
 }
@@ -2108,15 +2024,10 @@ static void hv_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	if (data->chip_data && !multi_msi) {
 		int_desc = data->chip_data;
 		data->chip_data = NULL;
-		/*
-		 * The descriptor is about to be destroyed, so release the
-		 * hypervisor mapping that belongs to it first.
-		 */
-		hv_vmbus_unmap_msi_interrupt(pdev, int_desc);
 		hv_int_desc_free(hpdev, int_desc);
 	}
 
-	int_desc = kzalloc(sizeof(struct hv_msi_int_entry), GFP_ATOMIC);
+	int_desc = kzalloc(sizeof(*int_desc), GFP_ATOMIC);
 	if (!int_desc)
 		goto drop_reference;
 
@@ -2328,11 +2239,22 @@ static const struct msi_parent_ops hv_pcie_msi_parent_ops = {
 	.init_dev_msi_info	= hv_pcie_init_dev_msi_info,
 };
 
+static int hv_irq_set_affinity(struct irq_data *data,
+				const struct cpumask *dest, bool force)
+{
+	if (hv_nested && hv_root_partition()) {
+		printk_once("Hyper-V: IRQ affinity change in nested root partition is currently not available\n");
+		return -EPERM;
+	}
+
+	return irq_chip_set_affinity_parent(data, dest, force);
+}
+
 /* HW Interrupt Chip Descriptor */
 static struct irq_chip hv_msi_irq_chip = {
 	.name			= "Hyper-V PCIe MSI",
 	.irq_compose_msi_msg	= hv_compose_msi_msg,
-	.irq_set_affinity	= irq_chip_set_affinity_parent,
+	.irq_set_affinity	= hv_irq_set_affinity,
 	.irq_ack		= irq_chip_ack_parent,
 	.irq_eoi		= irq_chip_eoi_parent,
 	.irq_mask		= hv_irq_mask,
@@ -2369,34 +2291,9 @@ static void hv_pcie_domain_free(struct irq_domain *d, unsigned int virq, unsigne
 	irq_domain_free_irqs_top(d, virq, nr_irqs);
 }
 
-/*
- * Runs from irq_domain_deactivate_irq() during irq_shutdown(), before the
- * parent (x86 vector) domain is deactivated and the (cpu, vector) is returned
- * to the matrix allocator, so a freed vector can never collide with a stale
- * hypervisor entry when it is reused.
- */
-static void hv_pcie_domain_deactivate(struct irq_domain *d,
-				      struct irq_data *data)
-{
-	struct msi_desc *msi_desc;
-	struct pci_dev *pdev;
-
-	if (!hv_root_partition())
-		return;
-
-	msi_desc = irq_data_get_msi_desc(data);
-	if (!msi_desc)
-		return;
-
-	pdev = msi_desc_to_pci_dev(msi_desc);
-	if (pdev)
-		hv_vmbus_unmap_msi_interrupt(pdev, data->chip_data);
-}
-
 static const struct irq_domain_ops hv_pcie_domain_ops = {
-	.alloc		= hv_pcie_domain_alloc,
-	.free		= hv_pcie_domain_free,
-	.deactivate	= hv_pcie_domain_deactivate,
+	.alloc	= hv_pcie_domain_alloc,
+	.free	= hv_pcie_domain_free,
 };
 
 /**

@@ -216,8 +216,8 @@ static void entry_to_msi_msg(struct hv_interrupt_entry *entry,
 	msg->data = entry->msi_entry.data.as_uint32;
 }
 
-int hv_unmap_msi_interrupt(struct pci_dev *pdev,
-			   struct hv_interrupt_entry *irq_entry);
+static int hv_unmap_msi_interrupt(struct pci_dev *pdev,
+				  struct hv_interrupt_entry *irq_entry);
 
 static void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 {
@@ -285,15 +285,14 @@ static void hv_irq_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	entry_to_msi_msg(data->chip_data, msg);
 }
 
-int hv_unmap_msi_interrupt(struct pci_dev *pdev,
-			   struct hv_interrupt_entry *irq_entry)
+static int hv_unmap_msi_interrupt(struct pci_dev *pdev,
+				  struct hv_interrupt_entry *irq_entry)
 {
 	union hv_device_id hv_devid;
 
 	hv_devid.as_uint64 = hv_devid_from_pdev(pdev);
 	return hv_unmap_interrupt(hv_devid.as_uint64, irq_entry);
 }
-EXPORT_SYMBOL_GPL(hv_unmap_msi_interrupt);
 
 /* NB: during map, hv_interrupt_entry is saved via data->chip_data */
 static void hv_teardown_msi_irq(struct pci_dev *pdev, struct irq_data *irqd)
