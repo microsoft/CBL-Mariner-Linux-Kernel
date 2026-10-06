@@ -20,7 +20,20 @@ config CRYPTO_LIB_ARC4
 config CRYPTO_LIB_GF128MUL
 	tristate
 
-config CRYPTO_ARCH_HAVE_LIB_BLAKE2S
+config CRYPTO_LIB_BLAKE2B
+	tristate
+	help
+	  The BLAKE2b library functions.  Select this if your module uses any of
+	  the functions from <crypto/blake2b.h>.
+
+config CRYPTO_LIB_BLAKE2B_ARCH
+	bool
+	depends on CRYPTO_LIB_BLAKE2B && !UML
+	default y if ARM && KERNEL_MODE_NEON
+
+# BLAKE2s support is always built-in, so there's no CRYPTO_LIB_BLAKE2S option.
+
+config CRYPTO_LIB_BLAKE2S_ARCH
 	bool
 	help
 	  Declares whether the architecture provides an arch-specific
@@ -28,7 +41,7 @@ config CRYPTO_ARCH_HAVE_LIB_BLAKE2S
 	  either builtin or as a module.
 
 config CRYPTO_LIB_BLAKE2S_GENERIC
-	def_bool !CRYPTO_ARCH_HAVE_LIB_BLAKE2S
+	def_bool y
 	help
 	  This symbol can be depended upon by arch implementations of the
 	  Blake2s library interface that require the generic code as a
