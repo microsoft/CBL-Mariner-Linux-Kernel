@@ -1131,6 +1131,7 @@ cifs_aio_ctx_release(struct kref *refcount)
 {
 	struct cifs_aio_ctx *ctx = container_of(refcount,
 					struct cifs_aio_ctx, refcount);
+	struct cifs_sb_info *cifs_sb = CIFS_SB(ctx->cfile->dentry->d_sb);
 
 	cifsFileInfo_put(ctx->cfile);
 
@@ -1157,6 +1158,9 @@ cifs_aio_ctx_release(struct kref *refcount)
 	}
 
 	kfree(ctx);
+
+	if (atomic_dec_and_test(&cifs_sb->outstanding_aio))
+		wake_up_var(&cifs_sb->outstanding_aio);
 }
 
 /**

@@ -2433,6 +2433,26 @@ retry_old_session:
 
 	ses->sectype = ctx->sectype;
 	ses->sign = ctx->sign;
+
+	/*
+	 *Explicitly marking upcall_target mount option for easier handling
+	 * by cifs_spnego.c and eventually cifs.upcall.c
+	 */
+
+	switch (ctx->upcall_target) {
+	case UPTARGET_UNSPECIFIED: /* default to app */
+	case UPTARGET_APP:
+		ses->upcall_target = UPTARGET_APP;
+		break;
+	case UPTARGET_MOUNT:
+		ses->upcall_target = UPTARGET_MOUNT;
+		break;
+	default:
+		// should never happen
+		ses->upcall_target = UPTARGET_APP;
+		break;
+	}
+
 	ses->local_nls = load_nls(ctx->local_nls->charset);
 
 	/* add server as first channel */
@@ -3396,6 +3416,7 @@ int cifs_setup_cifs_sb(struct cifs_sb_info *cifs_sb)
 
 	spin_lock_init(&cifs_sb->tlink_tree_lock);
 	cifs_sb->tlink_tree = RB_ROOT;
+	atomic_set(&cifs_sb->outstanding_aio, 0);
 
 	cifs_dbg(FYI, "file mode: %04ho  dir mode: %04ho\n",
 		 ctx->file_mode, ctx->dir_mode);
