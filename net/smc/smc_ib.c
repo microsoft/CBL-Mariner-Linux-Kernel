@@ -20,6 +20,9 @@
 #include <linux/wait.h>
 #include <linux/mutex.h>
 #include <linux/inetdevice.h>
+#include <net/ipv6.h>
+#include <net/ip6_route.h>
+#include <net/addrconf.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_cache.h>
 
@@ -29,6 +32,7 @@
 #include "smc_wr.h"
 #include "smc.h"
 #include "smc_netlink.h"
+#include "smc_sysctl.h"
 
 #define SMC_MAX_CQE 32766	/* max. # of completion queue elements */
 
@@ -66,6 +70,7 @@ static int smc_ib_modify_qp_rtr(struct smc_link *lnk)
 		IB_QP_RQ_PSN | IB_QP_MAX_DEST_RD_ATOMIC | IB_QP_MIN_RNR_TIMER;
 	struct ib_qp_attr qp_attr;
 	u8 hop_lim = 1;
+	u8 tos;
 
 	memset(&qp_attr, 0, sizeof(qp_attr));
 	qp_attr.qp_state = IB_QPS_RTR;
@@ -74,7 +79,15 @@ static int smc_ib_modify_qp_rtr(struct smc_link *lnk)
 	rdma_ah_set_port_num(&qp_attr.ah_attr, lnk->ibport);
 	if (lnk->lgr->smc_version == SMC_V2 && lnk->lgr->uses_gateway)
 		hop_lim = IPV6_DEFAULT_HOPLIMIT;
-	rdma_ah_set_grh(&qp_attr.ah_attr, NULL, 0, lnk->sgid_index, hop_lim, 0);
+
+	/* Apply sysctl-configured ToS/Traffic Class to the RoCE v2 GRH.
+	 * The backing variable is module-local (see net/smc/smc_sysctl.c) so
+	 * the feature ships as a plain module update without touching struct
+	 * net. Downside vs a per-netns sysctl: one value per host.
+	 */
+	tos = (u8)READ_ONCE(smc_sysctl_smcr_tos);
+
+	rdma_ah_set_grh(&qp_attr.ah_attr, NULL, 0, lnk->sgid_index, hop_lim, tos);
 	rdma_ah_set_dgid_raw(&qp_attr.ah_attr, lnk->peer_gid);
 	if (lnk->lgr->smc_version == SMC_V2 && lnk->lgr->uses_gateway)
 		memcpy(&qp_attr.ah_attr.roce.dmac, lnk->lgr->nexthop_mac,
@@ -225,6 +238,71 @@ out:
 	return -ENOENT;
 }
 
+#if IS_ENABLED(CONFIG_IPV6)
+/* determine route and get the next hop mac address for IPv6 */
+int smc_ib_find_route_v6(struct net *net, const struct in6_addr *saddr,
+			 const struct in6_addr *daddr,
+			 u8 nexthop_mac[], u8 *uses_gateway)
+{
+	struct neighbour *neigh = NULL;
+	struct dst_entry *dst = NULL;
+	struct flowi6 fl6 = {
+		.saddr = *saddr,
+		.daddr = *daddr
+	};
+	struct rt6_info *rt;
+
+	if (ipv6_addr_any(daddr))
+		goto out;
+
+	dst = ipv6_stub->ipv6_dst_lookup_flow(net, NULL, &fl6, NULL);
+	if (IS_ERR(dst)) {
+		dst = NULL;
+		goto out;
+	}
+
+	rt = (struct rt6_info *)dst;
+
+	/* Check if using gateway */
+	if (rt->rt6i_flags & RTF_GATEWAY)
+		*uses_gateway = 1;
+	else
+		*uses_gateway = 0;
+
+	/* Get next hop MAC address */
+	neigh = dst_neigh_lookup(dst, &fl6.daddr);
+	if (neigh) {
+		memcpy(nexthop_mac, neigh->ha, ETH_ALEN);
+		neigh_release(neigh);
+		dst_release(dst);
+		return 0;
+	}
+out:
+	if (dst)
+		dst_release(dst);
+	return -ENOENT;
+}
+#endif
+
+/* Address-family aware route lookup wrapper */
+int smc_ib_find_route_af(struct net *net, struct smc_init_info_smcrv2 *smcrv2)
+{
+	if (smcrv2->addr_family == AF_INET) {
+		return smc_ib_find_route(net, smcrv2->saddr, smcrv2->daddr,
+					 smcrv2->nexthop_mac,
+					 &smcrv2->uses_gateway);
+	}
+#if IS_ENABLED(CONFIG_IPV6)
+	else if (smcrv2->addr_family == AF_INET6) {
+		return smc_ib_find_route_v6(net, &smcrv2->saddr6,
+					    &smcrv2->daddr6,
+					    smcrv2->nexthop_mac,
+					    &smcrv2->uses_gateway);
+	}
+#endif
+	return -EAFNOSUPPORT;
+}
+
 static int smc_ib_determine_gid_rcu(const struct net_device *ndev,
 				    const struct ib_gid_attr *attr,
 				    u8 gid[], u8 *sgid_index,
@@ -237,15 +315,26 @@ static int smc_ib_determine_gid_rcu(const struct net_device *ndev,
 			*sgid_index = attr->index;
 		return 0;
 	}
-	if (smcrv2 && attr->gid_type == IB_GID_TYPE_ROCE_UDP_ENCAP &&
-	    smc_ib_gid_to_ipv4((u8 *)&attr->gid) != cpu_to_be32(INADDR_NONE)) {
+
+	/* SMC-Rv2 requires UDP encapsulation */
+	if (!smcrv2 || attr->gid_type != IB_GID_TYPE_ROCE_UDP_ENCAP)
+		goto out;
+
+	/* SMC-Rv2 with IPv4 */
+	if (smcrv2->addr_family == AF_INET) {
 		struct in_device *in_dev = __in_dev_get_rcu(ndev);
 		struct net *net = dev_net(ndev);
 		const struct in_ifaddr *ifa;
 		bool subnet_match = false;
+		__be32 gid_addr;
+
+		gid_addr = smc_ib_gid_to_ipv4((u8 *)&attr->gid);
+		if (gid_addr == cpu_to_be32(INADDR_NONE))
+			goto out;
 
 		if (!in_dev)
 			goto out;
+
 		in_dev_for_each_ifa_rcu(ifa, in_dev) {
 			if (!inet_ifa_match(smcrv2->saddr, ifa))
 				continue;
@@ -254,6 +343,7 @@ static int smc_ib_determine_gid_rcu(const struct net_device *ndev,
 		}
 		if (!subnet_match)
 			goto out;
+
 		if (smcrv2->daddr && smc_ib_find_route(net, smcrv2->saddr,
 						       smcrv2->daddr,
 						       smcrv2->nexthop_mac,
@@ -266,6 +356,50 @@ static int smc_ib_determine_gid_rcu(const struct net_device *ndev,
 			*sgid_index = attr->index;
 		return 0;
 	}
+
+#if IS_ENABLED(CONFIG_IPV6)
+	/* SMC-Rv2 with IPv6 */
+	if (smcrv2->addr_family == AF_INET6) {
+		struct inet6_dev *in6_dev = __in6_dev_get(ndev);
+		struct inet6_ifaddr *ifa6;
+		struct net *net = dev_net(ndev);
+		struct in6_addr gid_addr;
+		bool subnet_match = false;
+
+		if (!smc_ib_gid_to_ipv6((u8 *)&attr->gid, &gid_addr))
+			goto out;
+
+		if (!in6_dev)
+			goto out;
+
+		/* Check if source address matches any interface address */
+		list_for_each_entry(ifa6, &in6_dev->addr_list, if_list) {
+			if (ipv6_addr_type(&ifa6->addr) & IPV6_ADDR_LINKLOCAL)
+				continue;
+			if (ipv6_prefix_equal(&ifa6->addr, &smcrv2->saddr6,
+					      ifa6->prefix_len)) {
+				subnet_match = true;
+				break;
+			}
+		}
+		if (!subnet_match)
+			goto out;
+
+		/* Route validation */
+		if (!ipv6_addr_any(&smcrv2->daddr6) &&
+		    smc_ib_find_route_v6(net, &smcrv2->saddr6, &smcrv2->daddr6,
+					 smcrv2->nexthop_mac,
+					 &smcrv2->uses_gateway))
+			goto out;
+
+		if (gid)
+			memcpy(gid, &attr->gid, SMC_GID_SIZE);
+		if (sgid_index)
+			*sgid_index = attr->index;
+		return 0;
+	}
+#endif
+
 out:
 	return -ENODEV;
 }

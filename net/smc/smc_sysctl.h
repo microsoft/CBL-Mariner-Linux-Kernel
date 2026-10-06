@@ -18,6 +18,12 @@
 int __net_init smc_sysctl_net_init(struct net *net);
 void __net_exit smc_sysctl_net_exit(struct net *net);
 
+/* Module-global ToS/Traffic Class byte applied to the RoCE v2 GRH on new
+ * SMC-R QP-RTR transitions. Per-host scope (not per-netns) so the feature
+ * ships as a module-only update. See net/smc/smc_sysctl.c.
+ */
+extern unsigned int smc_sysctl_smcr_tos;
+
 #else
 
 static inline int smc_sysctl_net_init(struct net *net)
@@ -27,6 +33,8 @@ static inline int smc_sysctl_net_init(struct net *net)
 }
 
 static inline void smc_sysctl_net_exit(struct net *net) { }
+
+static const unsigned int smc_sysctl_smcr_tos;
 
 #endif /* CONFIG_SYSCTL */
 
