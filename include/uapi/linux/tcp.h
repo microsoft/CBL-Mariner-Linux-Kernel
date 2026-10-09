@@ -185,6 +185,10 @@ enum tcp_fastopen_client_fail {
 #define TCPI_OPT_SYN_DATA	32 /* SYN-ACK acked data in SYN sent or rcvd */
 #define TCPI_OPT_USEC_TS	64 /* usec timestamps */
 #define TCPI_OPT_TFO_CHILD	128 /* child from a Fast Open option on SYN */
+/*
+ * TCPI_OPT_ECN_LOW is exported via the tcpi_ecn_low bit in tcp_info because
+ * tcpi_options is a u8 with all bits already assigned upstream.
+ */
 
 /*
  * Sender's congestion state indicating normal or abnormal situations
@@ -234,7 +238,8 @@ struct tcp_info {
 	__u8	tcpi_backoff;
 	__u8	tcpi_options;
 	__u8	tcpi_snd_wscale : 4, tcpi_rcv_wscale : 4;
-	__u8	tcpi_delivery_rate_app_limited:1, tcpi_fastopen_client_fail:2;
+	__u8	tcpi_delivery_rate_app_limited:1, tcpi_fastopen_client_fail:2,
+		tcpi_ecn_low:1;
 
 	__u32	tcpi_rto;
 	__u32	tcpi_ato;
