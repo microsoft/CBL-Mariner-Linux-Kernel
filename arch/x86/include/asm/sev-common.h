@@ -125,6 +125,10 @@ enum psc_op {
 	/* GHCBData[63:32] */				\
 	(((u64)(v) & GENMASK_ULL(63, 32)) >> 32)
 
+/* GHCB GPA Unregister */
+#define GHCB_MSR_UNREG_GPA_REQ		0x018
+#define GHCB_MSR_UNREG_GPA_RESP		0x019
+
 /* GHCB Hypervisor Feature Request/Response */
 #define GHCB_MSR_HV_FT_REQ		0x080
 #define GHCB_MSR_HV_FT_RESP		0x081
@@ -137,6 +141,7 @@ enum psc_op {
 #define GHCB_HV_FT_SNP			BIT_ULL(0)
 #define GHCB_HV_FT_SNP_AP_CREATION	BIT_ULL(1)
 #define GHCB_HV_FT_SNP_MULTI_VMPL	BIT_ULL(5)
+#define GHCB_HV_FT_GHCB_UNREGISTER	BIT_ULL(8)
 
 /*
  * SNP Page State Change NAE event

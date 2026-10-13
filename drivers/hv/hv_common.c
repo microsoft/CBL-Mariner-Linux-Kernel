@@ -259,7 +259,9 @@ static void hv_kmsg_dump_register(void)
 
 static inline bool hv_output_page_exists(void)
 {
-	return hv_parent_partition() || IS_ENABLED(CONFIG_HYPERV_VTL_MODE);
+	/* Enlightened SNP guests use an output page for APIC-to-VP lookups. */
+	return hv_parent_partition() || IS_ENABLED(CONFIG_HYPERV_VTL_MODE) ||
+		(!ms_hyperv.paravisor_present && hv_isolation_type_snp());
 }
 
 void __init hv_get_partition_id(void)
@@ -373,7 +375,7 @@ int __init hv_common_init(void)
 	hyperv_pcpu_input_arg = alloc_percpu(void  *);
 	BUG_ON(!hyperv_pcpu_input_arg);
 
-	/* Allocate the per-CPU state for output arg for root */
+	/* Allocate per-CPU output state when needed by this partition. */
 	if (hv_output_page_exists()) {
 		hyperv_pcpu_output_arg = alloc_percpu(void *);
 		BUG_ON(!hyperv_pcpu_output_arg);
