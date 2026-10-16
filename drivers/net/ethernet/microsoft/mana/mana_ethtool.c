@@ -20,8 +20,6 @@ static const struct mana_stats_desc mana_eth_stats[] = {
 					tx_cqe_unknown_type)},
 	{"tx_linear_pkt_cnt", offsetof(struct mana_ethtool_stats,
 				       tx_linear_pkt_cnt)},
-	{"rx_coalesced_err", offsetof(struct mana_ethtool_stats,
-					rx_coalesced_err)},
 	{"rx_cqe_unknown_type", offsetof(struct mana_ethtool_stats,
 					rx_cqe_unknown_type)},
 };
@@ -151,7 +149,7 @@ static void mana_get_strings(struct net_device *ndev, u32 stringset, u8 *data)
 {
 	struct mana_port_context *apc = netdev_priv(ndev);
 	unsigned int num_queues = apc->num_queues;
-	int i;
+	int i, j;
 
 	if (stringset != ETH_SS_STATS)
 		return;
@@ -170,6 +168,9 @@ static void mana_get_strings(struct net_device *ndev, u32 stringset, u8 *data)
 		ethtool_sprintf(&data, "rx_%d_xdp_drop", i);
 		ethtool_sprintf(&data, "rx_%d_xdp_tx", i);
 		ethtool_sprintf(&data, "rx_%d_xdp_redirect", i);
+		ethtool_sprintf(&data, "rx_%d_pkt_len0_err", i);
+		for (j = 0; j < MANA_CQE_COAL_PKTS_8 - 1; j++)
+			ethtool_sprintf(&data, "rx_%d_coalesced_cqe_%d", i, j + 2);
 	}
 
 	for (i = 0; i < num_queues; i++) {
@@ -203,6 +204,8 @@ static void mana_get_ethtool_stats(struct net_device *ndev,
 	u64 xdp_xmit;
 	u64 xdp_drop;
 	u64 xdp_tx;
+	u64 pkt_len0_err;
+	u64 coalesced_cqe[MANA_CQE_COAL_PKTS_8 - 1];
 	u64 tso_packets;
 	u64 tso_bytes;
 	u64 tso_inner_packets;
@@ -211,7 +214,7 @@ static void mana_get_ethtool_stats(struct net_device *ndev,
 	u64 short_pkt_fmt;
 	u64 csum_partial;
 	u64 mana_map_err;
-	int q, i = 0;
+	int q, i = 0, j;
 
 	if (!apc->port_is_up)
 		return;
@@ -241,6 +244,9 @@ static void mana_get_ethtool_stats(struct net_device *ndev,
 			xdp_drop = rx_stats->xdp_drop;
 			xdp_tx = rx_stats->xdp_tx;
 			xdp_redirect = rx_stats->xdp_redirect;
+			pkt_len0_err = rx_stats->pkt_len0_err;
+			for (j = 0; j < MANA_CQE_COAL_PKTS_8 - 1; j++)
+				coalesced_cqe[j] = rx_stats->coalesced_cqe[j];
 		} while (u64_stats_fetch_retry(&rx_stats->syncp, start));
 
 		data[i++] = packets;
@@ -248,6 +254,9 @@ static void mana_get_ethtool_stats(struct net_device *ndev,
 		data[i++] = xdp_drop;
 		data[i++] = xdp_tx;
 		data[i++] = xdp_redirect;
+		data[i++] = pkt_len0_err;
+		for (j = 0; j < MANA_CQE_COAL_PKTS_8 - 1; j++)
+			data[i++] = coalesced_cqe[j];
 	}
 
 	for (q = 0; q < num_queues; q++) {
@@ -397,6 +406,219 @@ static void mana_get_channels(struct net_device *ndev,
 	channel->combined_count = apc->num_queues;
 }
 
+#define MANA_RX_CQE_NSEC_DEF 2048
+static int mana_get_coalesce(struct net_device *ndev,
+			     struct ethtool_coalesce *ec,
+			     struct kernel_ethtool_coalesce *kernel_coal,
+			     struct netlink_ext_ack *extack)
+{
+	struct mana_port_context *apc = netdev_priv(ndev);
+
+	kernel_coal->rx_cqe_frames =
+		apc->cqe8_coalescing_enable ? MANA_CQE_COAL_PKTS_8 :
+		apc->cqe_coalescing_enable ? MANA_RXCOMP_OOB_NUM_PPI : 1;
+
+	kernel_coal->rx_cqe_nsecs = apc->cqe_coalescing_timeout_ns;
+
+	/* Return the default timeout value for old FW not providing
+	 * this value.
+	 */
+	if (apc->port_is_up && apc->cqe_coalescing_enable &&
+	    !kernel_coal->rx_cqe_nsecs)
+		kernel_coal->rx_cqe_nsecs = MANA_RX_CQE_NSEC_DEF;
+
+	ec->rx_coalesce_usecs = apc->intr_modr_rx_usec;
+	ec->rx_max_coalesced_frames = apc->intr_modr_rx_comp;
+
+	ec->tx_coalesce_usecs = apc->intr_modr_tx_usec;
+	ec->tx_max_coalesced_frames = apc->intr_modr_tx_comp;
+
+	ec->use_adaptive_rx_coalesce = apc->rx_dim_enabled;
+	ec->use_adaptive_tx_coalesce = apc->tx_dim_enabled;
+
+	return 0;
+}
+
+static int mana_set_coalesce(struct net_device *ndev,
+			     struct ethtool_coalesce *ec,
+			     struct kernel_ethtool_coalesce *kernel_coal,
+			     struct netlink_ext_ack *extack)
+{
+	struct mana_port_context *apc = netdev_priv(ndev);
+	struct {
+		u16 intr_modr_rx_usec;
+		u16 intr_modr_rx_comp;
+		u16 intr_modr_tx_usec;
+		u16 intr_modr_tx_comp;
+		u8 cqe_coalescing_enable;
+		u8 cqe8_coalescing_enable;
+		bool rx_dim_enabled;
+		bool tx_dim_enabled;
+	} saved;
+	bool modr_changed = false;
+	bool dim_changed = false;
+	struct gdma_context *gc;
+	u32 max_cqe_frames;
+	int err;
+
+	gc = apc->ac->gdma_dev->gdma_context;
+	max_cqe_frames = gc->cqe8_coalescing_sup ? MANA_CQE_COAL_PKTS_8 :
+						   MANA_RXCOMP_OOB_NUM_PPI;
+
+	/* Both static and dynamic interrupt moderation (DIM) rely on the
+	 * same HW capability advertised by the PF.
+	 */
+	if ((ec->use_adaptive_rx_coalesce || ec->use_adaptive_tx_coalesce ||
+	     ec->rx_coalesce_usecs || ec->tx_coalesce_usecs ||
+	     ec->rx_max_coalesced_frames || ec->tx_max_coalesced_frames) &&
+	    !(gc->pf_cap_flags1 & GDMA_PF_CAP_FLAG_1_DYN_INTERRUPT_MODERATION)) {
+		NL_SET_ERR_MSG(extack,
+			       "Interrupt Moderation is not supported by HW");
+		return -EOPNOTSUPP;
+	}
+
+	if (kernel_coal->rx_cqe_frames != 1 &&
+	    kernel_coal->rx_cqe_frames != MANA_RXCOMP_OOB_NUM_PPI &&
+	    kernel_coal->rx_cqe_frames != max_cqe_frames) {
+		NL_SET_ERR_MSG_FMT(extack,
+				   "rx-frames must be 1 or %u%s, got %u",
+				   MANA_RXCOMP_OOB_NUM_PPI,
+				   gc->cqe8_coalescing_sup ? " or 8" : "",
+				   kernel_coal->rx_cqe_frames);
+		return -EINVAL;
+	}
+
+	if (ec->rx_coalesce_usecs > MANA_INTR_MODR_USEC_MAX ||
+	    ec->tx_coalesce_usecs > MANA_INTR_MODR_USEC_MAX) {
+		NL_SET_ERR_MSG_FMT(extack,
+				   "coalesce usecs must be <= %lu",
+				   MANA_INTR_MODR_USEC_MAX);
+		return -EINVAL;
+	}
+
+	if (ec->rx_max_coalesced_frames > MANA_INTR_MODR_COMP_MAX ||
+	    ec->tx_max_coalesced_frames > MANA_INTR_MODR_COMP_MAX) {
+		NL_SET_ERR_MSG_FMT(extack,
+				   "coalesce frames must be <= %lu",
+				   MANA_INTR_MODR_COMP_MAX);
+		return -EINVAL;
+	}
+
+	if (ec->rx_coalesce_usecs != apc->intr_modr_rx_usec ||
+	    ec->rx_max_coalesced_frames != apc->intr_modr_rx_comp ||
+	    ec->tx_coalesce_usecs != apc->intr_modr_tx_usec ||
+	    ec->tx_max_coalesced_frames != apc->intr_modr_tx_comp)
+		modr_changed = true;
+
+	saved.intr_modr_rx_usec = apc->intr_modr_rx_usec;
+	saved.intr_modr_rx_comp = apc->intr_modr_rx_comp;
+	saved.intr_modr_tx_usec = apc->intr_modr_tx_usec;
+	saved.intr_modr_tx_comp = apc->intr_modr_tx_comp;
+
+	apc->intr_modr_rx_usec = ec->rx_coalesce_usecs;
+	apc->intr_modr_rx_comp = ec->rx_max_coalesced_frames;
+	apc->intr_modr_tx_usec = ec->tx_coalesce_usecs;
+	apc->intr_modr_tx_comp = ec->tx_max_coalesced_frames;
+
+	if (!!ec->use_adaptive_rx_coalesce != apc->rx_dim_enabled ||
+	    !!ec->use_adaptive_tx_coalesce != apc->tx_dim_enabled)
+		dim_changed = true;
+
+	saved.rx_dim_enabled = apc->rx_dim_enabled;
+	saved.tx_dim_enabled = apc->tx_dim_enabled;
+
+	saved.cqe_coalescing_enable = apc->cqe_coalescing_enable;
+	saved.cqe8_coalescing_enable = apc->cqe8_coalescing_enable;
+	apc->cqe_coalescing_enable =
+		kernel_coal->rx_cqe_frames >= MANA_RXCOMP_OOB_NUM_PPI;
+	apc->cqe8_coalescing_enable =
+		kernel_coal->rx_cqe_frames == MANA_CQE_COAL_PKTS_8;
+
+	if (!apc->port_is_up) {
+		WRITE_ONCE(apc->rx_dim_enabled, !!ec->use_adaptive_rx_coalesce);
+		WRITE_ONCE(apc->tx_dim_enabled, !!ec->use_adaptive_tx_coalesce);
+		return 0;
+	}
+
+	if (apc->cqe_coalescing_enable != saved.cqe_coalescing_enable ||
+	    apc->cqe8_coalescing_enable != saved.cqe8_coalescing_enable) {
+		/* CQE coalescing setting is applied via RSS configuration. */
+		err = mana_config_rss(apc, TRI_STATE_TRUE, false, false);
+		if (err) {
+			netdev_err(ndev, "Change CQE coalescing failed: %d\n",
+				   err);
+			apc->cqe_coalescing_enable =
+				saved.cqe_coalescing_enable;
+			apc->cqe8_coalescing_enable =
+				saved.cqe8_coalescing_enable;
+			apc->intr_modr_rx_usec = saved.intr_modr_rx_usec;
+			apc->intr_modr_rx_comp = saved.intr_modr_rx_comp;
+			apc->intr_modr_tx_usec = saved.intr_modr_tx_usec;
+			apc->intr_modr_tx_comp = saved.intr_modr_tx_comp;
+			return err;
+		}
+	}
+
+	if (modr_changed || dim_changed) {
+		bool new_rx_dim = !!ec->use_adaptive_rx_coalesce;
+		bool new_tx_dim = !!ec->use_adaptive_tx_coalesce;
+		bool disable_rx_dim = saved.rx_dim_enabled && !new_rx_dim;
+		bool disable_tx_dim = saved.tx_dim_enabled && !new_tx_dim;
+		bool enable_rx_dim = !saved.rx_dim_enabled && new_rx_dim;
+		bool enable_tx_dim = !saved.tx_dim_enabled && new_tx_dim;
+		int q;
+
+		/* On disable: clear the per-port flag first and
+		 * synchronize_net() so any in-flight NAPI poll observes
+		 * the new value and will not schedule further DIM work;
+		 * then drain pending work and restore the static
+		 * moderation values.
+		 */
+		if (disable_rx_dim)
+			WRITE_ONCE(apc->rx_dim_enabled, false);
+		if (disable_tx_dim)
+			WRITE_ONCE(apc->tx_dim_enabled, false);
+		if (disable_rx_dim || disable_tx_dim)
+			synchronize_net();
+
+		for (q = 0; q < apc->num_queues; q++) {
+			struct mana_cq *rx_cq = &apc->rxqs[q]->rx_cq;
+			struct mana_cq *tx_cq = &apc->tx_qp[q].tx_cq;
+
+			if (disable_rx_dim)
+				mana_dim_change(rx_cq, false);
+			else if (enable_rx_dim)
+				mana_dim_change(rx_cq, true);
+			else if (!new_rx_dim && modr_changed)
+				mana_gd_ring_dim(rx_cq->gdma_cq,
+						 apc->intr_modr_rx_usec, true,
+						 apc->intr_modr_rx_comp, true);
+
+			if (disable_tx_dim)
+				mana_dim_change(tx_cq, false);
+			else if (enable_tx_dim)
+				mana_dim_change(tx_cq, true);
+			else if (!new_tx_dim && modr_changed)
+				mana_gd_ring_dim(tx_cq->gdma_cq,
+						 apc->intr_modr_tx_usec, true,
+						 apc->intr_modr_tx_comp, true);
+		}
+
+		/* Publish the enable flag with release semantics so a
+		 * concurrent NAPI poll that observes it set also sees the DIM
+		 * (re)init done by mana_dim_change() above.
+		 */
+		if (enable_rx_dim)
+			/* pairs with smp_load_acquire() in mana_update_rx_dim() */
+			smp_store_release(&apc->rx_dim_enabled, true);
+		if (enable_tx_dim)
+			/* pairs with smp_load_acquire() in mana_update_tx_dim() */
+			smp_store_release(&apc->tx_dim_enabled, true);
+	}
+
+	return 0;
+}
+
 static int mana_set_channels(struct net_device *ndev,
 			     struct ethtool_channels *channels)
 {
@@ -517,6 +739,13 @@ static int mana_get_link_ksettings(struct net_device *ndev,
 }
 
 const struct ethtool_ops mana_ethtool_ops = {
+	.supported_coalesce_params = ETHTOOL_COALESCE_RX_CQE_FRAMES |
+				     ETHTOOL_COALESCE_RX_USECS |
+				     ETHTOOL_COALESCE_RX_MAX_FRAMES |
+				     ETHTOOL_COALESCE_TX_USECS |
+				     ETHTOOL_COALESCE_TX_MAX_FRAMES |
+				     ETHTOOL_COALESCE_USE_ADAPTIVE_RX |
+				     ETHTOOL_COALESCE_USE_ADAPTIVE_TX,
 	.get_ethtool_stats	= mana_get_ethtool_stats,
 	.get_sset_count		= mana_get_sset_count,
 	.get_strings		= mana_get_strings,
@@ -527,6 +756,8 @@ const struct ethtool_ops mana_ethtool_ops = {
 	.set_rxfh		= mana_set_rxfh,
 	.get_channels		= mana_get_channels,
 	.set_channels		= mana_set_channels,
+	.get_coalesce		= mana_get_coalesce,
+	.set_coalesce		= mana_set_coalesce,
 	.get_ringparam          = mana_get_ringparam,
 	.set_ringparam          = mana_set_ringparam,
 	.get_link_ksettings	= mana_get_link_ksettings,
