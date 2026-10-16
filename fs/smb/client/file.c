@@ -3470,9 +3470,10 @@ cifs_uncached_writedata_release(struct kref *refcount)
 {
 	struct cifs_writedata *wdata = container_of(refcount,
 					struct cifs_writedata, refcount);
+	struct cifs_aio_ctx *ctx = wdata->ctx;
 
-	kref_put(&wdata->ctx->refcount, cifs_aio_ctx_release);
 	cifs_writedata_release(refcount);
+	kref_put(&ctx->refcount, cifs_aio_ctx_release);
 }
 
 static void collect_uncached_write_data(struct cifs_aio_ctx *ctx);
@@ -3831,6 +3832,7 @@ static ssize_t __cifs_writev(
 		return -ENOMEM;
 
 	ctx->cfile = cifsFileInfo_get(cfile);
+	atomic_inc(&cifs_sb->outstanding_aio);
 
 	if (!is_sync_kiocb(iocb))
 		ctx->iocb = iocb;
@@ -4046,9 +4048,8 @@ cifs_readdata_release(struct kref *refcount)
 {
 	struct cifs_readdata *rdata = container_of(refcount,
 					struct cifs_readdata, refcount);
+	struct cifs_aio_ctx *ctx = rdata->ctx;
 
-	if (rdata->ctx)
-		kref_put(&rdata->ctx->refcount, cifs_aio_ctx_release);
 #ifdef CONFIG_CIFS_SMB_DIRECT
 	if (rdata->mr) {
 		smbd_deregister_mr(rdata->mr);
@@ -4059,6 +4060,9 @@ cifs_readdata_release(struct kref *refcount)
 		cifsFileInfo_put(rdata->cfile);
 
 	kfree(rdata);
+
+	if (ctx)
+		kref_put(&ctx->refcount, cifs_aio_ctx_release);
 }
 
 static void collect_uncached_read_data(struct cifs_aio_ctx *ctx);
@@ -4366,6 +4370,7 @@ static ssize_t __cifs_readv(
 	ctx->direct_io	= direct;
 	ctx->len	= len;
 	ctx->cfile	= cifsFileInfo_get(cfile);
+	atomic_inc(&cifs_sb->outstanding_aio);
 	ctx->nr_pinned_pages = 0;
 
 	if (!is_sync_kiocb(iocb))
