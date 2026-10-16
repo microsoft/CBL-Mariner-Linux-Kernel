@@ -69,6 +69,27 @@ static inline __be32 smc_ib_gid_to_ipv4(u8 gid[SMC_GID_SIZE])
 	return cpu_to_be32(INADDR_NONE);
 }
 
+#if IS_ENABLED(CONFIG_IPV6)
+/* Extract IPv6 address from GID for SMC-Rv2 */
+static inline bool smc_ib_gid_to_ipv6(u8 gid[SMC_GID_SIZE],
+				      struct in6_addr *addr)
+{
+	struct in6_addr *gid_addr = (struct in6_addr *)gid;
+
+	/* Skip link-local addresses */
+	if (ipv6_addr_type(gid_addr) & IPV6_ADDR_LINKLOCAL)
+		return false;
+
+	/* Skip IPv4-mapped addresses (handle via IPv4 path) */
+	if (ipv6_addr_v4mapped(gid_addr))
+		return false;
+
+	/* Copy the IPv6 address */
+	memcpy(addr, gid_addr, sizeof(*addr));
+	return !ipv6_addr_any(addr);
+}
+#endif
+
 static inline struct net *smc_ib_net(struct smc_ib_device *smcibdev)
 {
 	if (smcibdev && smcibdev->ibdev)
@@ -114,6 +135,12 @@ int smc_ib_determine_gid(struct smc_ib_device *smcibdev, u8 ibport,
 			 struct smc_init_info_smcrv2 *smcrv2);
 int smc_ib_find_route(struct net *net, __be32 saddr, __be32 daddr,
 		      u8 nexthop_mac[], u8 *uses_gateway);
+#if IS_ENABLED(CONFIG_IPV6)
+int smc_ib_find_route_v6(struct net *net, const struct in6_addr *saddr,
+			 const struct in6_addr *daddr,
+			 u8 nexthop_mac[], u8 *uses_gateway);
+#endif
+int smc_ib_find_route_af(struct net *net, struct smc_init_info_smcrv2 *smcrv2);
 bool smc_ib_is_valid_local_systemid(void);
 int smcr_nl_get_device(struct sk_buff *skb, struct netlink_callback *cb);
 #endif

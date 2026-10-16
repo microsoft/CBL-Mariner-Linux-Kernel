@@ -899,7 +899,16 @@ static int smc_lgr_create(struct smc_sock *smc, struct smc_init_info *ini)
 		if (lgr->smc_version == SMC_V2) {
 			ibdev = ini->smcrv2.ib_dev_v2;
 			ibport = ini->smcrv2.ib_port_v2;
-			lgr->saddr = ini->smcrv2.saddr;
+			lgr->addr_family = ini->smcrv2.addr_family;
+			if (ini->smcrv2.addr_family == AF_INET) {
+				lgr->saddr = ini->smcrv2.saddr;
+			}
+#if IS_ENABLED(CONFIG_IPV6)
+			else if (ini->smcrv2.addr_family == AF_INET6) {
+				memcpy(&lgr->saddr6, &ini->smcrv2.saddr6,
+				       sizeof(lgr->saddr6));
+			}
+#endif
 			lgr->uses_gateway = ini->smcrv2.uses_gateway;
 			memcpy(lgr->nexthop_mac, ini->smcrv2.nexthop_mac,
 			       ETH_ALEN);

@@ -348,7 +348,12 @@ struct smc_link_group {
 						/* rsn code for termination */
 			u8			nexthop_mac[ETH_ALEN];
 			u8			uses_gateway;
-			__be32			saddr;
+			u8			addr_family;
+						/* AF_INET or AF_INET6 */
+			union {
+				__be32		saddr;	/* IPv4 address */
+				struct in6_addr	saddr6;	/* IPv6 address */
+			};
 						/* net namespace */
 			struct net		*net;
 			u8			max_conns;
@@ -378,9 +383,16 @@ struct smc_gidlist {
 
 struct smc_init_info_smcrv2 {
 	/* Input fields */
-	__be32			saddr;
+	u8			addr_family;	/* AF_INET or AF_INET6 */
+	union {
+		__be32		saddr;		/* IPv4 source address */
+		struct in6_addr	saddr6;		/* IPv6 source address */
+	};
 	struct sock		*clc_sk;
-	__be32			daddr;
+	union {
+		__be32		daddr;		/* IPv4 dest address */
+		struct in6_addr	daddr6;		/* IPv6 dest address */
+	};
 
 	/* Output fields when saddr is set */
 	struct smc_ib_device	*ib_dev_v2;
