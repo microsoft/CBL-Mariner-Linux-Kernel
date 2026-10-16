@@ -475,7 +475,10 @@ static int mshv_region_collect_and_map(struct mshv_mem_region *region,
 		goto out;
 
 	for (i = 0; i < page_count; i++) {
-		if (pfns[i] & HMM_PFN_VALID)
+		/* Read-only PTEs may map page cache or the zero page: fault to COW */
+		if ((pfns[i] & HMM_PFN_VALID) &&
+		    (!(region->hv_map_flags & HV_MAP_GPA_WRITABLE) ||
+		     (pfns[i] & HMM_PFN_WRITE)))
 			region->mreg_pages[page_offset + i] =
 				hmm_pfn_to_page(pfns[i]);
 		else
