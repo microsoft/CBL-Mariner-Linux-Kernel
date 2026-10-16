@@ -236,18 +236,17 @@ static inline void *xsk_buff_raw_get_data(struct xsk_buff_pool *pool, u64 addr)
  * xsk_buff_raw_get_ctx - get &xdp_desc context
  * @pool: XSk buff pool desc address belongs to
  * @addr: desc address (from userspace)
- * @options: desc options (from userspace)
  *
  * Wrapper for xp_raw_get_ctx() to be used in drivers, see its kdoc for
  * details.
  *
  * Return: new &xdp_desc_ctx struct containing desc's DMA address and metadata
- * pointer, if it is present (initialized to %NULL otherwise).
+ * pointer, if it is present and valid (initialized to %NULL otherwise).
  */
 static inline struct xdp_desc_ctx
-xsk_buff_raw_get_ctx(const struct xsk_buff_pool *pool, u64 addr, u32 options)
+xsk_buff_raw_get_ctx(const struct xsk_buff_pool *pool, u64 addr)
 {
-	return xp_raw_get_ctx(pool, addr, options);
+	return xp_raw_get_ctx(pool, addr);
 }
 
 #define XDP_TXMD_FLAGS_VALID ( \
@@ -257,78 +256,30 @@ xsk_buff_raw_get_ctx(const struct xsk_buff_pool *pool, u64 addr, u32 options)
 	0)
 
 static inline bool
-xsk_buff_valid_tx_metadata(const struct xsk_buff_pool *pool,
-			   const struct xsk_tx_metadata *meta, u64 *flags)
+xsk_buff_valid_tx_metadata(const struct xsk_tx_metadata *meta)
 {
-	*flags = READ_ONCE(meta->flags);
-	if (*flags & XDP_TXMD_FLAGS_LAUNCH_TIME)
-		if (pool->tx_metadata_len <
-		    offsetofend(struct xsk_tx_metadata, request.launch_time))
-			return false;
-	return !(*flags & ~XDP_TXMD_FLAGS_VALID);
-}
-
-/**
- *  xsk_tx_metadata_request - Evaluate AF_XDP TX metadata at submission
- *  and call appropriate xsk_tx_metadata_ops operation.
- *  @pool: pointer to AF_XDP buffer pool, used to validate the metadata
- *  @pmeta: pointer to pointer to AF_XDP metadata area
- *  @ops: pointer to struct xsk_tx_metadata_ops
- *  @priv: pointer to driver-private area
- *
- *  This function should be called by the networking device when
- *  it prepares AF_XDP egress packet.
- */
-static inline void
-xsk_tx_metadata_request(const struct xsk_buff_pool *pool,
-			struct xsk_tx_metadata **pmeta,
-			const struct xsk_tx_metadata_ops *ops, void *priv)
-{
-	const struct xsk_tx_metadata *meta = *pmeta;
-	u64 flags;
-
-	if (!meta)
-		return;
-
-	if (unlikely(!xsk_buff_valid_tx_metadata(pool, meta, &flags))) {
-		*pmeta = NULL;
-		return; /* no way to signal the error to the user */
-	}
-
-	if (ops->tmo_request_launch_time)
-		if (flags & XDP_TXMD_FLAGS_LAUNCH_TIME)
-			ops->tmo_request_launch_time(
-				READ_ONCE(meta->request.launch_time), priv);
-
-	if (ops->tmo_request_timestamp)
-		if (flags & XDP_TXMD_FLAGS_TIMESTAMP)
-			ops->tmo_request_timestamp(priv);
-
-	if (ops->tmo_request_checksum)
-		if (flags & XDP_TXMD_FLAGS_CHECKSUM)
-			ops->tmo_request_checksum(
-				READ_ONCE(meta->request.csum_start),
-				READ_ONCE(meta->request.csum_offset), priv);
-
-	if (!(flags & XDP_TXMD_FLAGS_TIMESTAMP))
-		*pmeta = NULL;
+	return !(meta->flags & ~XDP_TXMD_FLAGS_VALID);
 }
 
 static inline struct xsk_tx_metadata *
-__xsk_buff_get_metadata(const struct xsk_buff_pool *pool, void *data,
-			unsigned int options)
+__xsk_buff_get_metadata(const struct xsk_buff_pool *pool, void *data)
 {
-	if (!pool->tx_metadata_len || !(options & XDP_TX_METADATA))
+	struct xsk_tx_metadata *meta;
+
+	if (!pool->tx_metadata_len)
 		return NULL;
 
-	return data - pool->tx_metadata_len;
+	meta = data - pool->tx_metadata_len;
+	if (unlikely(!xsk_buff_valid_tx_metadata(meta)))
+		return NULL; /* no way to signal the error to the user */
+
+	return meta;
 }
 
 static inline struct xsk_tx_metadata *
-xsk_buff_get_metadata(struct xsk_buff_pool *pool, u64 addr, u32 options)
+xsk_buff_get_metadata(struct xsk_buff_pool *pool, u64 addr)
 {
-	return __xsk_buff_get_metadata(pool, xp_raw_get_data(pool, addr),
-				       options);
+	return __xsk_buff_get_metadata(pool, xp_raw_get_data(pool, addr));
 }
 
 static inline void xsk_buff_dma_sync_for_cpu(struct xdp_buff *xdp)
@@ -509,34 +460,24 @@ static inline void *xsk_buff_raw_get_data(struct xsk_buff_pool *pool, u64 addr)
 }
 
 static inline struct xdp_desc_ctx
-xsk_buff_raw_get_ctx(const struct xsk_buff_pool *pool, u64 addr, u32 options)
+xsk_buff_raw_get_ctx(const struct xsk_buff_pool *pool, u64 addr)
 {
 	return (struct xdp_desc_ctx){ };
 }
 
-static inline bool
-xsk_buff_valid_tx_metadata(const struct xsk_buff_pool *pool,
-			   const struct xsk_tx_metadata *meta, u64 *flags)
+static inline bool xsk_buff_valid_tx_metadata(struct xsk_tx_metadata *meta)
 {
 	return false;
 }
 
-static inline void
-xsk_tx_metadata_request(const struct xsk_buff_pool *pool,
-			struct xsk_tx_metadata **pmeta,
-			const struct xsk_tx_metadata_ops *ops, void *priv)
-{
-}
-
 static inline struct xsk_tx_metadata *
-__xsk_buff_get_metadata(const struct xsk_buff_pool *pool, void *data,
-			unsigned int options)
+__xsk_buff_get_metadata(const struct xsk_buff_pool *pool, void *data)
 {
 	return NULL;
 }
 
 static inline struct xsk_tx_metadata *
-xsk_buff_get_metadata(struct xsk_buff_pool *pool, u64 addr, u32 options)
+xsk_buff_get_metadata(struct xsk_buff_pool *pool, u64 addr)
 {
 	return NULL;
 }
