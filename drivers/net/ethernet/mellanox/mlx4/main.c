@@ -112,6 +112,11 @@ module_param(enable_4k_uar, bool, 0444);
 MODULE_PARM_DESC(enable_4k_uar,
 		 "Enable using 4K UAR. Should not be enabled if have VFs which do not support 4K UARs (default: false)");
 
+bool force_mlx4_ib_support;
+module_param(force_mlx4_ib_support, bool, 0444);
+MODULE_PARM_DESC(force_mlx4_ib_support,
+		 "Force IB auxiliary device creation even when firmware does not advertise IBoE capability (default: false)");
+
 #define PF_CONTEXT_BEHAVIOUR_MASK	(MLX4_FUNC_CAP_64B_EQE_CQE | \
 					 MLX4_FUNC_CAP_EQE_CQE_STRIDE | \
 					 MLX4_FUNC_CAP_DMFS_A0_STATIC)
